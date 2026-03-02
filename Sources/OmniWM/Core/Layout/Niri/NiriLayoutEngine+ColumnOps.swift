@@ -199,8 +199,7 @@ extension NiriLayoutEngine {
                 newWidth: targetPixels,
                 clock: animationClock,
                 config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate,
-                animationsEnabled: animationsEnabled
+                displayRefreshRate: displayRefreshRate
             )
 
             for window in column.windowNodes {
@@ -246,8 +245,7 @@ extension NiriLayoutEngine {
             displacement: CGPoint(x: currentColX - newColX, y: 0),
             clock: animationClock,
             config: windowMovementAnimationConfig,
-            displayRefreshRate: displayRefreshRate,
-            animationsEnabled: animationsEnabled
+            displayRefreshRate: displayRefreshRate
         )
 
         let othersXOffset = nextColX - currentColX
@@ -259,8 +257,7 @@ extension NiriLayoutEngine {
                         displacement: CGPoint(x: othersXOffset, y: 0),
                         clock: animationClock,
                         config: windowMovementAnimationConfig,
-                        displayRefreshRate: displayRefreshRate,
-                        animationsEnabled: animationsEnabled
+                        displayRefreshRate: displayRefreshRate
                     )
                 }
             }
@@ -272,8 +269,7 @@ extension NiriLayoutEngine {
                         displacement: CGPoint(x: -othersXOffset, y: 0),
                         clock: animationClock,
                         config: windowMovementAnimationConfig,
-                        displayRefreshRate: displayRefreshRate,
-                        animationsEnabled: animationsEnabled
+                        displayRefreshRate: displayRefreshRate
                     )
                 }
             }
@@ -364,8 +360,7 @@ extension NiriLayoutEngine {
                 displacement: displacement,
                 clock: animationClock,
                 config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate,
-                animationsEnabled: animationsEnabled
+                displayRefreshRate: displayRefreshRate
             )
         }
 
@@ -454,8 +449,7 @@ extension NiriLayoutEngine {
                     displacement: displacement,
                     clock: animationClock,
                     config: windowMovementAnimationConfig,
-                    displayRefreshRate: displayRefreshRate,
-                    animationsEnabled: animationsEnabled
+                    displayRefreshRate: displayRefreshRate
                 )
             }
         }

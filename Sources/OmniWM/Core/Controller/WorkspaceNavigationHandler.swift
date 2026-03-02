@@ -20,8 +20,7 @@ final class WorkspaceNavigationHandler {
         monitor: Monitor
     ) -> Bool {
         guard let controller else { return false }
-        guard controller.settings.animationsEnabled,
-              controller.settings.layoutType(for: targetWorkspace.name) != .dwindle,
+        guard controller.settings.layoutType(for: targetWorkspace.name) != .dwindle,
               let engine = controller.niriEngine else {
             return false
         }

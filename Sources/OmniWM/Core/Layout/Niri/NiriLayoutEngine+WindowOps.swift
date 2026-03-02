@@ -243,8 +243,7 @@ extension NiriLayoutEngine {
             displacement: CGPoint(x: targetPt.x - newSourcePt.x, y: targetPt.y - newSourcePt.y),
             clock: animationClock,
             config: windowMovementAnimationConfig,
-            displayRefreshRate: displayRefreshRate,
-            animationsEnabled: animationsEnabled
+            displayRefreshRate: displayRefreshRate
         )
 
         sourceActiveWindow.stopMoveAnimations()
@@ -252,8 +251,7 @@ extension NiriLayoutEngine {
             displacement: CGPoint(x: sourcePt.x - newTargetPt.x, y: sourcePt.y - newTargetPt.y),
             clock: animationClock,
             config: windowMovementAnimationConfig,
-            displayRefreshRate: displayRefreshRate,
-            animationsEnabled: animationsEnabled
+            displayRefreshRate: displayRefreshRate
         )
 
         if currentColumn.isTabbed {

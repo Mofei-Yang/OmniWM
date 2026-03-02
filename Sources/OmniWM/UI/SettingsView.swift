@@ -102,14 +102,6 @@ struct GeneralSettingsTab: View {
                 }
 
                 Divider()
-                Text("Animations").font(.subheadline).foregroundColor(.secondary)
-
-                Toggle("Enable Animations", isOn: $settings.animationsEnabled)
-                    .onChange(of: settings.animationsEnabled) { _, newValue in
-                        controller.updateNiriConfig(animationsEnabled: newValue)
-                    }
-
-                Divider()
                 Text("Scroll Gestures").font(.subheadline).foregroundColor(.secondary)
 
                 Toggle("Enable Scroll Gestures", isOn: $settings.scrollGestureEnabled)

@@ -480,16 +480,11 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
                 }
             }
 
-            if settings.animationsEnabled {
-                NSAnimationContext.runAnimationGroup({ context in
-                    context.duration = settings.quakeTerminalAnimationDuration
-                    context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                    window.animator().alphaValue = 1
-                }, completionHandler: finishAnimation)
-            } else {
-                window.alphaValue = 1
-                finishAnimation()
-            }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = settings.quakeTerminalAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window.animator().alphaValue = 1
+            }, completionHandler: finishAnimation)
             return
         }
 
@@ -524,27 +519,17 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
             }
         }
 
-        if settings.animationsEnabled {
-            quakeWindow?.isAnimating = true
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = settings.quakeTerminalAnimationDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                position.setFinal(
-                    in: window.animator(),
-                    on: screen,
-                    widthPercent: widthPercent,
-                    heightPercent: heightPercent
-                )
-            }, completionHandler: finishAnimation)
-        } else {
+        quakeWindow?.isAnimating = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = settings.quakeTerminalAnimationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             position.setFinal(
-                in: window,
+                in: window.animator(),
                 on: screen,
                 widthPercent: widthPercent,
                 heightPercent: heightPercent
             )
-            finishAnimation()
-        }
+        }, completionHandler: finishAnimation)
     }
 
     private func animateWindowOut(window: NSWindow) {
@@ -567,16 +552,11 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
         }
 
         if settings.quakeTerminalUseCustomFrame {
-            if settings.animationsEnabled {
-                NSAnimationContext.runAnimationGroup({ context in
-                    context.duration = settings.quakeTerminalAnimationDuration
-                    context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                    window.animator().alphaValue = 0
-                }, completionHandler: finishAnimation)
-            } else {
-                window.alphaValue = 0
-                finishAnimation()
-            }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = settings.quakeTerminalAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window.animator().alphaValue = 0
+            }, completionHandler: finishAnimation)
             return
         }
 
@@ -585,32 +565,22 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
         let widthPercent = settings.quakeTerminalWidthPercent
         let heightPercent = settings.quakeTerminalHeightPercent
 
-        if settings.animationsEnabled {
-            quakeWindow?.isAnimating = true
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = settings.quakeTerminalAnimationDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                position.setInitial(
-                    in: window.animator(),
-                    on: screen,
-                    widthPercent: widthPercent,
-                    heightPercent: heightPercent
-                )
-            }, completionHandler: {
-                Task { @MainActor in
-                    quakeWindow?.isAnimating = false
-                }
-                finishAnimation()
-            })
-        } else {
+        quakeWindow?.isAnimating = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = settings.quakeTerminalAnimationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             position.setInitial(
-                in: window,
+                in: window.animator(),
                 on: screen,
                 widthPercent: widthPercent,
                 heightPercent: heightPercent
             )
+        }, completionHandler: {
+            Task { @MainActor in
+                quakeWindow?.isAnimating = false
+            }
             finishAnimation()
-        }
+        })
     }
 
     private func makeWindowKey(_ window: NSWindow, retries: UInt8 = 0) {

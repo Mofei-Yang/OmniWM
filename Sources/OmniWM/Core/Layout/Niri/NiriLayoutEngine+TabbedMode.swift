@@ -56,8 +56,7 @@ extension NiriLayoutEngine {
                     displacement: delta,
                     clock: animationClock,
                     config: windowMovementAnimationConfig,
-                    displayRefreshRate: displayRefreshRate,
-                    animationsEnabled: animationsEnabled
+                    displayRefreshRate: displayRefreshRate
                 )
             }
         }

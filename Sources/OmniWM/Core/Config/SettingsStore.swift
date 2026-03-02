@@ -237,10 +237,6 @@ final class SettingsStore {
         didSet { defaults.set(gestureInvertDirection, forKey: Keys.gestureInvertDirection) }
     }
 
-    var animationsEnabled: Bool {
-        didSet { defaults.set(animationsEnabled, forKey: Keys.animationsEnabled) }
-    }
-
     var menuAnywhereNativeEnabled: Bool {
         didSet { defaults.set(menuAnywhereNativeEnabled, forKey: Keys.menuAnywhereNativeEnabled) }
     }
@@ -431,8 +427,6 @@ final class SettingsStore {
             .optionShift
         gestureFingerCount = GestureFingerCount(rawValue: defaults.integer(forKey: Keys.gestureFingerCount)) ?? .three
         gestureInvertDirection = defaults.object(forKey: Keys.gestureInvertDirection) as? Bool ?? true
-
-        animationsEnabled = defaults.object(forKey: Keys.animationsEnabled) as? Bool ?? true
 
         menuAnywhereNativeEnabled = defaults.object(forKey: Keys.menuAnywhereNativeEnabled) as? Bool ?? true
         menuAnywherePaletteEnabled = defaults.object(forKey: Keys.menuAnywherePaletteEnabled) as? Bool ?? true
@@ -963,8 +957,6 @@ private enum Keys {
     static let scrollModifierKey = "settings.scrollModifierKey"
     static let gestureFingerCount = "settings.gestureFingerCount"
     static let gestureInvertDirection = "settings.gestureInvertDirection"
-
-    static let animationsEnabled = "settings.animationsEnabled"
 
     static let menuAnywhereNativeEnabled = "settings.menuAnywhere.nativeEnabled"
     static let menuAnywherePaletteEnabled = "settings.menuAnywhere.paletteEnabled"

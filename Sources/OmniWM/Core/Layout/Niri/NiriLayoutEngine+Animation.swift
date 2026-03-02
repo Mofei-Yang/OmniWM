@@ -26,34 +26,30 @@ extension NiriLayoutEngine {
                    - columnX(at: removedIdx, columns: cols, gaps: gaps)
         let postRemovalCount = cols.count - 1
 
-        if animationsEnabled {
-            if activeIdx <= removedIdx {
-                for col in cols[(removedIdx + 1)...] {
-                    if col.hasMoveAnimationRunning {
-                        col.offsetMoveAnimCurrent(offset)
-                    } else {
-                        col.animateMoveFrom(
-                            displacement: CGPoint(x: offset, y: 0),
-                            clock: animationClock,
-                            config: windowMovementAnimationConfig,
-                            displayRefreshRate: displayRefreshRate,
-                            animationsEnabled: animationsEnabled
-                        )
-                    }
+        if activeIdx <= removedIdx {
+            for col in cols[(removedIdx + 1)...] {
+                if col.hasMoveAnimationRunning {
+                    col.offsetMoveAnimCurrent(offset)
+                } else {
+                    col.animateMoveFrom(
+                        displacement: CGPoint(x: offset, y: 0),
+                        clock: animationClock,
+                        config: windowMovementAnimationConfig,
+                        displayRefreshRate: displayRefreshRate
+                    )
                 }
-            } else {
-                for col in cols[..<removedIdx] {
-                    if col.hasMoveAnimationRunning {
-                        col.offsetMoveAnimCurrent(-offset)
-                    } else {
-                        col.animateMoveFrom(
-                            displacement: CGPoint(x: -offset, y: 0),
-                            clock: animationClock,
-                            config: windowMovementAnimationConfig,
-                            displayRefreshRate: displayRefreshRate,
-                            animationsEnabled: animationsEnabled
-                        )
-                    }
+            }
+        } else {
+            for col in cols[..<removedIdx] {
+                if col.hasMoveAnimationRunning {
+                    col.offsetMoveAnimCurrent(-offset)
+                } else {
+                    col.animateMoveFrom(
+                        displacement: CGPoint(x: -offset, y: 0),
+                        clock: animationClock,
+                        config: windowMovementAnimationConfig,
+                        displayRefreshRate: displayRefreshRate
+                    )
                 }
             }
         }
@@ -113,8 +109,6 @@ extension NiriLayoutEngine {
         }
 
         let offset = addedCol.cachedWidth + gaps
-
-        guard animationsEnabled else { return }
 
         if activeIdx <= addedIdx {
             for col in cols[(addedIdx + 1)...] {
@@ -345,7 +339,6 @@ extension NiriLayoutEngine {
         newFrames: [WindowHandle: CGRect],
         threshold: CGFloat = 1.0
     ) -> Bool {
-        guard animationsEnabled else { return false }
         guard let root = root(for: workspaceId) else { return false }
         var anyAnimationStarted = false
 
@@ -364,8 +357,7 @@ extension NiriLayoutEngine {
                     displacement: CGPoint(x: dx, y: dy),
                     clock: animationClock,
                     config: windowMovementAnimationConfig,
-                    displayRefreshRate: displayRefreshRate,
-                    animationsEnabled: animationsEnabled
+                    displayRefreshRate: displayRefreshRate
                 )
                 anyAnimationStarted = true
             }

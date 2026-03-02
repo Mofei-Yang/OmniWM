@@ -75,24 +75,14 @@ struct SponsorsView: View {
 
     private func navigateLeft() {
         guard canNavigateLeft else { return }
-        let animate = AppDelegate.sharedSettings?.animationsEnabled ?? true
-        if animate {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentIndex -= 1
-            }
-        } else {
+        withAnimation(.easeInOut(duration: 0.3)) {
             currentIndex -= 1
         }
     }
 
     private func navigateRight() {
         guard canNavigateRight else { return }
-        let animate = AppDelegate.sharedSettings?.animationsEnabled ?? true
-        if animate {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentIndex += 1
-            }
-        } else {
+        withAnimation(.easeInOut(duration: 0.3)) {
             currentIndex += 1
         }
     }
@@ -170,11 +160,7 @@ struct SponsorsView: View {
         .scaleEffect(appeared ? 1.0 : 0.95)
         .opacity(appeared ? 1.0 : 0.0)
         .onAppear {
-            if AppDelegate.sharedSettings?.animationsEnabled ?? true {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    appeared = true
-                }
-            } else {
+            withAnimation(.easeOut(duration: 0.2)) {
                 appeared = true
             }
         }
@@ -321,7 +307,7 @@ struct SponsorCardView: View {
             )
             .scaleEffect(isHovered ? 1.02 : 1.0)
             .animation(
-                (AppDelegate.sharedSettings?.animationsEnabled ?? true) ? .easeOut(duration: 0.15) : nil,
+                .easeOut(duration: 0.15),
                 value: isHovered
             )
         }
@@ -382,10 +368,8 @@ struct GlowingAvatarView: View {
             }
         }
         .onAppear {
-            if AppDelegate.sharedSettings?.animationsEnabled ?? true {
-                withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                    isAnimating = true
-                }
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                isAnimating = true
             }
         }
     }

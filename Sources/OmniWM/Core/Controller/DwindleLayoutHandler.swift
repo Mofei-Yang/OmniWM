@@ -106,12 +106,10 @@ import QuartzCore
                 }
             }
 
-            if controller.settings.animationsEnabled {
-                engine.animateWindowMovements(oldFrames: oldFrames, newFrames: newFrames)
-            }
+            engine.animateWindowMovements(oldFrames: oldFrames, newFrames: newFrames)
 
             let now = CACurrentMediaTime()
-            if controller.settings.animationsEnabled, engine.hasActiveAnimations(in: wsId, at: now) {
+            if engine.hasActiveAnimations(in: wsId, at: now) {
                 lrc.startDwindleAnimation(for: wsId, monitor: monitor)
 
                 if let focusedHandle = controller.focusedHandle,

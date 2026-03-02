@@ -104,20 +104,16 @@ extension ViewportState {
         let minOffset = Double(viewportWidth - totalW)
         let clampedTarget = min(max(targetOffset, minOffset), maxOffset)
 
-        if animationsEnabled {
-            let now = animationClock?.now() ?? CACurrentMediaTime()
-            let animation = SpringAnimation(
-                from: currentOffset + Double(offsetDelta),
-                to: clampedTarget,
-                initialVelocity: velocity,
-                startTime: now,
-                config: springConfig,
-                displayRefreshRate: displayRefreshRate
-            )
-            viewOffsetPixels = .spring(animation)
-        } else {
-            viewOffsetPixels = .static(CGFloat(clampedTarget))
-        }
+        let now = animationClock?.now() ?? CACurrentMediaTime()
+        let animation = SpringAnimation(
+            from: currentOffset + Double(offsetDelta),
+            to: clampedTarget,
+            initialVelocity: velocity,
+            startTime: now,
+            config: springConfig,
+            displayRefreshRate: displayRefreshRate
+        )
+        viewOffsetPixels = .spring(animation)
 
         activatePrevColumnOnRemoval = nil
         viewOffsetToRestore = nil

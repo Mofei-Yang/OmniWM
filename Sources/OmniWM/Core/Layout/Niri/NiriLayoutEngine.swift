@@ -137,7 +137,6 @@ final class NiriLayoutEngine {
     )
     var animationClock: AnimationClock?
     var displayRefreshRate: Double = 60.0
-    var animationsEnabled: Bool = true
 
     var presetColumnWidths: [PresetSize] = [
         .proportion(1.0 / 3.0),
@@ -263,7 +262,6 @@ final class NiriLayoutEngine {
         centerFocusedColumn: CenterFocusedColumn? = nil,
         alwaysCenterSingleColumn: Bool? = nil,
         singleWindowAspectRatio: SingleWindowAspectRatio? = nil,
-        animationsEnabled: Bool? = nil,
         presetColumnWidths: [PresetSize]? = nil
     ) {
         if let max = maxWindowsPerColumn {
@@ -283,15 +281,6 @@ final class NiriLayoutEngine {
         }
         if let aspectRatio = singleWindowAspectRatio {
             self.singleWindowAspectRatio = aspectRatio
-        }
-
-        if let enabled = animationsEnabled {
-            self.animationsEnabled = enabled
-            for monitor in monitors.values {
-                for workspaceId in monitor.viewportStates.keys {
-                    monitor.viewportStates[workspaceId]?.animationsEnabled = enabled
-                }
-            }
         }
 
         if let presets = presetColumnWidths, !presets.isEmpty {

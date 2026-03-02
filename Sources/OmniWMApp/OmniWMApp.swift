@@ -31,7 +31,6 @@ struct OmniWMApp: App {
             centerFocusedColumn: settings.niriCenterFocusedColumn,
             alwaysCenterSingleColumn: settings.niriAlwaysCenterSingleColumn,
             singleWindowAspectRatio: settings.niriSingleWindowAspectRatio,
-            animationsEnabled: settings.animationsEnabled,
             columnWidthPresets: settings.niriColumnWidthPresets
         )
         controller.enableDwindleLayout()

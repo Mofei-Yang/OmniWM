@@ -172,7 +172,6 @@ final class AXEventHandler: CGSEventDelegate {
            let wsId = affectedWorkspaceId,
            let monitor = controller.workspaceManager.monitor(for: wsId),
            controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId,
-           controller.settings.animationsEnabled,
            let workspaceName = controller.workspaceManager.descriptor(for: wsId)?.name,
            controller.settings.layoutType(for: workspaceName) != .dwindle
         {

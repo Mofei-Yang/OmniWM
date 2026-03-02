@@ -69,7 +69,6 @@ final class WorkspaceManager {
 
     private var _cachedSortedWorkspaces: [WorkspaceDescriptor]?
     private var niriViewportStates: [WorkspaceDescriptor.ID: ViewportState] = [:]
-    private var currentAnimationSettings: ViewportState = .init()
     var animationClock: AnimationClock?
 
     var onGapsChanged: (() -> Void)?
@@ -220,11 +219,6 @@ final class WorkspaceManager {
         applyForcedAssignments()
         ensureVisibleWorkspaces()
         reconcileForcedVisibleWorkspaces()
-        applyAnimationSettingsFromStore()
-    }
-
-    private func applyAnimationSettingsFromStore() {
-        currentAnimationSettings.animationsEnabled = settings.animationsEnabled
     }
 
     func updateMonitors(_ newMonitors: [Monitor]) {
@@ -461,7 +455,6 @@ final class WorkspaceManager {
             return state
         }
         var newState = ViewportState()
-        newState.animationsEnabled = currentAnimationSettings.animationsEnabled
         newState.animationClock = animationClock
         return newState
     }
@@ -483,20 +476,8 @@ final class WorkspaceManager {
         withNiriViewportState(for: workspaceId) { $0.selectedNodeId = nodeId }
     }
 
-    func updateAnimationSettings(animationsEnabled: Bool? = nil) {
-        if let enabled = animationsEnabled {
-            currentAnimationSettings.animationsEnabled = enabled
-        }
-        for workspaceId in niriViewportStates.keys {
-            if let enabled = animationsEnabled {
-                niriViewportStates[workspaceId]?.animationsEnabled = enabled
-            }
-        }
-    }
-
     func updateAnimationClock(_ clock: AnimationClock?) {
         animationClock = clock
-        currentAnimationSettings.animationClock = clock
         for workspaceId in niriViewportStates.keys {
             niriViewportStates[workspaceId]?.animationClock = clock
         }

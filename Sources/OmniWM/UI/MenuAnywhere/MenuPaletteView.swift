@@ -72,11 +72,7 @@ struct MenuPaletteView: View {
                     }
                     .onChange(of: controller.selectedItemId) { _, newId in
                         if let id = newId {
-                            if AppDelegate.sharedSettings?.animationsEnabled ?? true {
-                                withAnimation(.easeInOut(duration: 0.1)) {
-                                    proxy.scrollTo(id, anchor: .center)
-                                }
-                            } else {
+                            withAnimation(.easeInOut(duration: 0.1)) {
                                 proxy.scrollTo(id, anchor: .center)
                             }
                         }

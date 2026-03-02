@@ -159,7 +159,6 @@ struct ViewportState {
 
     var activatePrevColumnOnRemoval: CGFloat?
 
-    var animationsEnabled: Bool = true
     let springConfig: SpringConfig = .snappy
 
     var animationClock: AnimationClock?

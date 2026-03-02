@@ -577,8 +577,7 @@ import QuartzCore
                         displacement: CGPoint(x: 0, y: -appearOffset),
                         clock: pass.engine.animationClock,
                         config: pass.engine.windowMovementAnimationConfig,
-                        displayRefreshRate: state.displayRefreshRate,
-                        animationsEnabled: pass.engine.animationsEnabled
+                        displayRefreshRate: state.displayRefreshRate
                     )
                 }
             }
@@ -933,7 +932,6 @@ import QuartzCore
         centerFocusedColumn: CenterFocusedColumn? = nil,
         alwaysCenterSingleColumn: Bool? = nil,
         singleWindowAspectRatio: SingleWindowAspectRatio? = nil,
-        animationsEnabled: Bool? = nil,
         columnWidthPresets: [Double]? = nil
     ) {
         guard let controller else { return }
@@ -944,10 +942,8 @@ import QuartzCore
             centerFocusedColumn: centerFocusedColumn,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
             singleWindowAspectRatio: singleWindowAspectRatio,
-            animationsEnabled: animationsEnabled,
             presetColumnWidths: columnWidthPresets?.map { .proportion($0) }
         )
-        controller.workspaceManager.updateAnimationSettings(animationsEnabled: animationsEnabled)
         controller.layoutRefreshController.refreshWindowsAndLayout()
     }
 

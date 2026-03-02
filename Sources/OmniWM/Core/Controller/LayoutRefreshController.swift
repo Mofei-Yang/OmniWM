@@ -172,8 +172,7 @@ import QuartzCore
     }
 
     func startWindowCloseAnimation(entry: WindowModel.Entry, monitor: Monitor) {
-        guard let controller else { return }
-        guard controller.settings.animationsEnabled else { return }
+        guard controller != nil else { return }
         guard let frame = AXWindowService.framePreferFast(entry.axRef) else { return }
 
         let reduceMotionScale: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.25 : 1.0

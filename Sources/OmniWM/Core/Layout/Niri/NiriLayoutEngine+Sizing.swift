@@ -120,8 +120,7 @@ extension NiriLayoutEngine {
             newWidth: targetPixels,
             clock: animationClock,
             config: windowMovementAnimationConfig,
-            displayRefreshRate: displayRefreshRate,
-            animationsEnabled: animationsEnabled
+            displayRefreshRate: displayRefreshRate
         )
 
         if let window = column.windowNodes.first {
@@ -168,8 +167,7 @@ extension NiriLayoutEngine {
             newWidth: targetPixels,
             clock: animationClock,
             config: windowMovementAnimationConfig,
-            displayRefreshRate: displayRefreshRate,
-            animationsEnabled: animationsEnabled
+            displayRefreshRate: displayRefreshRate
         )
 
         if let window = column.windowNodes.first {

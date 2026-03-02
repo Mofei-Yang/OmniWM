@@ -340,10 +340,8 @@ class NiriContainer: NiriNode {
         displacement: CGPoint,
         clock: AnimationClock?,
         config: SpringConfig = .default,
-        displayRefreshRate: Double = 60.0,
-        animationsEnabled: Bool = true
+        displayRefreshRate: Double = 60.0
     ) {
-        guard animationsEnabled else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let currentOffset = renderOffset(at: now)
         let currentVel = moveAnimation?.currentVelocity(at: now) ?? 0
@@ -396,10 +394,8 @@ class NiriContainer: NiriNode {
         newWidth: CGFloat,
         clock: AnimationClock?,
         config: SpringConfig,
-        displayRefreshRate: Double = 60.0,
-        animationsEnabled: Bool = true
+        displayRefreshRate: Double = 60.0
     ) {
-        guard animationsEnabled else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let currentWidth = cachedWidth > 0 ? cachedWidth : newWidth
         let currentVel = widthAnimation?.velocity(at: now) ?? 0
@@ -619,10 +615,8 @@ class NiriWindow: NiriNode {
         displacement: CGPoint,
         clock: AnimationClock?,
         config: SpringConfig = .default,
-        displayRefreshRate: Double = 60.0,
-        animationsEnabled: Bool = true
+        displayRefreshRate: Double = 60.0
     ) {
-        guard animationsEnabled else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let currentOffset = renderOffset(at: now)
         let currentVelX = moveXAnimation?.currentVelocity(at: now) ?? 0

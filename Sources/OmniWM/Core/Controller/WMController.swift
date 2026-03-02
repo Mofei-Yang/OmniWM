@@ -316,7 +316,6 @@ final class WMController {
         centerFocusedColumn: CenterFocusedColumn? = nil,
         alwaysCenterSingleColumn: Bool? = nil,
         singleWindowAspectRatio: SingleWindowAspectRatio? = nil,
-        animationsEnabled: Bool? = nil,
         columnWidthPresets: [Double]? = nil
     ) {
         niriLayoutHandler.updateNiriConfig(
@@ -326,7 +325,6 @@ final class WMController {
             centerFocusedColumn: centerFocusedColumn,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
             singleWindowAspectRatio: singleWindowAspectRatio,
-            animationsEnabled: animationsEnabled,
             columnWidthPresets: columnWidthPresets
         )
     }

@@ -25,7 +25,7 @@ extension ViewportState {
             viewportWidth: viewportWidth
         )
 
-        if animate, animationsEnabled {
+        if animate {
             animateToOffset(targetOffset)
         } else {
             viewOffsetPixels = .static(targetOffset)
@@ -80,7 +80,7 @@ extension ViewportState {
             return
         }
 
-        if animate, animationsEnabled {
+        if animate {
             animateToOffset(targetOffset)
         } else {
             viewOffsetPixels = .static(targetOffset)
@@ -123,7 +123,7 @@ extension ViewportState {
             return
         }
 
-        if animate, animationsEnabled {
+        if animate {
             let now = animationClock?.now() ?? CACurrentMediaTime()
             let currentVelocity = viewOffsetPixels.currentVelocity()
             let config = animationConfig ?? springConfig
