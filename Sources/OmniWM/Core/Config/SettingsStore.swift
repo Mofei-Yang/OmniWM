@@ -543,6 +543,8 @@ final class SettingsStore {
 
     func workspaceToMonitorAssignments() -> [String: [MonitorDescription]] {
         if !workspaceConfigurations.isEmpty {
+            // TODO: WorkspaceConfiguration currently models a single preferred monitor.
+            // Legacy raw assignments support multiple fallback monitors per workspace.
             var result: [String: [MonitorDescription]] = [:]
             for config in workspaceConfigurations {
                 if let desc = config.monitorAssignment.toMonitorDescription() {
@@ -674,6 +676,10 @@ final class SettingsStore {
         defaults.set(true, forKey: Keys.workspaceSettingsMigrated)
     }
 
+    func barSettings(for monitor: Monitor) -> MonitorBarSettings? {
+        MonitorSettingsStore.get(for: monitor, in: monitorBarSettings)
+    }
+
     func barSettings(for monitorName: String) -> MonitorBarSettings? {
         MonitorSettingsStore.get(for: monitorName, in: monitorBarSettings)
     }
@@ -682,13 +688,23 @@ final class SettingsStore {
         MonitorSettingsStore.update(settings, in: &monitorBarSettings)
     }
 
+    func removeBarSettings(for monitor: Monitor) {
+        MonitorSettingsStore.remove(for: monitor, from: &monitorBarSettings)
+    }
+
     func removeBarSettings(for monitorName: String) {
         MonitorSettingsStore.remove(for: monitorName, from: &monitorBarSettings)
     }
 
-    func resolvedBarSettings(for monitorName: String) -> ResolvedBarSettings {
-        let override = barSettings(for: monitorName)
+    func resolvedBarSettings(for monitor: Monitor) -> ResolvedBarSettings {
+        resolvedBarSettings(override: barSettings(for: monitor))
+    }
 
+    func resolvedBarSettings(for monitorName: String) -> ResolvedBarSettings {
+        resolvedBarSettings(override: barSettings(for: monitorName))
+    }
+
+    private func resolvedBarSettings(override: MonitorBarSettings?) -> ResolvedBarSettings {
         return ResolvedBarSettings(
             enabled: override?.enabled ?? workspaceBarEnabled,
             showLabels: override?.showLabels ?? workspaceBarShowLabels,
@@ -722,12 +738,16 @@ final class SettingsStore {
         appRules.first { $0.bundleId == bundleId }
     }
 
+    func orientationSettings(for monitor: Monitor) -> MonitorOrientationSettings? {
+        MonitorSettingsStore.get(for: monitor, in: monitorOrientationSettings)
+    }
+
     func orientationSettings(for monitorName: String) -> MonitorOrientationSettings? {
         MonitorSettingsStore.get(for: monitorName, in: monitorOrientationSettings)
     }
 
     func effectiveOrientation(for monitor: Monitor) -> Monitor.Orientation {
-        if let override = orientationSettings(for: monitor.name),
+        if let override = orientationSettings(for: monitor),
            let orientation = override.orientation
         {
             return orientation
@@ -739,8 +759,16 @@ final class SettingsStore {
         MonitorSettingsStore.update(settings, in: &monitorOrientationSettings)
     }
 
+    func removeOrientationSettings(for monitor: Monitor) {
+        MonitorSettingsStore.remove(for: monitor, from: &monitorOrientationSettings)
+    }
+
     func removeOrientationSettings(for monitorName: String) {
         MonitorSettingsStore.remove(for: monitorName, from: &monitorOrientationSettings)
+    }
+
+    func niriSettings(for monitor: Monitor) -> MonitorNiriSettings? {
+        MonitorSettingsStore.get(for: monitor, in: monitorNiriSettings)
     }
 
     func niriSettings(for monitorName: String) -> MonitorNiriSettings? {
@@ -751,13 +779,23 @@ final class SettingsStore {
         MonitorSettingsStore.update(settings, in: &monitorNiriSettings)
     }
 
+    func removeNiriSettings(for monitor: Monitor) {
+        MonitorSettingsStore.remove(for: monitor, from: &monitorNiriSettings)
+    }
+
     func removeNiriSettings(for monitorName: String) {
         MonitorSettingsStore.remove(for: monitorName, from: &monitorNiriSettings)
     }
 
-    func resolvedNiriSettings(for monitorName: String) -> ResolvedNiriSettings {
-        let override = niriSettings(for: monitorName)
+    func resolvedNiriSettings(for monitor: Monitor) -> ResolvedNiriSettings {
+        resolvedNiriSettings(override: niriSettings(for: monitor))
+    }
 
+    func resolvedNiriSettings(for monitorName: String) -> ResolvedNiriSettings {
+        resolvedNiriSettings(override: niriSettings(for: monitorName))
+    }
+
+    private func resolvedNiriSettings(override: MonitorNiriSettings?) -> ResolvedNiriSettings {
         return ResolvedNiriSettings(
             maxVisibleColumns: override?.maxVisibleColumns ?? niriMaxVisibleColumns,
             maxWindowsPerColumn: override?.maxWindowsPerColumn ?? niriMaxWindowsPerColumn,
@@ -768,6 +806,10 @@ final class SettingsStore {
         )
     }
 
+    func dwindleSettings(for monitor: Monitor) -> MonitorDwindleSettings? {
+        MonitorSettingsStore.get(for: monitor, in: monitorDwindleSettings)
+    }
+
     func dwindleSettings(for monitorName: String) -> MonitorDwindleSettings? {
         MonitorSettingsStore.get(for: monitorName, in: monitorDwindleSettings)
     }
@@ -776,14 +818,24 @@ final class SettingsStore {
         MonitorSettingsStore.update(settings, in: &monitorDwindleSettings)
     }
 
+    func removeDwindleSettings(for monitor: Monitor) {
+        MonitorSettingsStore.remove(for: monitor, from: &monitorDwindleSettings)
+    }
+
     func removeDwindleSettings(for monitorName: String) {
         MonitorSettingsStore.remove(for: monitorName, from: &monitorDwindleSettings)
     }
 
-    func resolvedDwindleSettings(for monitorName: String) -> ResolvedDwindleSettings {
-        let override = dwindleSettings(for: monitorName)
-        let useGlobalGaps = override?.useGlobalGaps ?? dwindleUseGlobalGaps
+    func resolvedDwindleSettings(for monitor: Monitor) -> ResolvedDwindleSettings {
+        resolvedDwindleSettings(override: dwindleSettings(for: monitor))
+    }
 
+    func resolvedDwindleSettings(for monitorName: String) -> ResolvedDwindleSettings {
+        resolvedDwindleSettings(override: dwindleSettings(for: monitorName))
+    }
+
+    private func resolvedDwindleSettings(override: MonitorDwindleSettings?) -> ResolvedDwindleSettings {
+        let useGlobalGaps = override?.useGlobalGaps ?? dwindleUseGlobalGaps
         return ResolvedDwindleSettings(
             smartSplit: override?.smartSplit ?? dwindleSmartSplit,
             defaultSplitRatio: CGFloat(override?.defaultSplitRatio ?? dwindleDefaultSplitRatio),
@@ -938,4 +990,3 @@ private enum Keys {
 
     static let appearanceMode = "settings.appearanceMode"
 }
-

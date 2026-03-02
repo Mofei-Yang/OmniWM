@@ -564,6 +564,11 @@ final class MouseEventHandler {
             resetGestureState()
         }
 
+        guard let currentContext = resolveScrollContext(at: location) else {
+            resetGestureState()
+            return
+        }
+
         let touches = event.allTouches()
         guard !touches.isEmpty else {
             resetGestureState()
