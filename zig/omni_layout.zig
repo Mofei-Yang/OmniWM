@@ -92,6 +92,31 @@ pub const OmniNiriResizeHitResult = extern struct {
     edges: u8,
 };
 
+pub const OmniNiriMoveTargetResult = extern struct {
+    window_index: i64,
+    insert_position: u8,
+};
+
+pub const OmniNiriDropzoneInput = extern struct {
+    target_frame_x: f64,
+    target_frame_y: f64,
+    target_frame_width: f64,
+    target_frame_height: f64,
+    column_min_y: f64,
+    column_max_y: f64,
+    gap: f64,
+    insert_position: u8,
+    post_insertion_count: usize,
+};
+
+pub const OmniNiriDropzoneResult = extern struct {
+    frame_x: f64,
+    frame_y: f64,
+    frame_width: f64,
+    frame_height: f64,
+    is_valid: u8,
+};
+
 pub const OmniNiriResizeInput = extern struct {
     edges: u8,
     start_x: f64,
@@ -150,6 +175,10 @@ const OMNI_NIRI_RESIZE_EDGE_TOP: u8 = 0b0001;
 const OMNI_NIRI_RESIZE_EDGE_BOTTOM: u8 = 0b0010;
 const OMNI_NIRI_RESIZE_EDGE_LEFT: u8 = 0b0100;
 const OMNI_NIRI_RESIZE_EDGE_RIGHT: u8 = 0b1000;
+
+const OMNI_NIRI_INSERT_BEFORE: u8 = 0;
+const OMNI_NIRI_INSERT_AFTER: u8 = 1;
+const OMNI_NIRI_INSERT_SWAP: u8 = 2;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Exported entry points
@@ -972,6 +1001,94 @@ export fn omni_niri_hit_test_resize(
             return OMNI_OK;
         }
     }
+
+    return OMNI_OK;
+}
+
+export fn omni_niri_hit_test_move_target(
+    windows: [*c]const OmniNiriHitTestWindow,
+    window_count: usize,
+    point_x: f64,
+    point_y: f64,
+    excluding_window_index: i64,
+    is_insert_mode: u8,
+    out_result: [*c]OmniNiriMoveTargetResult,
+) i32 {
+    if (out_result == null) return OMNI_ERR_INVALID_ARGS;
+    if (window_count > 0 and windows == null) return OMNI_ERR_INVALID_ARGS;
+
+    out_result[0] = .{
+        .window_index = -1,
+        .insert_position = OMNI_NIRI_INSERT_SWAP,
+    };
+
+    for (0..window_count) |i| {
+        if (excluding_window_index >= 0 and @as(i64, @intCast(i)) == excluding_window_index) {
+            continue;
+        }
+
+        const w = windows[i];
+        const rect = Rect{
+            .x = w.frame_x,
+            .y = w.frame_y,
+            .width = w.frame_width,
+            .height = w.frame_height,
+        };
+        if (!pointInRect(point_x, point_y, rect)) continue;
+
+        const insert_position: u8 = if (is_insert_mode != 0)
+            if (point_y < rect.y + rect.height / 2.0) OMNI_NIRI_INSERT_BEFORE else OMNI_NIRI_INSERT_AFTER
+        else
+            OMNI_NIRI_INSERT_SWAP;
+
+        out_result[0] = .{
+            .window_index = @as(i64, @intCast(i)),
+            .insert_position = insert_position,
+        };
+        return OMNI_OK;
+    }
+
+    return OMNI_OK;
+}
+
+export fn omni_niri_insertion_dropzone(
+    input: [*c]const OmniNiriDropzoneInput,
+    out_result: [*c]OmniNiriDropzoneResult,
+) i32 {
+    if (input == null or out_result == null) return OMNI_ERR_INVALID_ARGS;
+
+    out_result[0] = .{
+        .frame_x = 0.0,
+        .frame_y = 0.0,
+        .frame_width = 0.0,
+        .frame_height = 0.0,
+        .is_valid = 0,
+    };
+
+    const in = input[0];
+    if (in.post_insertion_count == 0) return OMNI_ERR_INVALID_ARGS;
+    if (in.insert_position != OMNI_NIRI_INSERT_BEFORE and in.insert_position != OMNI_NIRI_INSERT_AFTER and in.insert_position != OMNI_NIRI_INSERT_SWAP) {
+        return OMNI_ERR_INVALID_ARGS;
+    }
+
+    const column_height = in.column_max_y - in.column_min_y;
+    const count_f: f64 = @floatFromInt(in.post_insertion_count);
+    const total_gaps = @as(f64, @floatFromInt(in.post_insertion_count - 1)) * in.gap;
+    const new_height = @max(0.0, (column_height - total_gaps) / count_f);
+    const y = if (in.insert_position == OMNI_NIRI_INSERT_BEFORE)
+        @max(in.column_max_y, in.target_frame_y - in.gap - new_height)
+    else if (in.insert_position == OMNI_NIRI_INSERT_AFTER)
+        in.target_frame_y + in.target_frame_height + in.gap
+    else
+        in.target_frame_y;
+
+    out_result[0] = .{
+        .frame_x = in.target_frame_x,
+        .frame_y = y,
+        .frame_width = in.target_frame_width,
+        .frame_height = new_height,
+        .is_valid = 1,
+    };
 
     return OMNI_OK;
 }

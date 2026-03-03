@@ -130,6 +130,7 @@ final class NiriLayoutEngine {
 
     var resizeConfiguration = ResizeConfiguration.default
     var moveConfiguration = MoveConfiguration.default
+    var interactionSnapshots: [WorkspaceDescriptor.ID: NiriLayoutZigKernel.InteractionSnapshot] = [:]
 
     var windowMovementAnimationConfig: SpringConfig = .balanced.with(
         epsilon: 0.0001,
@@ -192,6 +193,16 @@ final class NiriLayoutEngine {
     func columns(in workspaceId: WorkspaceDescriptor.ID) -> [NiriContainer] {
         guard let root = roots[workspaceId] else { return [] }
         return root.columns
+    }
+
+    func ensureInteractionSnapshot(for workspaceId: WorkspaceDescriptor.ID) -> NiriLayoutZigKernel.InteractionSnapshot? {
+        if let snapshot = interactionSnapshots[workspaceId] {
+            return snapshot
+        }
+        guard let root = roots[workspaceId] else { return nil }
+        let snapshot = NiriLayoutZigKernel.makeInteractionSnapshot(columns: root.columns)
+        interactionSnapshots[workspaceId] = snapshot
+        return snapshot
     }
 
     func wrapIndex(_ idx: Int, total: Int) -> Int? {

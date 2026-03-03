@@ -128,30 +128,21 @@ extension NiriLayoutEngine {
         isInsertMode: Bool = false,
         in workspaceId: WorkspaceDescriptor.ID
     ) -> MoveHoverTarget? {
-        guard let root = roots[workspaceId] else { return nil }
-
-        for column in root.columns {
-            for child in column.children {
-                guard let window = child as? NiriWindow,
-                      window.id != excludingWindowId,
-                      let frame = window.frame else { continue }
-
-                if frame.contains(point) {
-                    let position: InsertPosition = if isInsertMode {
-                        point.y < frame.midY ? .before : .after
-                    } else {
-                        .swap
-                    }
-                    return .window(
-                        nodeId: window.id,
-                        handle: window.handle,
-                        insertPosition: position
-                    )
-                }
-            }
+        guard let snapshot = ensureInteractionSnapshot(for: workspaceId) else { return nil }
+        guard let result = NiriLayoutZigKernel.hitTestMoveTarget(
+            snapshot: snapshot,
+            point: point,
+            excludingWindowId: excludingWindowId,
+            isInsertMode: isInsertMode
+        ) else {
+            return nil
         }
 
-        return nil
+        return .window(
+            nodeId: result.window.id,
+            handle: result.window.handle,
+            insertPosition: result.insertPosition
+        )
     }
 
     func swapWindowsByMove(
@@ -296,35 +287,29 @@ extension NiriLayoutEngine {
         in workspaceId: WorkspaceDescriptor.ID,
         gaps: CGFloat
     ) -> CGRect? {
-        guard let targetWindow = findNode(by: targetWindowId) as? NiriWindow,
-              let targetFrame = targetWindow.frame,
-              let column = findColumn(containing: targetWindow, in: workspaceId)
+        guard let snapshot = ensureInteractionSnapshot(for: workspaceId),
+              let windowIndex = snapshot.windowIndexByNodeId[targetWindowId]
         else {
             return nil
         }
 
-        let windows = column.windowNodes
-        let n = windows.count
-        let postInsertionCount = n + 1
-        let firstFrame = windows.first?.frame
-        let lastFrame = windows.last?.frame
-        guard let bottom = firstFrame?.minY, let top = lastFrame?.maxY else { return nil }
-
-        let columnHeight = top - bottom
-        let totalGaps = CGFloat(postInsertionCount - 1) * gaps
-        let newHeight = max(0, (columnHeight - totalGaps) / CGFloat(postInsertionCount))
-        let x = targetFrame.minX
-        let width = targetFrame.width
-
-        let y: CGFloat = switch position {
-        case .before:
-            max(top, targetFrame.minY - gaps - newHeight)
-        case .after:
-            targetFrame.maxY + gaps
-        case .swap:
-            targetFrame.minY
+        let entry = snapshot.windowEntries[windowIndex]
+        guard snapshot.columnDropzoneMeta.indices.contains(entry.columnIndex),
+              let columnMeta = snapshot.columnDropzoneMeta[entry.columnIndex]
+        else {
+            return nil
         }
 
-        return CGRect(x: x, y: y, width: width, height: newHeight)
+        return NiriLayoutZigKernel.computeInsertionDropzone(
+            .init(
+                targetFrame: entry.frame,
+                columnIndex: entry.columnIndex,
+                columnMinY: columnMeta.minY,
+                columnMaxY: columnMeta.maxY,
+                postInsertionCount: columnMeta.postInsertionCount,
+                gap: gaps,
+                position: position
+            )
+        )
     }
 }

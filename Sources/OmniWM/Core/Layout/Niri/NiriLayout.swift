@@ -154,7 +154,10 @@ extension NiriLayoutEngine {
         animationTime: TimeInterval? = nil
     ) {
         let containers = columns(in: workspaceId)
-        guard !containers.isEmpty else { return }
+        guard !containers.isEmpty else {
+            interactionSnapshots.removeValue(forKey: workspaceId)
+            return
+        }
 
         let workingFrame = workingArea?.workingFrame ?? monitorFrame
         let viewFrame = workingArea?.viewFrame ?? screenFrame ?? monitorFrame
@@ -248,5 +251,7 @@ extension NiriLayoutEngine {
             }
             frames[result.window.handle] = roundedAnimatedFrame
         }
+
+        interactionSnapshots[workspaceId] = NiriLayoutZigKernel.makeInteractionSnapshot(columns: containers)
     }
 }

@@ -116,6 +116,37 @@ typedef struct {
     uint8_t edges;
 } OmniNiriResizeHitResult;
 
+typedef enum {
+    OMNI_NIRI_INSERT_BEFORE = 0,
+    OMNI_NIRI_INSERT_AFTER = 1,
+    OMNI_NIRI_INSERT_SWAP = 2
+} OmniNiriInsertPosition;
+
+typedef struct {
+    int64_t window_index;
+    uint8_t insert_position;
+} OmniNiriMoveTargetResult;
+
+typedef struct {
+    double target_frame_x;
+    double target_frame_y;
+    double target_frame_width;
+    double target_frame_height;
+    double column_min_y;
+    double column_max_y;
+    double gap;
+    uint8_t insert_position;
+    size_t post_insertion_count;
+} OmniNiriDropzoneInput;
+
+typedef struct {
+    double frame_x;
+    double frame_y;
+    double frame_width;
+    double frame_height;
+    uint8_t is_valid;
+} OmniNiriDropzoneResult;
+
 typedef struct {
     uint8_t edges;
     double start_x;
@@ -266,6 +297,19 @@ int32_t omni_niri_hit_test_resize(
     double point_y,
     double threshold,
     OmniNiriResizeHitResult *out_result);
+
+int32_t omni_niri_hit_test_move_target(
+    const OmniNiriHitTestWindow *windows,
+    size_t window_count,
+    double point_x,
+    double point_y,
+    int64_t excluding_window_index,
+    uint8_t is_insert_mode,
+    OmniNiriMoveTargetResult *out_result);
+
+int32_t omni_niri_insertion_dropzone(
+    const OmniNiriDropzoneInput *input,
+    OmniNiriDropzoneResult *out_result);
 
 int32_t omni_niri_resize_compute(
     const OmniNiriResizeInput *input,
