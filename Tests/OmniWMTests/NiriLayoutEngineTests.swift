@@ -316,4 +316,113 @@ func makeTestMonitor(
         engine.clearOrphanedViewportStates()
         #expect(engine.orphanedViewportStates.isEmpty)
     }
+
+    @Test func focusDownOrLeftFallsBackToHorizontalWithBottomRowPreference() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 8)
+        let wsId = WorkspaceDescriptor.ID()
+        let root = NiriRoot(workspaceId: wsId)
+        engine.roots[wsId] = root
+
+        let left = NiriContainer()
+        let right = NiriContainer()
+        root.appendChild(left)
+        root.appendChild(right)
+
+        let leftTop = NiriWindow(handle: makeTestHandle(pid: 60_001))
+        let leftBottom = NiriWindow(handle: makeTestHandle(pid: 60_002))
+        left.appendChild(leftTop)
+        left.appendChild(leftBottom)
+
+        let rightTop = NiriWindow(handle: makeTestHandle(pid: 60_003))
+        let rightBottom = NiriWindow(handle: makeTestHandle(pid: 60_004))
+        right.appendChild(rightTop)
+        right.appendChild(rightBottom)
+
+        left.setActiveTileIdx(0)
+        right.setActiveTileIdx(0)
+
+        var state = ViewportState()
+        state.activeColumnIndex = 1
+        state.viewOffsetPixels = .static(0)
+
+        let target = engine.focusDownOrLeft(
+            currentSelection: rightTop,
+            in: wsId,
+            state: &state,
+            workingFrame: CGRect(x: 0, y: 0, width: 1400, height: 900),
+            gaps: 8
+        )
+
+        #expect(target === leftBottom)
+    }
+
+    @Test func moveSelectionByColumnsUpdatesSourceActiveTileEvenWhenOutOfBounds() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 8, infiniteLoop: false)
+        let wsId = WorkspaceDescriptor.ID()
+        let root = NiriRoot(workspaceId: wsId)
+        engine.roots[wsId] = root
+
+        let left = NiriContainer()
+        let right = NiriContainer()
+        root.appendChild(left)
+        root.appendChild(right)
+
+        let leftWindow = NiriWindow(handle: makeTestHandle(pid: 61_001))
+        left.appendChild(leftWindow)
+
+        let rightTop = NiriWindow(handle: makeTestHandle(pid: 61_002))
+        let rightBottom = NiriWindow(handle: makeTestHandle(pid: 61_003))
+        right.appendChild(rightTop)
+        right.appendChild(rightBottom)
+
+        right.setActiveTileIdx(0)
+        let moved = engine.moveSelectionByColumns(
+            steps: 1,
+            currentSelection: rightBottom,
+            in: wsId
+        )
+
+        #expect(moved == nil)
+        #expect(right.activeTileIdx == 1)
+    }
+
+    @Test func focusWindowInTabbedColumnRefreshesVisibilityFlags() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 8)
+        let wsId = WorkspaceDescriptor.ID()
+        let root = NiriRoot(workspaceId: wsId)
+        engine.roots[wsId] = root
+
+        let column = NiriContainer()
+        column.displayMode = .tabbed
+        root.appendChild(column)
+
+        let w0 = NiriWindow(handle: makeTestHandle(pid: 62_001))
+        let w1 = NiriWindow(handle: makeTestHandle(pid: 62_002))
+        let w2 = NiriWindow(handle: makeTestHandle(pid: 62_003))
+        column.appendChild(w0)
+        column.appendChild(w1)
+        column.appendChild(w2)
+
+        column.setActiveTileIdx(0)
+        engine.updateTabbedColumnVisibility(column: column)
+
+        var state = ViewportState()
+        state.activeColumnIndex = 0
+        state.viewOffsetPixels = .static(0)
+
+        let target = engine.focusWindowInColumn(
+            2,
+            currentSelection: w0,
+            in: wsId,
+            state: &state,
+            workingFrame: CGRect(x: 0, y: 0, width: 1200, height: 900),
+            gaps: 8
+        )
+
+        #expect(target === w2)
+        #expect(column.activeTileIdx == 2)
+        #expect(w0.isHiddenInTabbedMode)
+        #expect(w1.isHiddenInTabbedMode)
+        #expect(!w2.isHiddenInTabbedMode)
+    }
 }

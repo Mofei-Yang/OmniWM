@@ -1,0 +1,6 @@
+{
+  "date": "2026-03-03",
+  "commit": "89da084c8a08dde29731b8c4a937a86eafea7eb6",
+  "navigation_p95_sec": 0.000000250,
+  "notes": "Measured from NiriZigNavigationParityTests/navigationKernelBenchmarkHarnessP95 with 9-decimal precision output."
+}

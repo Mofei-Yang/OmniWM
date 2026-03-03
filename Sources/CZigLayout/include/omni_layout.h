@@ -347,3 +347,118 @@ int32_t omni_niri_validate_state_snapshot(
     const OmniNiriStateWindowInput *windows,
     size_t window_count,
     OmniNiriStateValidationResult *out_result);
+
+typedef enum {
+    OMNI_NIRI_DIRECTION_LEFT = 0,
+    OMNI_NIRI_DIRECTION_RIGHT = 1,
+    OMNI_NIRI_DIRECTION_UP = 2,
+    OMNI_NIRI_DIRECTION_DOWN = 3
+} OmniNiriDirection;
+
+typedef enum {
+    OMNI_NIRI_NAV_OP_MOVE_BY_COLUMNS = 0,
+    OMNI_NIRI_NAV_OP_MOVE_VERTICAL = 1,
+    OMNI_NIRI_NAV_OP_FOCUS_TARGET = 2,
+    OMNI_NIRI_NAV_OP_FOCUS_DOWN_OR_LEFT = 3,
+    OMNI_NIRI_NAV_OP_FOCUS_UP_OR_RIGHT = 4,
+    OMNI_NIRI_NAV_OP_FOCUS_COLUMN_FIRST = 5,
+    OMNI_NIRI_NAV_OP_FOCUS_COLUMN_LAST = 6,
+    OMNI_NIRI_NAV_OP_FOCUS_COLUMN_INDEX = 7,
+    OMNI_NIRI_NAV_OP_FOCUS_WINDOW_INDEX = 8,
+    OMNI_NIRI_NAV_OP_FOCUS_WINDOW_TOP = 9,
+    OMNI_NIRI_NAV_OP_FOCUS_WINDOW_BOTTOM = 10
+} OmniNiriNavigationOp;
+
+typedef struct {
+    uint8_t op;
+    uint8_t direction;
+    uint8_t orientation;
+    uint8_t infinite_loop;
+    int64_t selected_window_index;
+    int64_t selected_column_index;
+    int64_t selected_row_index;
+    int64_t step;
+    int64_t target_row_index;
+    int64_t target_column_index;
+    int64_t target_window_index;
+} OmniNiriNavigationRequest;
+
+typedef struct {
+    uint8_t has_target;
+    int64_t target_window_index;
+    uint8_t update_source_active_tile;
+    int64_t source_column_index;
+    int64_t source_active_tile_idx;
+    uint8_t update_target_active_tile;
+    int64_t target_column_index;
+    int64_t target_active_tile_idx;
+    uint8_t refresh_tabbed_visibility_source;
+    uint8_t refresh_tabbed_visibility_target;
+} OmniNiriNavigationResult;
+
+int32_t omni_niri_navigation_resolve(
+    const OmniNiriStateColumnInput *columns,
+    size_t column_count,
+    const OmniNiriStateWindowInput *windows,
+    size_t window_count,
+    const OmniNiriNavigationRequest *request,
+    OmniNiriNavigationResult *out_result);
+
+typedef enum {
+    OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_VERTICAL = 0,
+    OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_VERTICAL = 1,
+    OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_HORIZONTAL = 2,
+    OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_HORIZONTAL = 3,
+    OMNI_NIRI_MUTATION_OP_SWAP_WINDOWS_BY_MOVE = 4,
+    OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE = 5
+} OmniNiriMutationOp;
+
+typedef enum {
+    OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE = 0,
+    OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOWS = 1,
+    OMNI_NIRI_MUTATION_EDIT_MOVE_WINDOW_TO_COLUMN_INDEX = 2,
+    OMNI_NIRI_MUTATION_EDIT_SWAP_COLUMN_WIDTH_STATE = 3,
+    OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOW_SIZE_HEIGHT = 4,
+    OMNI_NIRI_MUTATION_EDIT_RESET_WINDOW_SIZE_HEIGHT = 5,
+    OMNI_NIRI_MUTATION_EDIT_REMOVE_COLUMN_IF_EMPTY = 6,
+    OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY = 7,
+    OMNI_NIRI_MUTATION_EDIT_DELEGATE_MOVE_COLUMN = 8
+} OmniNiriMutationEditKind;
+
+typedef struct {
+    uint8_t op;
+    uint8_t direction;
+    uint8_t infinite_loop;
+    uint8_t insert_position;
+    int64_t source_window_index;
+    int64_t target_window_index;
+    int64_t max_windows_per_column;
+} OmniNiriMutationRequest;
+
+typedef struct {
+    uint8_t kind;
+    int64_t subject_index;
+    int64_t related_index;
+    int64_t value_a;
+    int64_t value_b;
+} OmniNiriMutationEdit;
+
+enum {
+    OMNI_NIRI_MUTATION_MAX_EDITS = 32
+};
+
+typedef struct {
+    uint8_t applied;
+    uint8_t has_target_window;
+    int64_t target_window_index;
+    size_t edit_count;
+    OmniNiriMutationEdit edits[OMNI_NIRI_MUTATION_MAX_EDITS];
+} OmniNiriMutationResult;
+
+int32_t omni_niri_mutation_plan(
+    const OmniNiriStateColumnInput *columns,
+    size_t column_count,
+    const OmniNiriStateWindowInput *windows,
+    size_t window_count,
+    const OmniNiriMutationRequest *request,
+    OmniNiriMutationResult *out_result);

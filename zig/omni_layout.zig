@@ -169,6 +169,59 @@ pub const OmniNiriStateValidationResult = extern struct {
     first_error_code: i32,
 };
 
+pub const OmniNiriNavigationRequest = extern struct {
+    op: u8,
+    direction: u8,
+    orientation: u8,
+    infinite_loop: u8,
+    selected_window_index: i64,
+    selected_column_index: i64,
+    selected_row_index: i64,
+    step: i64,
+    target_row_index: i64,
+    target_column_index: i64,
+    target_window_index: i64,
+};
+
+pub const OmniNiriNavigationResult = extern struct {
+    has_target: u8,
+    target_window_index: i64,
+    update_source_active_tile: u8,
+    source_column_index: i64,
+    source_active_tile_idx: i64,
+    update_target_active_tile: u8,
+    target_column_index: i64,
+    target_active_tile_idx: i64,
+    refresh_tabbed_visibility_source: u8,
+    refresh_tabbed_visibility_target: u8,
+};
+
+pub const OmniNiriMutationRequest = extern struct {
+    op: u8,
+    direction: u8,
+    infinite_loop: u8,
+    insert_position: u8,
+    source_window_index: i64,
+    target_window_index: i64,
+    max_windows_per_column: i64,
+};
+
+pub const OmniNiriMutationEdit = extern struct {
+    kind: u8,
+    subject_index: i64,
+    related_index: i64,
+    value_a: i64,
+    value_b: i64,
+};
+
+pub const OmniNiriMutationResult = extern struct {
+    applied: u8,
+    has_target_window: u8,
+    target_window_index: i64,
+    edit_count: usize,
+    edits: [OMNI_NIRI_MUTATION_MAX_EDITS]OmniNiriMutationEdit,
+};
+
 const Rect = struct {
     x: f64,
     y: f64,
@@ -205,6 +258,42 @@ const OMNI_NIRI_RESIZE_EDGE_RIGHT: u8 = 0b1000;
 const OMNI_NIRI_INSERT_BEFORE: u8 = 0;
 const OMNI_NIRI_INSERT_AFTER: u8 = 1;
 const OMNI_NIRI_INSERT_SWAP: u8 = 2;
+
+const OMNI_NIRI_DIRECTION_LEFT: u8 = 0;
+const OMNI_NIRI_DIRECTION_RIGHT: u8 = 1;
+const OMNI_NIRI_DIRECTION_UP: u8 = 2;
+const OMNI_NIRI_DIRECTION_DOWN: u8 = 3;
+
+const OMNI_NIRI_NAV_OP_MOVE_BY_COLUMNS: u8 = 0;
+const OMNI_NIRI_NAV_OP_MOVE_VERTICAL: u8 = 1;
+const OMNI_NIRI_NAV_OP_FOCUS_TARGET: u8 = 2;
+const OMNI_NIRI_NAV_OP_FOCUS_DOWN_OR_LEFT: u8 = 3;
+const OMNI_NIRI_NAV_OP_FOCUS_UP_OR_RIGHT: u8 = 4;
+const OMNI_NIRI_NAV_OP_FOCUS_COLUMN_FIRST: u8 = 5;
+const OMNI_NIRI_NAV_OP_FOCUS_COLUMN_LAST: u8 = 6;
+const OMNI_NIRI_NAV_OP_FOCUS_COLUMN_INDEX: u8 = 7;
+const OMNI_NIRI_NAV_OP_FOCUS_WINDOW_INDEX: u8 = 8;
+const OMNI_NIRI_NAV_OP_FOCUS_WINDOW_TOP: u8 = 9;
+const OMNI_NIRI_NAV_OP_FOCUS_WINDOW_BOTTOM: u8 = 10;
+
+const OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_VERTICAL: u8 = 0;
+const OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_VERTICAL: u8 = 1;
+const OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_HORIZONTAL: u8 = 2;
+const OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_HORIZONTAL: u8 = 3;
+const OMNI_NIRI_MUTATION_OP_SWAP_WINDOWS_BY_MOVE: u8 = 4;
+const OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE: u8 = 5;
+
+const OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE: u8 = 0;
+const OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOWS: u8 = 1;
+const OMNI_NIRI_MUTATION_EDIT_MOVE_WINDOW_TO_COLUMN_INDEX: u8 = 2;
+const OMNI_NIRI_MUTATION_EDIT_SWAP_COLUMN_WIDTH_STATE: u8 = 3;
+const OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOW_SIZE_HEIGHT: u8 = 4;
+const OMNI_NIRI_MUTATION_EDIT_RESET_WINDOW_SIZE_HEIGHT: u8 = 5;
+const OMNI_NIRI_MUTATION_EDIT_REMOVE_COLUMN_IF_EMPTY: u8 = 6;
+const OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY: u8 = 7;
+const OMNI_NIRI_MUTATION_EDIT_DELEGATE_MOVE_COLUMN: u8 = 8;
+
+const OMNI_NIRI_MUTATION_MAX_EDITS: usize = 32;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Exported entry points
@@ -310,6 +399,1177 @@ export fn omni_niri_validate_state_snapshot(
         }
     }
 
+    return OMNI_OK;
+}
+
+const SelectedContext = struct {
+    column_index: usize,
+    row_index: usize,
+    window_index: usize,
+};
+
+fn initNavigationResult(out_result: *OmniNiriNavigationResult) void {
+    out_result.* = .{
+        .has_target = 0,
+        .target_window_index = -1,
+        .update_source_active_tile = 0,
+        .source_column_index = -1,
+        .source_active_tile_idx = -1,
+        .update_target_active_tile = 0,
+        .target_column_index = -1,
+        .target_active_tile_idx = -1,
+        .refresh_tabbed_visibility_source = 0,
+        .refresh_tabbed_visibility_target = 0,
+    };
+}
+
+fn isValidNiriDirection(direction: u8) bool {
+    return switch (direction) {
+        OMNI_NIRI_DIRECTION_LEFT,
+        OMNI_NIRI_DIRECTION_RIGHT,
+        OMNI_NIRI_DIRECTION_UP,
+        OMNI_NIRI_DIRECTION_DOWN,
+        => true,
+        else => false,
+    };
+}
+
+fn isValidNavigationOp(op: u8) bool {
+    return switch (op) {
+        OMNI_NIRI_NAV_OP_MOVE_BY_COLUMNS,
+        OMNI_NIRI_NAV_OP_MOVE_VERTICAL,
+        OMNI_NIRI_NAV_OP_FOCUS_TARGET,
+        OMNI_NIRI_NAV_OP_FOCUS_DOWN_OR_LEFT,
+        OMNI_NIRI_NAV_OP_FOCUS_UP_OR_RIGHT,
+        OMNI_NIRI_NAV_OP_FOCUS_COLUMN_FIRST,
+        OMNI_NIRI_NAV_OP_FOCUS_COLUMN_LAST,
+        OMNI_NIRI_NAV_OP_FOCUS_COLUMN_INDEX,
+        OMNI_NIRI_NAV_OP_FOCUS_WINDOW_INDEX,
+        OMNI_NIRI_NAV_OP_FOCUS_WINDOW_TOP,
+        OMNI_NIRI_NAV_OP_FOCUS_WINDOW_BOTTOM,
+        => true,
+        else => false,
+    };
+}
+
+fn primaryStepForDirection(direction: u8, orientation: u8) ?i64 {
+    return switch (orientation) {
+        OMNI_NIRI_ORIENTATION_HORIZONTAL => switch (direction) {
+            OMNI_NIRI_DIRECTION_RIGHT => 1,
+            OMNI_NIRI_DIRECTION_LEFT => -1,
+            else => null,
+        },
+        OMNI_NIRI_ORIENTATION_VERTICAL => switch (direction) {
+            OMNI_NIRI_DIRECTION_DOWN => 1,
+            OMNI_NIRI_DIRECTION_UP => -1,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+fn secondaryStepForDirection(direction: u8, orientation: u8) ?i64 {
+    return switch (orientation) {
+        OMNI_NIRI_ORIENTATION_HORIZONTAL => switch (direction) {
+            OMNI_NIRI_DIRECTION_UP => 1,
+            OMNI_NIRI_DIRECTION_DOWN => -1,
+            else => null,
+        },
+        OMNI_NIRI_ORIENTATION_VERTICAL => switch (direction) {
+            OMNI_NIRI_DIRECTION_RIGHT => 1,
+            OMNI_NIRI_DIRECTION_LEFT => -1,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+fn wrappedColumnIndex(idx: i64, total: usize, infinite_loop: bool) ?usize {
+    if (total == 0) return null;
+
+    if (infinite_loop) {
+        const modulo = std.math.cast(i64, total) orelse return null;
+        const wrapped = @mod(idx, modulo);
+        return std.math.cast(usize, wrapped);
+    }
+
+    if (idx < 0) return null;
+    const casted = std.math.cast(usize, idx) orelse return null;
+    if (casted >= total) return null;
+    return casted;
+}
+
+fn parseSelectedContextRequired(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    window_count: usize,
+    request: OmniNiriNavigationRequest,
+    out_context: *SelectedContext,
+) i32 {
+    const column_index = std.math.cast(usize, request.selected_column_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    if (column_index >= column_count) return OMNI_ERR_OUT_OF_RANGE;
+    const selected_column = columns[column_index];
+    if (selected_column.window_count == 0) return OMNI_ERR_OUT_OF_RANGE;
+
+    const row_index = std.math.cast(usize, request.selected_row_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    if (row_index >= selected_column.window_count) return OMNI_ERR_OUT_OF_RANGE;
+
+    const window_index = std.math.cast(usize, request.selected_window_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    if (window_index >= window_count) return OMNI_ERR_OUT_OF_RANGE;
+
+    const expected_window_index = selected_column.window_start + row_index;
+    if (window_index != expected_window_index) return OMNI_ERR_OUT_OF_RANGE;
+
+    out_context.* = .{
+        .column_index = column_index,
+        .row_index = row_index,
+        .window_index = window_index,
+    };
+    return OMNI_OK;
+}
+
+fn parseSelectedContextOptional(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    window_count: usize,
+    request: OmniNiriNavigationRequest,
+) ?SelectedContext {
+    if (request.selected_column_index < 0 or request.selected_row_index < 0 or request.selected_window_index < 0) {
+        return null;
+    }
+
+    const column_index = std.math.cast(usize, request.selected_column_index) orelse return null;
+    if (column_index >= column_count) return null;
+    const selected_column = columns[column_index];
+    if (selected_column.window_count == 0) return null;
+
+    const row_index = std.math.cast(usize, request.selected_row_index) orelse return null;
+    if (row_index >= selected_column.window_count) return null;
+
+    const window_index = std.math.cast(usize, request.selected_window_index) orelse return null;
+    if (window_index >= window_count) return null;
+
+    const expected_window_index = selected_column.window_start + row_index;
+    if (window_index != expected_window_index) return null;
+
+    return .{
+        .column_index = column_index,
+        .row_index = row_index,
+        .window_index = window_index,
+    };
+}
+
+fn setTargetWindow(out_result: *OmniNiriNavigationResult, window_index: usize) i32 {
+    const target_window_index = std.math.cast(i64, window_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    out_result.has_target = 1;
+    out_result.target_window_index = target_window_index;
+    return OMNI_OK;
+}
+
+fn setSourceActiveTile(out_result: *OmniNiriNavigationResult, column_index: usize, row_index: usize) i32 {
+    out_result.update_source_active_tile = 1;
+    out_result.source_column_index = std.math.cast(i64, column_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    out_result.source_active_tile_idx = std.math.cast(i64, row_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    return OMNI_OK;
+}
+
+fn setTargetActiveTile(out_result: *OmniNiriNavigationResult, column_index: usize, row_index: usize) i32 {
+    out_result.update_target_active_tile = 1;
+    out_result.target_column_index = std.math.cast(i64, column_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    out_result.target_active_tile_idx = std.math.cast(i64, row_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    return OMNI_OK;
+}
+
+fn resolveMoveByColumns(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    selected: SelectedContext,
+    step: i64,
+    target_row_index: i64,
+    infinite_loop: bool,
+    out_result: *OmniNiriNavigationResult,
+) i32 {
+    if (target_row_index < -1) return OMNI_ERR_INVALID_ARGS;
+    if (step == 0) {
+        return setTargetWindow(out_result, selected.window_index);
+    }
+
+    const source_rc = setSourceActiveTile(out_result, selected.column_index, selected.row_index);
+    if (source_rc != OMNI_OK) return source_rc;
+
+    if (column_count == 0) return OMNI_OK;
+
+    const source_col_i64 = std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    const raw_target_col = std.math.add(i64, source_col_i64, step) catch return OMNI_ERR_OUT_OF_RANGE;
+    const target_column_index = wrappedColumnIndex(raw_target_col, column_count, infinite_loop) orelse return OMNI_OK;
+    const target_column = columns[target_column_index];
+    if (target_column.window_count == 0) return OMNI_OK;
+
+    const target_row: usize = if (target_row_index >= 0)
+        if (std.math.cast(usize, target_row_index)) |row_candidate|
+            @min(row_candidate, target_column.window_count - 1)
+        else
+            target_column.window_count - 1
+    else
+        target_column.active_tile_idx;
+
+    const target_window_index = target_column.window_start + target_row;
+    return setTargetWindow(out_result, target_window_index);
+}
+
+fn resolveMoveVertical(
+    columns: [*c]const OmniNiriStateColumnInput,
+    selected: SelectedContext,
+    step: i64,
+    out_result: *OmniNiriNavigationResult,
+) i32 {
+    if (step == 0) return OMNI_OK;
+    const selected_column = columns[selected.column_index];
+    if (selected_column.window_count == 0) return OMNI_OK;
+
+    if (selected_column.is_tabbed != 0) {
+        const active_i64 = std.math.cast(i64, selected_column.active_tile_idx) orelse return OMNI_ERR_OUT_OF_RANGE;
+        const next_i64 = std.math.add(i64, active_i64, step) catch return OMNI_OK;
+        if (next_i64 < 0) return OMNI_OK;
+        const next_row_index = std.math.cast(usize, next_i64) orelse return OMNI_OK;
+        if (next_row_index >= selected_column.window_count) return OMNI_OK;
+
+        const target_window_index = selected_column.window_start + next_row_index;
+        const target_rc = setTargetWindow(out_result, target_window_index);
+        if (target_rc != OMNI_OK) return target_rc;
+        const update_rc = setTargetActiveTile(out_result, selected.column_index, next_row_index);
+        if (update_rc != OMNI_OK) return update_rc;
+        out_result.refresh_tabbed_visibility_target = 1;
+        return OMNI_OK;
+    }
+
+    const selected_row_i64 = std.math.cast(i64, selected.row_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    const next_i64 = std.math.add(i64, selected_row_i64, step) catch return OMNI_OK;
+    if (next_i64 < 0) return OMNI_OK;
+    const next_row_index = std.math.cast(usize, next_i64) orelse return OMNI_OK;
+    if (next_row_index >= selected_column.window_count) return OMNI_OK;
+
+    const target_window_index = selected_column.window_start + next_row_index;
+    const target_rc = setTargetWindow(out_result, target_window_index);
+    if (target_rc != OMNI_OK) return target_rc;
+    return setTargetActiveTile(out_result, selected.column_index, next_row_index);
+}
+
+fn resolveFocusColumnByIndex(
+    columns: [*c]const OmniNiriStateColumnInput,
+    target_column_index: usize,
+    selected: ?SelectedContext,
+    out_result: *OmniNiriNavigationResult,
+) i32 {
+    if (selected) |ctx| {
+        const source_rc = setSourceActiveTile(out_result, ctx.column_index, ctx.row_index);
+        if (source_rc != OMNI_OK) return source_rc;
+    }
+
+    const target_column = columns[target_column_index];
+    if (target_column.window_count == 0) return OMNI_OK;
+
+    const target_row = @min(target_column.active_tile_idx, target_column.window_count - 1);
+    const target_window_index = target_column.window_start + target_row;
+    return setTargetWindow(out_result, target_window_index);
+}
+
+fn resolveFocusWindowInSelectedColumn(
+    columns: [*c]const OmniNiriStateColumnInput,
+    selected: SelectedContext,
+    target_row_index: usize,
+    out_result: *OmniNiriNavigationResult,
+) i32 {
+    const selected_column = columns[selected.column_index];
+    if (target_row_index >= selected_column.window_count) return OMNI_ERR_OUT_OF_RANGE;
+
+    const target_window_index = selected_column.window_start + target_row_index;
+    const target_rc = setTargetWindow(out_result, target_window_index);
+    if (target_rc != OMNI_OK) return target_rc;
+    const update_rc = setTargetActiveTile(out_result, selected.column_index, target_row_index);
+    if (update_rc != OMNI_OK) return update_rc;
+    if (selected_column.is_tabbed != 0) {
+        out_result.refresh_tabbed_visibility_target = 1;
+    }
+    return OMNI_OK;
+}
+
+export fn omni_niri_navigation_resolve(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    windows: [*c]const OmniNiriStateWindowInput,
+    window_count: usize,
+    request: [*c]const OmniNiriNavigationRequest,
+    out_result: [*c]OmniNiriNavigationResult,
+) i32 {
+    if (request == null or out_result == null) return OMNI_ERR_INVALID_ARGS;
+    if (column_count > 0 and columns == null) return OMNI_ERR_INVALID_ARGS;
+    if (window_count > 0 and windows == null) return OMNI_ERR_INVALID_ARGS;
+
+    var resolved_result: OmniNiriNavigationResult = undefined;
+    initNavigationResult(&resolved_result);
+
+    var state_validation = OmniNiriStateValidationResult{
+        .column_count = column_count,
+        .window_count = window_count,
+        .first_invalid_column_index = -1,
+        .first_invalid_window_index = -1,
+        .first_error_code = OMNI_OK,
+    };
+    const state_rc = omni_niri_validate_state_snapshot(
+        columns,
+        column_count,
+        windows,
+        window_count,
+        &state_validation,
+    );
+    if (state_rc != OMNI_OK) return state_rc;
+
+    const req = request[0];
+    if (!isValidNavigationOp(req.op)) return OMNI_ERR_INVALID_ARGS;
+
+    const rc: i32 = blk: {
+        switch (req.op) {
+            OMNI_NIRI_NAV_OP_MOVE_BY_COLUMNS => {
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+                break :blk resolveMoveByColumns(
+                    columns,
+                    column_count,
+                    selected,
+                    req.step,
+                    req.target_row_index,
+                    req.infinite_loop != 0,
+                    &resolved_result,
+                );
+            },
+            OMNI_NIRI_NAV_OP_MOVE_VERTICAL => {
+                const orientation = parseNiriOrientation(req.orientation) orelse break :blk OMNI_ERR_INVALID_ARGS;
+                if (!isValidNiriDirection(req.direction)) break :blk OMNI_ERR_INVALID_ARGS;
+                const step = secondaryStepForDirection(req.direction, orientation) orelse break :blk OMNI_OK;
+
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+                break :blk resolveMoveVertical(columns, selected, step, &resolved_result);
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_TARGET => {
+                const orientation = parseNiriOrientation(req.orientation) orelse break :blk OMNI_ERR_INVALID_ARGS;
+                if (!isValidNiriDirection(req.direction)) break :blk OMNI_ERR_INVALID_ARGS;
+
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+
+                if (primaryStepForDirection(req.direction, orientation)) |step| {
+                    break :blk resolveMoveByColumns(
+                        columns,
+                        column_count,
+                        selected,
+                        step,
+                        -1,
+                        req.infinite_loop != 0,
+                        &resolved_result,
+                    );
+                }
+
+                if (secondaryStepForDirection(req.direction, orientation)) |step| {
+                    break :blk resolveMoveVertical(columns, selected, step, &resolved_result);
+                }
+                break :blk OMNI_OK;
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_DOWN_OR_LEFT => {
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+
+                const vertical_step = secondaryStepForDirection(
+                    OMNI_NIRI_DIRECTION_DOWN,
+                    OMNI_NIRI_ORIENTATION_HORIZONTAL,
+                ) orelse break :blk OMNI_ERR_INVALID_ARGS;
+
+                const vertical_rc = resolveMoveVertical(columns, selected, vertical_step, &resolved_result);
+                if (vertical_rc != OMNI_OK) break :blk vertical_rc;
+                if (resolved_result.has_target != 0) break :blk OMNI_OK;
+
+                break :blk resolveMoveByColumns(
+                    columns,
+                    column_count,
+                    selected,
+                    -1,
+                    std.math.maxInt(i64),
+                    req.infinite_loop != 0,
+                    &resolved_result,
+                );
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_UP_OR_RIGHT => {
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+
+                const vertical_step = secondaryStepForDirection(
+                    OMNI_NIRI_DIRECTION_UP,
+                    OMNI_NIRI_ORIENTATION_HORIZONTAL,
+                ) orelse break :blk OMNI_ERR_INVALID_ARGS;
+
+                const vertical_rc = resolveMoveVertical(columns, selected, vertical_step, &resolved_result);
+                if (vertical_rc != OMNI_OK) break :blk vertical_rc;
+                if (resolved_result.has_target != 0) break :blk OMNI_OK;
+
+                break :blk resolveMoveByColumns(
+                    columns,
+                    column_count,
+                    selected,
+                    1,
+                    -1,
+                    req.infinite_loop != 0,
+                    &resolved_result,
+                );
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_COLUMN_FIRST => {
+                if (column_count == 0) break :blk OMNI_OK;
+                const selected = parseSelectedContextOptional(columns, column_count, window_count, req);
+                break :blk resolveFocusColumnByIndex(columns, 0, selected, &resolved_result);
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_COLUMN_LAST => {
+                if (column_count == 0) break :blk OMNI_OK;
+                const selected = parseSelectedContextOptional(columns, column_count, window_count, req);
+                break :blk resolveFocusColumnByIndex(columns, column_count - 1, selected, &resolved_result);
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_COLUMN_INDEX => {
+                if (column_count == 0) break :blk OMNI_OK;
+                const target_column_index = std.math.cast(usize, req.target_column_index) orelse break :blk OMNI_ERR_OUT_OF_RANGE;
+                if (target_column_index >= column_count) break :blk OMNI_ERR_OUT_OF_RANGE;
+                const selected = parseSelectedContextOptional(columns, column_count, window_count, req);
+                break :blk resolveFocusColumnByIndex(columns, target_column_index, selected, &resolved_result);
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_WINDOW_INDEX => {
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+                const target_row_index = std.math.cast(usize, req.target_window_index) orelse break :blk OMNI_ERR_OUT_OF_RANGE;
+                break :blk resolveFocusWindowInSelectedColumn(columns, selected, target_row_index, &resolved_result);
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_WINDOW_TOP => {
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+                break :blk resolveFocusWindowInSelectedColumn(columns, selected, 0, &resolved_result);
+            },
+            OMNI_NIRI_NAV_OP_FOCUS_WINDOW_BOTTOM => {
+                var selected: SelectedContext = undefined;
+                const selected_rc = parseSelectedContextRequired(
+                    columns,
+                    column_count,
+                    window_count,
+                    req,
+                    &selected,
+                );
+                if (selected_rc != OMNI_OK) break :blk selected_rc;
+                const selected_column = columns[selected.column_index];
+                if (selected_column.window_count == 0) break :blk OMNI_OK;
+                break :blk resolveFocusWindowInSelectedColumn(
+                    columns,
+                    selected,
+                    selected_column.window_count - 1,
+                    &resolved_result,
+                );
+            },
+            else => break :blk OMNI_ERR_INVALID_ARGS,
+        }
+    };
+
+    out_result[0] = resolved_result;
+    return rc;
+}
+
+fn initMutationResult(out_result: *OmniNiriMutationResult) void {
+    const empty_edit = OmniNiriMutationEdit{
+        .kind = OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+        .subject_index = -1,
+        .related_index = -1,
+        .value_a = -1,
+        .value_b = -1,
+    };
+    out_result.* = .{
+        .applied = 0,
+        .has_target_window = 0,
+        .target_window_index = -1,
+        .edit_count = 0,
+        .edits = [_]OmniNiriMutationEdit{empty_edit} ** OMNI_NIRI_MUTATION_MAX_EDITS,
+    };
+}
+
+fn addMutationEdit(
+    out_result: *OmniNiriMutationResult,
+    kind: u8,
+    subject_index: i64,
+    related_index: i64,
+    value_a: i64,
+    value_b: i64,
+) i32 {
+    if (out_result.edit_count >= OMNI_NIRI_MUTATION_MAX_EDITS) return OMNI_ERR_OUT_OF_RANGE;
+    out_result.edits[out_result.edit_count] = .{
+        .kind = kind,
+        .subject_index = subject_index,
+        .related_index = related_index,
+        .value_a = value_a,
+        .value_b = value_b,
+    };
+    out_result.edit_count += 1;
+    return OMNI_OK;
+}
+
+fn setMutationTargetWindow(out_result: *OmniNiriMutationResult, window_index: usize) i32 {
+    const target_i64 = std.math.cast(i64, window_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    out_result.has_target_window = 1;
+    out_result.target_window_index = target_i64;
+    return OMNI_OK;
+}
+
+fn isValidMutationOp(op: u8) bool {
+    return switch (op) {
+        OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_VERTICAL,
+        OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_VERTICAL,
+        OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_HORIZONTAL,
+        OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_HORIZONTAL,
+        OMNI_NIRI_MUTATION_OP_SWAP_WINDOWS_BY_MOVE,
+        OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE,
+        => true,
+        else => false,
+    };
+}
+
+fn parseWindowContextByIndex(
+    columns: [*c]const OmniNiriStateColumnInput,
+    windows: [*c]const OmniNiriStateWindowInput,
+    column_count: usize,
+    window_count: usize,
+    window_index_raw: i64,
+    out_context: *SelectedContext,
+) i32 {
+    const window_index = std.math.cast(usize, window_index_raw) orelse return OMNI_ERR_OUT_OF_RANGE;
+    if (window_index >= window_count) return OMNI_ERR_OUT_OF_RANGE;
+
+    const column_index = windows[window_index].column_index;
+    if (column_index >= column_count) return OMNI_ERR_OUT_OF_RANGE;
+
+    const column = columns[column_index];
+    if (window_index < column.window_start) return OMNI_ERR_OUT_OF_RANGE;
+    if (window_index >= column.window_start + column.window_count) return OMNI_ERR_OUT_OF_RANGE;
+
+    out_context.* = .{
+        .column_index = column_index,
+        .row_index = window_index - column.window_start,
+        .window_index = window_index,
+    };
+    return OMNI_OK;
+}
+
+fn adjustedTabbedActiveAfterRemoval(column: OmniNiriStateColumnInput, removed_row: usize) usize {
+    if (column.window_count == 0) return 0;
+    var active = column.active_tile_idx;
+
+    if (removed_row == active) {
+        if (column.window_count > 1 and removed_row >= column.window_count - 1) {
+            active = if (removed_row > 0) removed_row - 1 else 0;
+        }
+    } else if (removed_row < active) {
+        active = if (active > 0) active - 1 else 0;
+    }
+
+    return active;
+}
+
+fn clampedActiveAfterRemoval(column: OmniNiriStateColumnInput) usize {
+    if (column.window_count <= 1) return 0;
+    const max_idx_after = column.window_count - 2;
+    return @min(column.active_tile_idx, max_idx_after);
+}
+
+fn planMoveWindowVertical(
+    columns: [*c]const OmniNiriStateColumnInput,
+    selected: SelectedContext,
+    direction: u8,
+    out_result: *OmniNiriMutationResult,
+) i32 {
+    const source_column = columns[selected.column_index];
+    if (source_column.window_count == 0) return OMNI_OK;
+
+    const target_row_opt: ?usize = switch (direction) {
+        OMNI_NIRI_DIRECTION_UP => if (selected.row_index + 1 < source_column.window_count) selected.row_index + 1 else null,
+        OMNI_NIRI_DIRECTION_DOWN => if (selected.row_index > 0) selected.row_index - 1 else null,
+        else => return OMNI_ERR_INVALID_ARGS,
+    };
+
+    const target_row = target_row_opt orelse return OMNI_OK;
+    const target_window_index = source_column.window_start + target_row;
+
+    var rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOWS,
+        std.math.cast(i64, selected.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target_window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    if (source_column.is_tabbed != 0) {
+        if (selected.row_index == source_column.active_tile_idx) {
+            rc = addMutationEdit(
+                out_result,
+                OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+                std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+                std.math.cast(i64, target_row) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+            );
+            if (rc != OMNI_OK) return rc;
+        } else if (target_row == source_column.active_tile_idx) {
+            rc = addMutationEdit(
+                out_result,
+                OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+                std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+                std.math.cast(i64, selected.row_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+            );
+            if (rc != OMNI_OK) return rc;
+        }
+    }
+
+    rc = setMutationTargetWindow(out_result, selected.window_index);
+    if (rc != OMNI_OK) return rc;
+    out_result.applied = 1;
+    return OMNI_OK;
+}
+
+fn planMoveWindowHorizontal(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    selected: SelectedContext,
+    direction: u8,
+    infinite_loop: bool,
+    max_windows_per_column: usize,
+    out_result: *OmniNiriMutationResult,
+) i32 {
+    const source_column = columns[selected.column_index];
+    const source_col_i64 = std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    const step: i64 = switch (direction) {
+        OMNI_NIRI_DIRECTION_RIGHT => 1,
+        OMNI_NIRI_DIRECTION_LEFT => -1,
+        else => return OMNI_ERR_INVALID_ARGS,
+    };
+
+    const target_col_index = wrappedColumnIndex(source_col_i64 + step, column_count, infinite_loop) orelse return OMNI_OK;
+    if (target_col_index == selected.column_index) return OMNI_OK;
+    const target_column = columns[target_col_index];
+    if (target_column.window_count >= max_windows_per_column) return OMNI_OK;
+
+    var rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_MOVE_WINDOW_TO_COLUMN_INDEX,
+        std.math.cast(i64, selected.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target_col_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target_column.window_count) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    if (source_column.is_tabbed != 0) {
+        const remaining_count = source_column.window_count - 1;
+        if (remaining_count > 0) {
+            const updated_active = adjustedTabbedActiveAfterRemoval(source_column, selected.row_index);
+            rc = addMutationEdit(
+                out_result,
+                OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+                std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+                std.math.cast(i64, updated_active) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+            );
+            if (rc != OMNI_OK) return rc;
+            rc = addMutationEdit(
+                out_result,
+                OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY,
+                std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+                -1,
+                -1,
+            );
+            if (rc != OMNI_OK) return rc;
+        }
+    } else {
+        const remaining_count = source_column.window_count - 1;
+        if (remaining_count > 0) {
+            const clamped_active = @min(source_column.active_tile_idx, remaining_count - 1);
+            rc = addMutationEdit(
+                out_result,
+                OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+                std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+                std.math.cast(i64, clamped_active) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+            );
+            if (rc != OMNI_OK) return rc;
+        }
+    }
+
+    if (target_column.is_tabbed != 0) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY,
+            std.math.cast(i64, target_col_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            -1,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_REMOVE_COLUMN_IF_EMPTY,
+        std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        -1,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    rc = setMutationTargetWindow(out_result, selected.window_index);
+    if (rc != OMNI_OK) return rc;
+    out_result.applied = 1;
+    return OMNI_OK;
+}
+
+fn planSwapWindowHorizontal(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    selected: SelectedContext,
+    direction: u8,
+    infinite_loop: bool,
+    out_result: *OmniNiriMutationResult,
+) i32 {
+    const source_col_i64 = std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE;
+    const step: i64 = switch (direction) {
+        OMNI_NIRI_DIRECTION_RIGHT => 1,
+        OMNI_NIRI_DIRECTION_LEFT => -1,
+        else => return OMNI_ERR_INVALID_ARGS,
+    };
+
+    const target_col_index = wrappedColumnIndex(source_col_i64 + step, column_count, infinite_loop) orelse return OMNI_OK;
+    if (target_col_index == selected.column_index) return OMNI_OK;
+
+    const source_column = columns[selected.column_index];
+    const target_column = columns[target_col_index];
+    if (target_column.window_count == 0) return OMNI_OK;
+
+    if (source_column.window_count == 1 and target_column.window_count == 1) {
+        const rc_delegate = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_DELEGATE_MOVE_COLUMN,
+            std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            std.math.cast(i64, direction) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+        );
+        if (rc_delegate != OMNI_OK) return rc_delegate;
+        out_result.applied = 1;
+        return OMNI_OK;
+    }
+
+    const source_active_row = @min(source_column.active_tile_idx, source_column.window_count - 1);
+    const target_active_row = @min(target_column.active_tile_idx, target_column.window_count - 1);
+    const source_active_window = source_column.window_start + source_active_row;
+    const target_active_window = target_column.window_start + target_active_row;
+
+    var rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOWS,
+        std.math.cast(i64, source_active_window) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target_active_window) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_SWAP_COLUMN_WIDTH_STATE,
+        std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target_col_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+        std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        std.math.cast(i64, source_active_row) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+        std.math.cast(i64, target_col_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        std.math.cast(i64, target_active_row) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    if (source_column.is_tabbed != 0) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY,
+            std.math.cast(i64, selected.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            -1,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+    if (target_column.is_tabbed != 0) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY,
+            std.math.cast(i64, target_col_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            -1,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    rc = setMutationTargetWindow(out_result, source_active_window);
+    if (rc != OMNI_OK) return rc;
+    out_result.applied = 1;
+    return OMNI_OK;
+}
+
+fn planSwapWindowsByMove(
+    columns: [*c]const OmniNiriStateColumnInput,
+    source: SelectedContext,
+    target: SelectedContext,
+    out_result: *OmniNiriMutationResult,
+) i32 {
+    const source_column = columns[source.column_index];
+    const target_column = columns[target.column_index];
+
+    var rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOWS,
+        std.math.cast(i64, source.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    if (source.column_index != target.column_index) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOW_SIZE_HEIGHT,
+            std.math.cast(i64, source.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            std.math.cast(i64, target.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    if (source_column.is_tabbed != 0) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+            std.math.cast(i64, source.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            std.math.cast(i64, @min(source_column.active_tile_idx, source_column.window_count - 1)) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    if (target.column_index != source.column_index and target_column.is_tabbed != 0) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+            std.math.cast(i64, target.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            std.math.cast(i64, @min(target_column.active_tile_idx, target_column.window_count - 1)) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    rc = setMutationTargetWindow(out_result, source.window_index);
+    if (rc != OMNI_OK) return rc;
+    out_result.applied = 1;
+    return OMNI_OK;
+}
+
+fn planInsertWindowByMove(
+    columns: [*c]const OmniNiriStateColumnInput,
+    source: SelectedContext,
+    target: SelectedContext,
+    insert_position: u8,
+    out_result: *OmniNiriMutationResult,
+) i32 {
+    if (insert_position != OMNI_NIRI_INSERT_BEFORE and insert_position != OMNI_NIRI_INSERT_AFTER) {
+        return OMNI_ERR_INVALID_ARGS;
+    }
+
+    const source_column = columns[source.column_index];
+    const target_column = columns[target.column_index];
+    const same_column = source.column_index == target.column_index;
+
+    var insert_row: usize = 0;
+    if (same_column) {
+        var current_target_row = target.row_index;
+        if (source.row_index < target.row_index and current_target_row > 0) {
+            current_target_row -= 1;
+        }
+        insert_row = if (insert_position == OMNI_NIRI_INSERT_BEFORE) current_target_row else current_target_row + 1;
+    } else {
+        insert_row = if (insert_position == OMNI_NIRI_INSERT_BEFORE) target.row_index else target.row_index + 1;
+    }
+
+    var rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_MOVE_WINDOW_TO_COLUMN_INDEX,
+        std.math.cast(i64, source.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, target.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        std.math.cast(i64, insert_row) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    rc = addMutationEdit(
+        out_result,
+        OMNI_NIRI_MUTATION_EDIT_RESET_WINDOW_SIZE_HEIGHT,
+        std.math.cast(i64, source.window_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+        -1,
+        -1,
+        -1,
+    );
+    if (rc != OMNI_OK) return rc;
+
+    if (!same_column and source_column.window_count == 1) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_REMOVE_COLUMN_IF_EMPTY,
+            std.math.cast(i64, source.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            -1,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    if (same_column) {
+        if (source_column.is_tabbed != 0) {
+            const source_active_same = @min(source_column.active_tile_idx, source_column.window_count - 1);
+            rc = addMutationEdit(
+                out_result,
+                OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+                std.math.cast(i64, source.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+                std.math.cast(i64, source_active_same) orelse return OMNI_ERR_OUT_OF_RANGE,
+                -1,
+            );
+            if (rc != OMNI_OK) return rc;
+        }
+    } else if (source_column.window_count > 1) {
+        const source_active = clampedActiveAfterRemoval(source_column);
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+            std.math.cast(i64, source.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            std.math.cast(i64, source_active) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    if (target_column.is_tabbed != 0) {
+        rc = addMutationEdit(
+            out_result,
+            OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE,
+            std.math.cast(i64, target.column_index) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+            std.math.cast(i64, @min(target_column.active_tile_idx, target_column.window_count - 1)) orelse return OMNI_ERR_OUT_OF_RANGE,
+            -1,
+        );
+        if (rc != OMNI_OK) return rc;
+    }
+
+    rc = setMutationTargetWindow(out_result, source.window_index);
+    if (rc != OMNI_OK) return rc;
+    out_result.applied = 1;
+    return OMNI_OK;
+}
+
+export fn omni_niri_mutation_plan(
+    columns: [*c]const OmniNiriStateColumnInput,
+    column_count: usize,
+    windows: [*c]const OmniNiriStateWindowInput,
+    window_count: usize,
+    request: [*c]const OmniNiriMutationRequest,
+    out_result: [*c]OmniNiriMutationResult,
+) i32 {
+    if (request == null or out_result == null) return OMNI_ERR_INVALID_ARGS;
+    if (column_count > 0 and columns == null) return OMNI_ERR_INVALID_ARGS;
+    if (window_count > 0 and windows == null) return OMNI_ERR_INVALID_ARGS;
+
+    var resolved_result: OmniNiriMutationResult = undefined;
+    initMutationResult(&resolved_result);
+
+    var state_validation = OmniNiriStateValidationResult{
+        .column_count = column_count,
+        .window_count = window_count,
+        .first_invalid_column_index = -1,
+        .first_invalid_window_index = -1,
+        .first_error_code = OMNI_OK,
+    };
+    const state_rc = omni_niri_validate_state_snapshot(
+        columns,
+        column_count,
+        windows,
+        window_count,
+        &state_validation,
+    );
+    if (state_rc != OMNI_OK) return state_rc;
+
+    const req = request[0];
+    if (!isValidMutationOp(req.op)) return OMNI_ERR_INVALID_ARGS;
+
+    var source: SelectedContext = undefined;
+    const source_rc = parseWindowContextByIndex(
+        columns,
+        windows,
+        column_count,
+        window_count,
+        req.source_window_index,
+        &source,
+    );
+    if (source_rc != OMNI_OK) return source_rc;
+
+    const rc: i32 = blk: {
+        switch (req.op) {
+            OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_VERTICAL,
+            OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_VERTICAL,
+            => break :blk planMoveWindowVertical(columns, source, req.direction, &resolved_result),
+            OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_HORIZONTAL => {
+                const max_windows_per_column = std.math.cast(usize, req.max_windows_per_column) orelse break :blk OMNI_ERR_INVALID_ARGS;
+                if (max_windows_per_column == 0) break :blk OMNI_ERR_INVALID_ARGS;
+                break :blk planMoveWindowHorizontal(
+                    columns,
+                    column_count,
+                    source,
+                    req.direction,
+                    req.infinite_loop != 0,
+                    max_windows_per_column,
+                    &resolved_result,
+                );
+            },
+            OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_HORIZONTAL => break :blk planSwapWindowHorizontal(
+                columns,
+                column_count,
+                source,
+                req.direction,
+                req.infinite_loop != 0,
+                &resolved_result,
+            ),
+            OMNI_NIRI_MUTATION_OP_SWAP_WINDOWS_BY_MOVE => {
+                var target: SelectedContext = undefined;
+                const target_rc = parseWindowContextByIndex(
+                    columns,
+                    windows,
+                    column_count,
+                    window_count,
+                    req.target_window_index,
+                    &target,
+                );
+                if (target_rc != OMNI_OK) break :blk target_rc;
+                break :blk planSwapWindowsByMove(columns, source, target, &resolved_result);
+            },
+            OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE => {
+                var target: SelectedContext = undefined;
+                const target_rc = parseWindowContextByIndex(
+                    columns,
+                    windows,
+                    column_count,
+                    window_count,
+                    req.target_window_index,
+                    &target,
+                );
+                if (target_rc != OMNI_OK) break :blk target_rc;
+                break :blk planInsertWindowByMove(
+                    columns,
+                    source,
+                    target,
+                    req.insert_position,
+                    &resolved_result,
+                );
+            },
+            else => break :blk OMNI_ERR_INVALID_ARGS,
+        }
+    };
+
+    if (rc != OMNI_OK) return rc;
+
+    out_result[0] = resolved_result;
     return OMNI_OK;
 }
 

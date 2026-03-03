@@ -160,51 +160,26 @@ extension NiriLayoutEngine {
             return false
         }
 
-        guard let sourceColumn = findColumn(containing: sourceWindow, in: workspaceId),
-              let targetColumn = findColumn(containing: targetWindow, in: workspaceId)
-        else {
+        guard let plan = planMutation(
+            op: .swapWindowsByMove,
+            sourceWindow: sourceWindow,
+            targetWindow: targetWindow,
+            in: workspaceId
+        ) else {
             return false
         }
 
-        if sourceColumn.id == targetColumn.id {
-            sourceWindow.swapWith(targetWindow)
-
-            if sourceColumn.isTabbed {
-                sourceColumn.clampActiveTileIdx()
-            }
-        } else {
-            guard let sourceIdx = sourceColumn.children.firstIndex(where: { $0.id == sourceWindowId }),
-                  let targetIdx = targetColumn.children.firstIndex(where: { $0.id == targetWindowId })
-            else {
-                return false
-            }
-
-            let sourceSize = sourceWindow.size
-            let sourceHeight = sourceWindow.height
-            let targetSize = targetWindow.size
-            let targetHeight = targetWindow.height
-
-            sourceWindow.detach()
-            targetWindow.detach()
-
-            sourceColumn.insertChild(targetWindow, at: sourceIdx)
-            targetColumn.insertChild(sourceWindow, at: targetIdx)
-
-            sourceWindow.size = targetSize
-            sourceWindow.height = targetHeight
-            targetWindow.size = sourceSize
-            targetWindow.height = sourceHeight
-
-            if sourceColumn.isTabbed {
-                sourceColumn.clampActiveTileIdx()
-            }
-            if targetColumn.isTabbed {
-                targetColumn.clampActiveTileIdx()
-            }
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return false
         }
 
         ensureSelectionVisible(
-            node: sourceWindow,
+            node: applyOutcome.targetWindow ?? sourceWindow,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
@@ -230,47 +205,27 @@ extension NiriLayoutEngine {
             return false
         }
 
-        guard let sourceColumn = findColumn(containing: sourceWindow, in: workspaceId),
-              let targetColumn = findColumn(containing: targetWindow, in: workspaceId)
-        else {
+        guard let plan = planMutation(
+            op: .insertWindowByMove,
+            sourceWindow: sourceWindow,
+            targetWindow: targetWindow,
+            insertPosition: position,
+            in: workspaceId
+        ) else {
             return false
         }
 
-        guard let targetIdx = targetColumn.children.firstIndex(where: { $0.id == targetWindowId }) else {
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
             return false
-        }
-
-        let sameColumn = sourceColumn.id == targetColumn.id
-        let sourceColumnWillBeEmpty = sourceColumn.children.count == 1 && !sameColumn
-
-        sourceWindow.detach()
-
-        let insertIdx: Int
-        if sameColumn {
-            let currentTargetIdx = targetColumn.children.firstIndex(where: { $0.id == targetWindowId }) ?? targetIdx
-            insertIdx = position == .before ? currentTargetIdx : currentTargetIdx + 1
-        } else {
-            insertIdx = position == .before ? targetIdx : targetIdx + 1
-        }
-
-        targetColumn.insertChild(sourceWindow, at: insertIdx)
-
-        sourceWindow.size = 1.0
-        sourceWindow.height = .default
-
-        if sourceColumnWillBeEmpty {
-            sourceColumn.remove()
-        }
-
-        if sourceColumn.isTabbed {
-            sourceColumn.clampActiveTileIdx()
-        }
-        if targetColumn.isTabbed {
-            targetColumn.clampActiveTileIdx()
         }
 
         ensureSelectionVisible(
-            node: sourceWindow,
+            node: applyOutcome.targetWindow ?? sourceWindow,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,

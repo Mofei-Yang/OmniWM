@@ -1,11 +1,116 @@
 import AppKit
+import CZigLayout
 import Foundation
 
 extension NiriLayoutEngine {
-    private func updateActiveTileIdx(for nodeId: NodeId, in col: NiriContainer) {
-        let windowNodes = col.windowNodes
-        let idx = windowNodes.firstIndex(where: { $0.id == nodeId }) ?? 0
-        col.setActiveTileIdx(idx)
+    private func applyNavigationResult(
+        snapshot: NiriStateZigKernel.Snapshot,
+        result: OmniNiriNavigationResult
+    ) {
+        func refreshColumn(at rawColumnIndex: Int64) {
+            guard let columnIndex = Int(exactly: rawColumnIndex),
+                  snapshot.columnEntries.indices.contains(columnIndex)
+            else {
+                return
+            }
+            updateTabbedColumnVisibility(column: snapshot.columnEntries[columnIndex].column)
+        }
+
+        func applyActiveUpdate(
+            enabled: UInt8,
+            rawColumnIndex: Int64,
+            rawActiveIndex: Int64,
+            refreshFlag: UInt8
+        ) {
+            guard enabled != 0,
+                  let columnIndex = Int(exactly: rawColumnIndex),
+                  let activeIndex = Int(exactly: rawActiveIndex),
+                  snapshot.columnEntries.indices.contains(columnIndex)
+            else {
+                return
+            }
+
+            let column = snapshot.columnEntries[columnIndex].column
+            column.setActiveTileIdx(activeIndex)
+            if refreshFlag != 0 {
+                updateTabbedColumnVisibility(column: column)
+            }
+        }
+
+        applyActiveUpdate(
+            enabled: result.update_source_active_tile,
+            rawColumnIndex: result.source_column_index,
+            rawActiveIndex: result.source_active_tile_idx,
+            refreshFlag: result.refresh_tabbed_visibility_source
+        )
+        applyActiveUpdate(
+            enabled: result.update_target_active_tile,
+            rawColumnIndex: result.target_column_index,
+            rawActiveIndex: result.target_active_tile_idx,
+            refreshFlag: result.refresh_tabbed_visibility_target
+        )
+
+        if result.update_source_active_tile == 0,
+           result.refresh_tabbed_visibility_source != 0
+        {
+            refreshColumn(at: result.source_column_index)
+        }
+
+        if result.update_target_active_tile == 0,
+           result.refresh_tabbed_visibility_target != 0
+        {
+            refreshColumn(at: result.target_column_index)
+        }
+    }
+
+    private func resolveNavigation(
+        snapshot: NiriStateZigKernel.Snapshot,
+        op: NiriStateZigKernel.NavigationOp,
+        currentSelection: NiriNode,
+        direction: Direction? = nil,
+        orientation: Monitor.Orientation = .horizontal,
+        step: Int = 0,
+        targetRowIndex: Int = -1,
+        targetColumnIndex: Int = -1,
+        targetWindowIndex: Int = -1,
+        allowMissingSelection: Bool = false
+    ) -> NiriStateZigKernel.NavigationOutcome? {
+        let selection = NiriStateZigKernel.makeSelectionContext(node: currentSelection, snapshot: snapshot)
+        if selection == nil, !allowMissingSelection {
+            return nil
+        }
+
+        let request = NiriStateZigKernel.NavigationRequest(
+            op: op,
+            selection: selection,
+            direction: direction,
+            orientation: orientation,
+            infiniteLoop: infiniteLoop,
+            step: step,
+            targetRowIndex: targetRowIndex,
+            targetColumnIndex: targetColumnIndex,
+            targetWindowIndex: targetWindowIndex
+        )
+
+        let outcome = NiriStateZigKernel.resolveNavigation(snapshot: snapshot, request: request)
+        guard outcome.rc == OMNI_OK else {
+            return nil
+        }
+
+        applyNavigationResult(snapshot: snapshot, result: outcome.result)
+        return outcome
+    }
+
+    private func targetNode(
+        from outcome: NiriStateZigKernel.NavigationOutcome,
+        snapshot: NiriStateZigKernel.Snapshot
+    ) -> NiriNode? {
+        guard let targetIndex = outcome.targetWindowIndex,
+              snapshot.windowEntries.indices.contains(targetIndex)
+        else {
+            return nil
+        }
+        return snapshot.windowEntries[targetIndex].window
     }
 
     func moveSelectionByColumns(
@@ -16,27 +121,20 @@ extension NiriLayoutEngine {
     ) -> NiriNode? {
         guard steps != 0 else { return currentSelection }
 
-        let cols = columns(in: workspaceId)
-        guard !cols.isEmpty else { return nil }
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
 
-        guard let currentColumn = column(of: currentSelection),
-              let currentIdx = columnIndex(of: currentColumn, in: workspaceId)
-        else {
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .moveByColumns,
+            currentSelection: currentSelection,
+            step: steps,
+            targetRowIndex: targetRowIndex ?? -1
+        ) else {
             return nil
         }
 
-        updateActiveTileIdx(for: currentSelection.id, in: currentColumn)
-
-        guard let targetIdx = wrapIndex(currentIdx + steps, total: cols.count) else {
-            return nil
-        }
-
-        let targetColumn = cols[targetIdx]
-        let targetRows = targetColumn.windowNodes
-        guard !targetRows.isEmpty else { return targetColumn.firstChild() }
-
-        let clampedRowIndex = min(targetRowIndex ?? targetColumn.activeTileIdx, targetRows.count - 1)
-        return targetRows[clampedRowIndex]
+        return targetNode(from: outcome, snapshot: snapshot)
     }
 
     func moveSelectionHorizontal(
@@ -115,50 +213,26 @@ extension NiriLayoutEngine {
         orientation: Monitor.Orientation,
         workspaceId: WorkspaceDescriptor.ID? = nil
     ) -> NiriNode? {
+        _ = workspaceId
+
         guard let step = direction.secondaryStep(for: orientation) else { return nil }
 
         guard let container = column(of: currentSelection) else {
             return step > 0 ? currentSelection.nextSibling() : currentSelection.prevSibling()
         }
 
-        if container.isTabbed {
-            return moveSelectionWithinContainerTabbed(
-                direction: direction,
-                in: container,
-                orientation: orientation
-            )
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: [container])
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .moveVertical,
+            currentSelection: currentSelection,
+            direction: direction,
+            orientation: orientation
+        ) else {
+            return nil
         }
 
-        let target = step > 0 ? currentSelection.nextSibling() : currentSelection.prevSibling()
-
-        if let target {
-            let windowNodes = container.windowNodes
-            if let idx = windowNodes.firstIndex(where: { $0 === target }) {
-                container.setActiveTileIdx(idx)
-            }
-        }
-
-        return target
-    }
-
-    private func moveSelectionWithinContainerTabbed(
-        direction: Direction,
-        in container: NiriContainer,
-        orientation: Monitor.Orientation
-    ) -> NiriNode? {
-        guard let step = direction.secondaryStep(for: orientation) else { return nil }
-
-        let windows = container.windowNodes
-        guard !windows.isEmpty else { return nil }
-
-        let currentIdx = container.activeTileIdx
-        let newIdx = currentIdx + step
-        guard newIdx >= 0, newIdx < windows.count else { return nil }
-
-        container.setActiveTileIdx(newIdx)
-        updateTabbedColumnVisibility(column: container)
-
-        return windows[newIdx]
+        return targetNode(from: outcome, snapshot: snapshot)
     }
 
     func ensureSelectionVisible(
@@ -227,69 +301,32 @@ extension NiriLayoutEngine {
         gaps: CGFloat,
         orientation: Monitor.Orientation = .horizontal
     ) -> NiriNode? {
-        if direction.primaryStep(for: orientation) != nil {
-            return moveSelectionCrossContainer(
-                direction: direction,
-                currentSelection: currentSelection,
-                in: workspaceId,
-                state: &state,
-                workingFrame: workingFrame,
-                gaps: gaps,
-                orientation: orientation
-            )
-        }
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
 
-        let target = moveSelectionWithinContainer(
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusTarget,
+            currentSelection: currentSelection,
             direction: direction,
-            currentSelection: currentSelection,
             orientation: orientation
-        )
-
-        if let target {
-            ensureSelectionVisible(
-                node: target,
-                in: workspaceId,
-                state: &state,
-                workingFrame: workingFrame,
-                gaps: gaps,
-                alwaysCenterSingleColumn: alwaysCenterSingleColumn,
-                orientation: orientation
-            )
-        }
-        return target
-    }
-
-    private func focusCombined(
-        verticalDirection: Direction,
-        horizontalDirection: Direction,
-        currentSelection: NiriNode,
-        in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState,
-        workingFrame: CGRect,
-        gaps: CGFloat,
-        targetRowIndex: Int? = nil
-    ) -> NiriNode? {
-        if let target = moveSelectionVertical(direction: verticalDirection, currentSelection: currentSelection) {
-            ensureSelectionVisible(
-                node: target,
-                in: workspaceId,
-                state: &state,
-                workingFrame: workingFrame,
-                gaps: gaps,
-                alwaysCenterSingleColumn: alwaysCenterSingleColumn
-            )
-            return target
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
         }
 
-        return moveSelectionHorizontal(
-            direction: horizontalDirection,
-            currentSelection: currentSelection,
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
             gaps: gaps,
-            targetRowIndex: targetRowIndex
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn,
+            orientation: orientation
         )
+
+        return target
     }
 
     func focusDownOrLeft(
@@ -299,16 +336,29 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        focusCombined(
-            verticalDirection: .down,
-            horizontalDirection: .left,
-            currentSelection: currentSelection,
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
+
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusDownOrLeft,
+            currentSelection: currentSelection
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
+        }
+
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
             gaps: gaps,
-            targetRowIndex: Int.max
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
+        return target
     }
 
     func focusUpOrRight(
@@ -318,39 +368,19 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        focusCombined(
-            verticalDirection: .up,
-            horizontalDirection: .right,
-            currentSelection: currentSelection,
-            in: workspaceId,
-            state: &state,
-            workingFrame: workingFrame,
-            gaps: gaps
-        )
-    }
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
 
-    private func focusColumnByIndex(
-        _ targetIndex: Int,
-        currentSelection: NiriNode,
-        in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState,
-        workingFrame: CGRect,
-        gaps: CGFloat
-    ) -> NiriNode? {
-        let cols = columns(in: workspaceId)
-        guard cols.indices.contains(targetIndex) else { return nil }
-
-        if let currentColumn = column(of: currentSelection) {
-            updateActiveTileIdx(for: currentSelection.id, in: currentColumn)
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusUpOrRight,
+            currentSelection: currentSelection
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
         }
 
-        state.activatePrevColumnOnRemoval = nil
-
-        let targetColumn = cols[targetIndex]
-        let windows = targetColumn.windowNodes
-        guard !windows.isEmpty else { return targetColumn.firstChild() }
-
-        let target = windows[min(targetColumn.activeTileIdx, windows.count - 1)]
         ensureSelectionVisible(
             node: target,
             in: workspaceId,
@@ -359,6 +389,7 @@ extension NiriLayoutEngine {
             gaps: gaps,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
         return target
     }
 
@@ -369,14 +400,32 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        focusColumnByIndex(
-            0,
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
+
+        state.activatePrevColumnOnRemoval = nil
+
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusColumnFirst,
             currentSelection: currentSelection,
+            allowMissingSelection: true
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
+        }
+
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
-            gaps: gaps
+            gaps: gaps,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
+        return target
     }
 
     func focusColumnLast(
@@ -386,16 +435,32 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        let cols = columns(in: workspaceId)
-        guard !cols.isEmpty else { return nil }
-        return focusColumnByIndex(
-            cols.count - 1,
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
+
+        state.activatePrevColumnOnRemoval = nil
+
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusColumnLast,
             currentSelection: currentSelection,
+            allowMissingSelection: true
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
+        }
+
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
-            gaps: gaps
+            gaps: gaps,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
+        return target
     }
 
     func focusColumn(
@@ -406,14 +471,33 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        focusColumnByIndex(
-            columnIndex,
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard snapshot.columnEntries.indices.contains(columnIndex) else { return nil }
+
+        state.activatePrevColumnOnRemoval = nil
+
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusColumnIndex,
             currentSelection: currentSelection,
+            targetColumnIndex: columnIndex,
+            allowMissingSelection: true
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
+        }
+
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
-            gaps: gaps
+            gaps: gaps,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
+        return target
     }
 
     func focusWindowInColumn(
@@ -424,17 +508,20 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        guard let currentColumn = column(of: currentSelection) else { return nil }
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
 
-        let windows = currentColumn.windowNodes
-        guard windows.indices.contains(windowIndex) else { return nil }
-
-        currentColumn.setActiveTileIdx(windowIndex)
-        if currentColumn.isTabbed {
-            updateTabbedColumnVisibility(column: currentColumn)
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusWindowIndex,
+            currentSelection: currentSelection,
+            targetWindowIndex: windowIndex
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
         }
 
-        let target = windows[windowIndex]
         ensureSelectionVisible(
             node: target,
             in: workspaceId,
@@ -443,6 +530,7 @@ extension NiriLayoutEngine {
             gaps: gaps,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
         return target
     }
 
@@ -453,14 +541,29 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        focusWindowInColumn(
-            0,
-            currentSelection: currentSelection,
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
+
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusWindowTop,
+            currentSelection: currentSelection
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
+        }
+
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
-            gaps: gaps
+            gaps: gaps,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
+        return target
     }
 
     func focusWindowBottom(
@@ -470,17 +573,29 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> NiriNode? {
-        guard let currentColumn = column(of: currentSelection) else { return nil }
-        let windows = currentColumn.windowNodes
-        guard !windows.isEmpty else { return nil }
-        return focusWindowInColumn(
-            windows.count - 1,
-            currentSelection: currentSelection,
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+        guard !snapshot.columnEntries.isEmpty else { return nil }
+
+        guard let outcome = resolveNavigation(
+            snapshot: snapshot,
+            op: .focusWindowBottom,
+            currentSelection: currentSelection
+        ),
+            let target = targetNode(from: outcome, snapshot: snapshot)
+        else {
+            return nil
+        }
+
+        ensureSelectionVisible(
+            node: target,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
-            gaps: gaps
+            gaps: gaps,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
+
+        return target
     }
 
     func focusPrevious(
