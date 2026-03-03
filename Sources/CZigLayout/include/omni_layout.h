@@ -343,12 +343,14 @@ typedef struct {
     size_t window_count;
     size_t active_tile_idx;
     uint8_t is_tabbed;
+    double size_value;
 } OmniNiriStateColumnInput;
 
 typedef struct {
     OmniUuid128 window_id;
     OmniUuid128 column_id;
     size_t column_index;
+    double size_value;
 } OmniNiriStateWindowInput;
 
 typedef struct {
@@ -432,7 +434,17 @@ typedef enum {
     OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_HORIZONTAL = 2,
     OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_HORIZONTAL = 3,
     OMNI_NIRI_MUTATION_OP_SWAP_WINDOWS_BY_MOVE = 4,
-    OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE = 5
+    OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE = 5,
+    OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_TO_COLUMN = 6,
+    OMNI_NIRI_MUTATION_OP_CREATE_COLUMN_AND_MOVE = 7,
+    OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_IN_NEW_COLUMN = 8,
+    OMNI_NIRI_MUTATION_OP_MOVE_COLUMN = 9,
+    OMNI_NIRI_MUTATION_OP_CONSUME_WINDOW = 10,
+    OMNI_NIRI_MUTATION_OP_EXPEL_WINDOW = 11,
+    OMNI_NIRI_MUTATION_OP_CLEANUP_EMPTY_COLUMN = 12,
+    OMNI_NIRI_MUTATION_OP_NORMALIZE_COLUMN_SIZES = 13,
+    OMNI_NIRI_MUTATION_OP_NORMALIZE_WINDOW_SIZES = 14,
+    OMNI_NIRI_MUTATION_OP_BALANCE_SIZES = 15
 } OmniNiriMutationOp;
 
 typedef enum {
@@ -444,7 +456,13 @@ typedef enum {
     OMNI_NIRI_MUTATION_EDIT_RESET_WINDOW_SIZE_HEIGHT = 5,
     OMNI_NIRI_MUTATION_EDIT_REMOVE_COLUMN_IF_EMPTY = 6,
     OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY = 7,
-    OMNI_NIRI_MUTATION_EDIT_DELEGATE_MOVE_COLUMN = 8
+    OMNI_NIRI_MUTATION_EDIT_DELEGATE_MOVE_COLUMN = 8,
+    OMNI_NIRI_MUTATION_EDIT_CREATE_COLUMN_ADJACENT_AND_MOVE_WINDOW = 9,
+    OMNI_NIRI_MUTATION_EDIT_INSERT_NEW_COLUMN_AT_INDEX_AND_MOVE_WINDOW = 10,
+    OMNI_NIRI_MUTATION_EDIT_SWAP_COLUMNS = 11,
+    OMNI_NIRI_MUTATION_EDIT_NORMALIZE_COLUMNS_BY_FACTOR = 12,
+    OMNI_NIRI_MUTATION_EDIT_NORMALIZE_COLUMN_WINDOWS_BY_FACTOR = 13,
+    OMNI_NIRI_MUTATION_EDIT_BALANCE_COLUMNS = 14
 } OmniNiriMutationEditKind;
 
 typedef struct {
@@ -455,6 +473,10 @@ typedef struct {
     int64_t source_window_index;
     int64_t target_window_index;
     int64_t max_windows_per_column;
+    int64_t source_column_index;
+    int64_t target_column_index;
+    int64_t insert_column_index;
+    int64_t max_visible_columns;
 } OmniNiriMutationRequest;
 
 typedef struct {
@@ -463,6 +485,8 @@ typedef struct {
     int64_t related_index;
     int64_t value_a;
     int64_t value_b;
+    double scalar_a;
+    double scalar_b;
 } OmniNiriMutationEdit;
 
 enum {

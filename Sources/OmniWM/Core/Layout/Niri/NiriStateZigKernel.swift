@@ -61,6 +61,16 @@ enum NiriStateZigKernel {
         case swapWindowHorizontal
         case swapWindowsByMove
         case insertWindowByMove
+        case moveWindowToColumn
+        case createColumnAndMove
+        case insertWindowInNewColumn
+        case moveColumn
+        case consumeWindow
+        case expelWindow
+        case cleanupEmptyColumn
+        case normalizeColumnSizes
+        case normalizeWindowSizes
+        case balanceSizes
     }
 
     enum MutationEditKind: UInt8 {
@@ -73,6 +83,12 @@ enum NiriStateZigKernel {
         case removeColumnIfEmpty = 6
         case refreshTabbedVisibility = 7
         case delegateMoveColumn = 8
+        case createColumnAdjacentAndMoveWindow = 9
+        case insertNewColumnAtIndexAndMoveWindow = 10
+        case swapColumns = 11
+        case normalizeColumnsByFactor = 12
+        case normalizeColumnWindowsByFactor = 13
+        case balanceColumns = 14
     }
 
     struct NavigationRequest {
@@ -121,15 +137,23 @@ enum NiriStateZigKernel {
         let infiniteLoop: Bool
         let insertPosition: InsertPosition?
         let maxWindowsPerColumn: Int
+        let sourceColumnIndex: Int
+        let targetColumnIndex: Int
+        let insertColumnIndex: Int
+        let maxVisibleColumns: Int
 
         init(
             op: MutationOp,
-            sourceWindowIndex: Int,
+            sourceWindowIndex: Int = -1,
             targetWindowIndex: Int = -1,
             direction: Direction? = nil,
             infiniteLoop: Bool = false,
             insertPosition: InsertPosition? = nil,
-            maxWindowsPerColumn: Int = 1
+            maxWindowsPerColumn: Int = 1,
+            sourceColumnIndex: Int = -1,
+            targetColumnIndex: Int = -1,
+            insertColumnIndex: Int = -1,
+            maxVisibleColumns: Int = -1
         ) {
             self.op = op
             self.sourceWindowIndex = sourceWindowIndex
@@ -138,6 +162,10 @@ enum NiriStateZigKernel {
             self.infiniteLoop = infiniteLoop
             self.insertPosition = insertPosition
             self.maxWindowsPerColumn = maxWindowsPerColumn
+            self.sourceColumnIndex = sourceColumnIndex
+            self.targetColumnIndex = targetColumnIndex
+            self.insertColumnIndex = insertColumnIndex
+            self.maxVisibleColumns = maxVisibleColumns
         }
     }
 
@@ -157,6 +185,26 @@ enum NiriStateZigKernel {
         let relatedIndex: Int
         let valueA: Int
         let valueB: Int
+        let scalarA: Double
+        let scalarB: Double
+
+        init(
+            kind: MutationEditKind,
+            subjectIndex: Int,
+            relatedIndex: Int,
+            valueA: Int,
+            valueB: Int,
+            scalarA: Double = 0,
+            scalarB: Double = 0
+        ) {
+            self.kind = kind
+            self.subjectIndex = subjectIndex
+            self.relatedIndex = relatedIndex
+            self.valueA = valueA
+            self.valueB = valueB
+            self.scalarA = scalarA
+            self.scalarB = scalarB
+        }
     }
 
     struct MutationOutcome {
@@ -226,10 +274,30 @@ enum NiriStateZigKernel {
             return 4
         case .insertWindowByMove:
             return 5
+        case .moveWindowToColumn:
+            return 6
+        case .createColumnAndMove:
+            return 7
+        case .insertWindowInNewColumn:
+            return 8
+        case .moveColumn:
+            return 9
+        case .consumeWindow:
+            return 10
+        case .expelWindow:
+            return 11
+        case .cleanupEmptyColumn:
+            return 12
+        case .normalizeColumnSizes:
+            return 13
+        case .normalizeWindowSizes:
+            return 14
+        case .balanceSizes:
+            return 15
         }
     }
 
-    private static func directionCode(_ direction: Direction?) -> UInt8 {
+    private static func navigationDirectionCode(_ direction: Direction?) -> UInt8 {
         switch direction {
         case .left:
             return 0
@@ -241,6 +309,22 @@ enum NiriStateZigKernel {
             return 3
         case nil:
             return 0
+        }
+    }
+
+    private static func mutationDirectionCode(_ direction: Direction?) -> UInt8 {
+        switch direction {
+        case .left:
+            return 0
+        case .right:
+            return 1
+        case .up:
+            return 2
+        case .down:
+            return 3
+        case nil:
+            // Direction-required mutation ops must reject unspecified direction.
+            return 0xFF
         }
     }
 
@@ -321,7 +405,8 @@ enum NiriStateZigKernel {
                     OmniNiriStateWindowInput(
                         window_id: omniUUID(from: window.id),
                         column_id: columnId,
-                        column_index: columnIndex
+                        column_index: columnIndex,
+                        size_value: Double(window.size)
                     )
                 )
             }
@@ -332,7 +417,8 @@ enum NiriStateZigKernel {
                     window_start: start,
                     window_count: windows.count,
                     active_tile_idx: max(0, column.activeTileIdx),
-                    is_tabbed: column.isTabbed ? 1 : 0
+                    is_tabbed: column.isTabbed ? 1 : 0,
+                    size_value: Double(column.size)
                 )
             )
         }
@@ -421,7 +507,7 @@ enum NiriStateZigKernel {
 
         let rawRequest = OmniNiriNavigationRequest(
             op: navigationOpCode(request.op),
-            direction: directionCode(request.direction),
+            direction: navigationDirectionCode(request.direction),
             orientation: orientationCode(request.orientation),
             infinite_loop: request.infiniteLoop ? 1 : 0,
             selected_window_index: Int64(request.selectedWindowIndex),
@@ -481,12 +567,16 @@ enum NiriStateZigKernel {
 
         let rawRequest = OmniNiriMutationRequest(
             op: mutationOpCode(request.op),
-            direction: directionCode(request.direction),
+            direction: mutationDirectionCode(request.direction),
             infinite_loop: request.infiniteLoop ? 1 : 0,
             insert_position: insertPositionCode(request.insertPosition),
             source_window_index: Int64(request.sourceWindowIndex),
             target_window_index: Int64(request.targetWindowIndex),
-            max_windows_per_column: Int64(request.maxWindowsPerColumn)
+            max_windows_per_column: Int64(request.maxWindowsPerColumn),
+            source_column_index: Int64(request.sourceColumnIndex),
+            target_column_index: Int64(request.targetColumnIndex),
+            insert_column_index: Int64(request.insertColumnIndex),
+            max_visible_columns: Int64(request.maxVisibleColumns)
         )
 
         let rc: Int32 = snapshot.columns.withUnsafeBufferPointer { columnBuf in
@@ -518,7 +608,7 @@ enum NiriStateZigKernel {
             targetWindowIndex = nil
         }
 
-        let maxEdits = 32
+        let maxEdits = Int(OMNI_NIRI_MUTATION_MAX_EDITS)
         let requestedCount = Int(rawResult.edit_count)
         let editCount = max(0, min(maxEdits, requestedCount))
         var edits: [MutationEdit] = []
@@ -545,7 +635,9 @@ enum NiriStateZigKernel {
                         subjectIndex: subjectIndex,
                         relatedIndex: relatedIndex,
                         valueA: valueA,
-                        valueB: valueB
+                        valueB: valueB,
+                        scalarA: rawEdit.scalar_a,
+                        scalarB: rawEdit.scalar_b
                     )
                 )
             }

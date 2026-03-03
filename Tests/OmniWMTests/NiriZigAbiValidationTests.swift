@@ -138,13 +138,13 @@ private func runLayoutPass(columns: [OmniNiriColumnInput], windows: [OmniNiriWin
         let c0 = makeUUID(1)
         let c1 = makeUUID(2)
         let columns = [
-            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 2, active_tile_idx: 0, is_tabbed: 0),
-            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 2, active_tile_idx: 0, is_tabbed: 0)
+            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 2, active_tile_idx: 0, is_tabbed: 0, size_value: 1),
+            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 2, active_tile_idx: 0, is_tabbed: 0, size_value: 1)
         ]
         let windows = [
-            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c0, column_index: 0),
-            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c0, column_index: 0),
-            OmniNiriStateWindowInput(window_id: makeUUID(12), column_id: c1, column_index: 1)
+            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c0, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c0, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(12), column_id: c1, column_index: 1, size_value: 1)
         ]
 
         let outcome = validateState(columns: columns, windows: windows)
@@ -156,13 +156,13 @@ private func runLayoutPass(columns: [OmniNiriColumnInput], windows: [OmniNiriWin
         let c0 = makeUUID(1)
         let c1 = makeUUID(2)
         let columns = [
-            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0),
-            OmniNiriStateColumnInput(column_id: c1, window_start: 2, window_count: 1, active_tile_idx: 0, is_tabbed: 0)
+            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1),
+            OmniNiriStateColumnInput(column_id: c1, window_start: 2, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1)
         ]
         let windows = [
-            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c0, column_index: 0),
-            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c0, column_index: 0),
-            OmniNiriStateWindowInput(window_id: makeUUID(12), column_id: c1, column_index: 1)
+            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c0, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c0, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(12), column_id: c1, column_index: 1, size_value: 1)
         ]
 
         let outcome = validateState(columns: columns, windows: windows)
@@ -174,12 +174,12 @@ private func runLayoutPass(columns: [OmniNiriColumnInput], windows: [OmniNiriWin
         let c0 = makeUUID(1)
         let c1 = makeUUID(2)
         let columns = [
-            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0),
-            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0)
+            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1),
+            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1)
         ]
         let windows = [
-            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c0, column_index: 1),
-            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c1, column_index: 1)
+            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c0, column_index: 1, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c1, column_index: 1, size_value: 1)
         ]
 
         let outcome = validateState(columns: columns, windows: windows)
@@ -191,12 +191,12 @@ private func runLayoutPass(columns: [OmniNiriColumnInput], windows: [OmniNiriWin
         let c0 = makeUUID(1)
         let c1 = makeUUID(2)
         let columns = [
-            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0),
-            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0)
+            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1),
+            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1)
         ]
         let windows = [
-            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c1, column_index: 0),
-            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c1, column_index: 1)
+            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: c1, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: c1, column_index: 1, size_value: 1)
         ]
 
         let outcome = validateState(columns: columns, windows: windows)
@@ -207,12 +207,12 @@ private func runLayoutPass(columns: [OmniNiriColumnInput], windows: [OmniNiriWin
     @Test func stateValidationRejectsDuplicateColumnIds() {
         let duplicate = makeUUID(7)
         let columns = [
-            OmniNiriStateColumnInput(column_id: duplicate, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0),
-            OmniNiriStateColumnInput(column_id: duplicate, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0)
+            OmniNiriStateColumnInput(column_id: duplicate, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1),
+            OmniNiriStateColumnInput(column_id: duplicate, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1)
         ]
         let windows = [
-            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: duplicate, column_index: 0),
-            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: duplicate, column_index: 1)
+            OmniNiriStateWindowInput(window_id: makeUUID(10), column_id: duplicate, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: makeUUID(11), column_id: duplicate, column_index: 1, size_value: 1)
         ]
 
         let outcome = validateState(columns: columns, windows: windows)
@@ -225,12 +225,12 @@ private func runLayoutPass(columns: [OmniNiriColumnInput], windows: [OmniNiriWin
         let c1 = makeUUID(2)
         let duplicateWindow = makeUUID(9)
         let columns = [
-            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0),
-            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0)
+            OmniNiriStateColumnInput(column_id: c0, window_start: 0, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1),
+            OmniNiriStateColumnInput(column_id: c1, window_start: 1, window_count: 1, active_tile_idx: 0, is_tabbed: 0, size_value: 1)
         ]
         let windows = [
-            OmniNiriStateWindowInput(window_id: duplicateWindow, column_id: c0, column_index: 0),
-            OmniNiriStateWindowInput(window_id: duplicateWindow, column_id: c1, column_index: 1)
+            OmniNiriStateWindowInput(window_id: duplicateWindow, column_id: c0, column_index: 0, size_value: 1),
+            OmniNiriStateWindowInput(window_id: duplicateWindow, column_id: c1, column_index: 1, size_value: 1)
         ]
 
         let outcome = validateState(columns: columns, windows: windows)

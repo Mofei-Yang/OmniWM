@@ -2,32 +2,110 @@ import AppKit
 import Foundation
 
 extension NiriLayoutEngine {
+    private func validatedSourceColumn(
+        for window: NiriWindow,
+        expectedSourceColumn: NiriContainer,
+        in workspaceId: WorkspaceDescriptor.ID
+    ) -> NiriContainer? {
+        guard let actualSourceColumn = findColumn(containing: window, in: workspaceId),
+              actualSourceColumn === expectedSourceColumn
+        else {
+            return nil
+        }
+        return actualSourceColumn
+    }
+
+    private func planColumnMutation(
+        op: NiriStateZigKernel.MutationOp,
+        sourceWindow: NiriWindow? = nil,
+        sourceColumn: NiriContainer? = nil,
+        targetColumn: NiriContainer? = nil,
+        insertColumnIndex: Int = -1,
+        direction: Direction? = nil,
+        in workspaceId: WorkspaceDescriptor.ID,
+        maxVisibleColumns: Int = -1
+    ) -> (snapshot: NiriStateZigKernel.Snapshot, outcome: NiriStateZigKernel.MutationOutcome)? {
+        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
+
+        let sourceWindowIndex: Int
+        if let sourceWindow {
+            guard let resolvedSourceWindow = snapshot.windowIndexByNodeId[sourceWindow.id] else {
+                return nil
+            }
+            sourceWindowIndex = resolvedSourceWindow
+        } else {
+            sourceWindowIndex = -1
+        }
+
+        let sourceColumnIndex: Int
+        if let sourceColumn {
+            guard let resolvedSourceColumn = snapshot.columnIndexByNodeId[sourceColumn.id] else {
+                return nil
+            }
+            sourceColumnIndex = resolvedSourceColumn
+        } else {
+            sourceColumnIndex = -1
+        }
+
+        let targetColumnIndex: Int
+        if let targetColumn {
+            guard let resolvedTargetColumn = snapshot.columnIndexByNodeId[targetColumn.id] else {
+                return nil
+            }
+            targetColumnIndex = resolvedTargetColumn
+        } else {
+            targetColumnIndex = -1
+        }
+
+        let request = NiriStateZigKernel.MutationRequest(
+            op: op,
+            sourceWindowIndex: sourceWindowIndex,
+            direction: direction,
+            infiniteLoop: infiniteLoop,
+            maxWindowsPerColumn: maxWindowsPerColumn,
+            sourceColumnIndex: sourceColumnIndex,
+            targetColumnIndex: targetColumnIndex,
+            insertColumnIndex: insertColumnIndex,
+            maxVisibleColumns: maxVisibleColumns
+        )
+
+        let outcome = NiriStateZigKernel.resolveMutation(snapshot: snapshot, request: request)
+        guard outcome.rc == 0 else {
+            return nil
+        }
+
+        return (snapshot, outcome)
+    }
+
     func moveWindowToColumn(
         _ node: NiriWindow,
         from sourceColumn: NiriContainer,
         to targetColumn: NiriContainer,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state _: inout ViewportState
     ) {
-        let sourceWasTabbed = sourceColumn.displayMode == .tabbed
-        sourceColumn.adjustActiveTileIdxForRemoval(of: node)
-
-        node.detach()
-        targetColumn.appendChild(node)
-
-        if sourceWasTabbed, !sourceColumn.children.isEmpty {
-            sourceColumn.clampActiveTileIdx()
-            updateTabbedColumnVisibility(column: sourceColumn)
+        guard validatedSourceColumn(
+            for: node,
+            expectedSourceColumn: sourceColumn,
+            in: workspaceId
+        ) != nil else {
+            return
         }
 
-        if targetColumn.displayMode == .tabbed {
-            node.isHiddenInTabbedMode = true
-            updateTabbedColumnVisibility(column: targetColumn)
-        } else {
-            node.isHiddenInTabbedMode = false
+        guard let plan = planColumnMutation(
+            op: .moveWindowToColumn,
+            sourceWindow: node,
+            targetColumn: targetColumn,
+            in: workspaceId
+        ) else {
+            return
         }
 
-        cleanupEmptyColumn(sourceColumn, in: workspaceId, state: &state)
+        _ = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
     }
 
     func createColumnAndMove(
@@ -39,44 +117,56 @@ extension NiriLayoutEngine {
         gaps: CGFloat,
         workingAreaWidth: CGFloat
     ) {
-        guard let root = roots[workspaceId] else { return }
-
-        let sourceWasTabbed = sourceColumn.displayMode == .tabbed
-        sourceColumn.adjustActiveTileIdxForRemoval(of: node)
-
-        let newColumn = NiriContainer()
-        newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
-
-        if direction == .right {
-            root.insertAfter(newColumn, reference: sourceColumn)
-        } else {
-            root.insertBefore(newColumn, reference: sourceColumn)
+        guard validatedSourceColumn(
+            for: node,
+            expectedSourceColumn: sourceColumn,
+            in: workspaceId
+        ) != nil else {
+            return
         }
 
-        if let newColIdx = columnIndex(of: newColumn, in: workspaceId) {
-            if newColIdx == state.activeColumnIndex + 1 {
-                state.activatePrevColumnOnRemoval = state.stationary()
-            }
-            animateColumnsForAddition(
-                columnIndex: newColIdx,
-                in: workspaceId,
-                state: state,
-                gaps: gaps,
-                workingAreaWidth: workingAreaWidth
-            )
+        let insertionDirection: Direction = direction == .right ? .right : .left
+
+        guard let plan = planColumnMutation(
+            op: .createColumnAndMove,
+            sourceWindow: node,
+            direction: insertionDirection,
+            in: workspaceId,
+            maxVisibleColumns: maxVisibleColumns
+        ) else {
+            return
         }
 
-        node.detach()
-        newColumn.appendChild(node)
-
-        node.isHiddenInTabbedMode = false
-
-        if sourceWasTabbed, !sourceColumn.children.isEmpty {
-            sourceColumn.clampActiveTileIdx()
-            updateTabbedColumnVisibility(column: sourceColumn)
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return
         }
 
-        cleanupEmptyColumn(sourceColumn, in: workspaceId, state: &state)
+        // Strict planner-applier contract: target-producing mutations must resolve a target window.
+        guard let movedWindow = applyOutcome.targetWindow else {
+            return
+        }
+        guard let newColumn = findColumn(containing: movedWindow, in: workspaceId),
+              let newColIdx = columnIndex(of: newColumn, in: workspaceId)
+        else {
+            return
+        }
+
+        if newColIdx == state.activeColumnIndex + 1 {
+            state.activatePrevColumnOnRemoval = state.stationary()
+        }
+
+        animateColumnsForAddition(
+            columnIndex: newColIdx,
+            in: workspaceId,
+            state: state,
+            gaps: gaps,
+            workingAreaWidth: workingAreaWidth
+        )
     }
 
     func insertWindowInNewColumn(
@@ -87,24 +177,32 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> Bool {
-        guard let root = roots[workspaceId] else { return false }
-        guard let sourceColumn = findColumn(containing: window, in: workspaceId) else { return false }
-
-        let sourceWasTabbed = sourceColumn.displayMode == .tabbed
-        sourceColumn.adjustActiveTileIdxForRemoval(of: window)
-
-        let newColumn = NiriContainer()
-        newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
-
-        let cols = columns(in: workspaceId)
-        let clampedIndex = insertIndex.clamped(to: 0 ... cols.count)
-        if clampedIndex >= cols.count {
-            root.appendChild(newColumn)
-        } else {
-            root.insertBefore(newColumn, reference: cols[clampedIndex])
+        guard let plan = planColumnMutation(
+            op: .insertWindowInNewColumn,
+            sourceWindow: window,
+            insertColumnIndex: insertIndex,
+            in: workspaceId,
+            maxVisibleColumns: maxVisibleColumns
+        ) else {
+            return false
         }
 
-        if let newColIdx = columnIndex(of: newColumn, in: workspaceId) {
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return false
+        }
+
+        // Strict planner-applier contract: target-producing mutations must resolve a target window.
+        guard let movedWindow = applyOutcome.targetWindow else {
+            return false
+        }
+        if let newColumn = findColumn(containing: movedWindow, in: workspaceId),
+           let newColIdx = columnIndex(of: newColumn, in: workspaceId)
+        {
             animateColumnsForAddition(
                 columnIndex: newColIdx,
                 in: workspaceId,
@@ -114,19 +212,8 @@ extension NiriLayoutEngine {
             )
         }
 
-        window.detach()
-        newColumn.appendChild(window)
-        window.isHiddenInTabbedMode = false
-
-        if sourceWasTabbed, !sourceColumn.children.isEmpty {
-            sourceColumn.clampActiveTileIdx()
-            updateTabbedColumnVisibility(column: sourceColumn)
-        }
-
-        cleanupEmptyColumn(sourceColumn, in: workspaceId, state: &state)
-
         ensureSelectionVisible(
-            node: window,
+            node: movedWindow,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,
@@ -140,42 +227,53 @@ extension NiriLayoutEngine {
     func cleanupEmptyColumn(
         _ column: NiriContainer,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state _: inout ViewportState
     ) {
-        guard column.children.isEmpty else { return }
-
-        column.remove()
-
-        if let root = roots[workspaceId], root.columns.isEmpty {
-            let emptyColumn = NiriContainer()
-            root.appendChild(emptyColumn)
+        guard let plan = planColumnMutation(
+            op: .cleanupEmptyColumn,
+            sourceColumn: column,
+            in: workspaceId
+        ) else {
+            return
         }
+
+        _ = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
     }
 
     func normalizeColumnSizes(in workspaceId: WorkspaceDescriptor.ID) {
-        let cols = columns(in: workspaceId)
-        guard cols.count > 1 else { return }
-
-        let totalSize = cols.reduce(CGFloat(0)) { $0 + $1.size }
-        let avgSize = totalSize / CGFloat(cols.count)
-
-        for col in cols {
-            let normalized = col.size / avgSize
-            col.size = max(0.5, min(2.0, normalized))
+        guard let plan = planColumnMutation(
+            op: .normalizeColumnSizes,
+            in: workspaceId
+        ) else {
+            return
         }
+
+        _ = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
     }
 
     func normalizeWindowSizes(in column: NiriContainer) {
-        let windows = column.children.compactMap { $0 as? NiriWindow }
-        guard !windows.isEmpty else { return }
-
-        let totalSize = windows.reduce(CGFloat(0)) { $0 + $1.size }
-        let avgSize = totalSize / CGFloat(windows.count)
-
-        for window in windows {
-            let normalized = window.size / avgSize
-            window.size = max(0.5, min(2.0, normalized))
+        guard let workspaceId = column.findRoot()?.workspaceId else { return }
+        guard let plan = planColumnMutation(
+            op: .normalizeWindowSizes,
+            sourceColumn: column,
+            in: workspaceId
+        ) else {
+            return
         }
+
+        _ = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
     }
 
     func balanceSizes(
@@ -183,6 +281,23 @@ extension NiriLayoutEngine {
         workingAreaWidth: CGFloat,
         gaps: CGFloat
     ) {
+        guard let plan = planColumnMutation(
+            op: .balanceSizes,
+            in: workspaceId,
+            maxVisibleColumns: maxVisibleColumns
+        ) else {
+            return
+        }
+
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return
+        }
+
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return }
 
@@ -190,21 +305,12 @@ extension NiriLayoutEngine {
         let targetPixels = (workingAreaWidth - gaps) * balancedWidth
 
         for column in cols {
-            column.width = .proportion(balancedWidth)
-            column.isFullWidth = false
-            column.savedWidth = nil
-            column.presetWidthIdx = nil
-
             column.animateWidthTo(
                 newWidth: targetPixels,
                 clock: animationClock,
                 config: windowMovementAnimationConfig,
                 displayRefreshRate: displayRefreshRate
             )
-
-            for window in column.windowNodes {
-                window.size = 1.0
-            }
         }
     }
 
@@ -226,17 +332,36 @@ extension NiriLayoutEngine {
             ? state.columnX(at: currentIdx + 1, columns: cols, gap: gaps)
             : currentColX + (column.cachedWidth > 0 ? column.cachedWidth : workingFrame.width / CGFloat(maxVisibleColumns)) + gaps
 
-        let step = (direction == .right) ? 1 : -1
-        guard let targetIdx = wrapIndex(currentIdx + step, total: cols.count) else { return false }
+        guard let plan = planColumnMutation(
+            op: .moveColumn,
+            sourceColumn: column,
+            direction: direction,
+            in: workspaceId
+        ) else {
+            return false
+        }
 
-        if targetIdx == currentIdx { return false }
+        guard plan.outcome.applied,
+              let swapEdit = plan.outcome.edits.first(where: { $0.kind == .swapColumns })
+        else {
+            return false
+        }
 
-        let targetColumn = cols[targetIdx]
-
-        guard let root = roots[workspaceId] else { return false }
-        root.swapChildren(column, targetColumn)
+        let targetIdx = swapEdit.relatedIndex
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return false
+        }
 
         let newCols = columns(in: workspaceId)
+        guard newCols.indices.contains(currentIdx), newCols.indices.contains(targetIdx) else {
+            return false
+        }
+
         let viewOffsetDelta = -state.columnX(at: currentIdx, columns: newCols, gap: gaps) + currentColX
         state.offsetViewport(by: viewOffsetDelta)
 
@@ -251,9 +376,9 @@ extension NiriLayoutEngine {
         let othersXOffset = nextColX - currentColX
         if currentIdx < targetIdx {
             for i in currentIdx ..< targetIdx {
-                let col = newCols[i]
-                if col.id != column.id {
-                    col.animateMoveFrom(
+                let candidate = newCols[i]
+                if candidate.id != column.id {
+                    candidate.animateMoveFrom(
                         displacement: CGPoint(x: othersXOffset, y: 0),
                         clock: animationClock,
                         config: windowMovementAnimationConfig,
@@ -263,9 +388,9 @@ extension NiriLayoutEngine {
             }
         } else {
             for i in (targetIdx + 1) ... currentIdx {
-                let col = newCols[i]
-                if col.id != column.id {
-                    col.animateMoveFrom(
+                let candidate = newCols[i]
+                if candidate.id != column.id {
+                    candidate.animateMoveFrom(
                         displacement: CGPoint(x: -othersXOffset, y: 0),
                         clock: animationClock,
                         config: windowMovementAnimationConfig,
@@ -304,71 +429,62 @@ extension NiriLayoutEngine {
             return false
         }
 
-        guard currentColumn.children.count < maxWindowsPerColumn else { return false }
-
-        let cols = columns(in: workspaceId)
-        let step = (direction == .right) ? 1 : -1
-        guard let neighborIdx = wrapIndex(currentIdx + step, total: cols.count) else { return false }
-
-        if neighborIdx == currentIdx { return false }
-
-        let neighborColumn = cols[neighborIdx]
-
-        let consumedWindow: NiriWindow? = if direction == .right {
-            neighborColumn.children.first as? NiriWindow
-        } else {
-            neighborColumn.children.last as? NiriWindow
+        guard let plan = planColumnMutation(
+            op: .consumeWindow,
+            sourceWindow: window,
+            direction: direction,
+            in: workspaceId
+        ) else {
+            return false
         }
 
-        guard let windowToConsume = consumedWindow else { return false }
+        guard plan.outcome.applied,
+              let moveEdit = plan.outcome.edits.first(where: { $0.kind == .moveWindowToColumnIndex }),
+              plan.snapshot.windowEntries.indices.contains(moveEdit.subjectIndex)
+        else {
+            return false
+        }
+
+        let movingWindow = plan.snapshot.windowEntries[moveEdit.subjectIndex].window
+        let movingEntry = plan.snapshot.windowEntries[moveEdit.subjectIndex]
 
         let now = animationClock?.now() ?? CACurrentMediaTime()
+        let cols = columns(in: workspaceId)
+        let sourceColX = state.columnX(at: movingEntry.columnIndex, columns: cols, gap: gaps)
+        let sourceColRenderOffset = movingEntry.column.renderOffset(at: now)
+        let sourceTileOffset = computeTileOffset(column: movingEntry.column, tileIdx: movingEntry.rowIndex, gaps: gaps)
 
-        let sourceTileIdx = neighborColumn.windowNodes.firstIndex(where: { $0 === windowToConsume }) ?? 0
-        let sourceColX = state.columnX(at: neighborIdx, columns: cols, gap: gaps)
-        let sourceColRenderOffset = neighborColumn.renderOffset(at: now)
-        let sourceTileOffset = computeTileOffset(column: neighborColumn, tileIdx: sourceTileIdx, gaps: gaps)
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return false
+        }
 
-        windowToConsume.detach()
+        if let targetColumn = findColumn(containing: movingWindow, in: workspaceId) {
+            let newCols = columns(in: workspaceId)
+            let targetColIdx = columnIndex(of: targetColumn, in: workspaceId) ?? currentIdx
+            let targetColX = state.columnX(at: targetColIdx, columns: newCols, gap: gaps)
+            let targetColRenderOffset = targetColumn.renderOffset(at: now)
+            let targetTileIdx = targetColumn.windowNodes.firstIndex(where: { $0 === movingWindow }) ?? 0
+            let targetTileOffset = computeTileOffset(column: targetColumn, tileIdx: targetTileIdx, gaps: gaps)
 
-        let newTileIdx: Int
-        if direction == .right {
-            currentColumn.appendChild(windowToConsume)
-            newTileIdx = currentColumn.windowNodes.count - 1
-        } else {
-            currentColumn.insertChild(windowToConsume, at: 0)
-            newTileIdx = 0
+            let displacement = CGPoint(
+                x: sourceColX + sourceColRenderOffset.x - (targetColX + targetColRenderOffset.x),
+                y: sourceTileOffset - targetTileOffset
+            )
 
-            if currentColumn.displayMode == .tabbed {
-                currentColumn.setActiveTileIdx(currentColumn.activeTileIdx + 1)
+            if displacement.x != 0 || displacement.y != 0 {
+                movingWindow.animateMoveFrom(
+                    displacement: displacement,
+                    clock: animationClock,
+                    config: windowMovementAnimationConfig,
+                    displayRefreshRate: displayRefreshRate
+                )
             }
         }
-
-        let newCols = columns(in: workspaceId)
-        let targetColIdx = columnIndex(of: currentColumn, in: workspaceId) ?? currentIdx
-        let targetColX = state.columnX(at: targetColIdx, columns: newCols, gap: gaps)
-        let targetColRenderOffset = currentColumn.renderOffset(at: now)
-        let targetTileOffset = computeTileOffset(column: currentColumn, tileIdx: newTileIdx, gaps: gaps)
-
-        let displacement = CGPoint(
-            x: sourceColX + sourceColRenderOffset.x - (targetColX + targetColRenderOffset.x),
-            y: sourceTileOffset - targetTileOffset
-        )
-
-        if displacement.x != 0 || displacement.y != 0 {
-            windowToConsume.animateMoveFrom(
-                displacement: displacement,
-                clock: animationClock,
-                config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate
-            )
-        }
-
-        if currentColumn.displayMode == .tabbed {
-            updateTabbedColumnVisibility(column: currentColumn)
-        }
-
-        cleanupEmptyColumn(neighborColumn, in: workspaceId, state: &state)
 
         ensureSelectionVisible(
             node: window,
@@ -393,7 +509,6 @@ extension NiriLayoutEngine {
         guard direction == .left || direction == .right else { return false }
 
         guard let currentColumn = findColumn(containing: window, in: workspaceId),
-              let root = roots[workspaceId],
               let currentColIdx = columnIndex(of: currentColumn, in: workspaceId)
         else {
             return false
@@ -407,19 +522,32 @@ extension NiriLayoutEngine {
         let sourceColRenderOffset = currentColumn.renderOffset(at: now)
         let sourceTileOffset = computeTileOffset(column: currentColumn, tileIdx: sourceTileIdx, gaps: gaps)
 
-        let wasTabbed = currentColumn.displayMode == .tabbed
-        currentColumn.adjustActiveTileIdxForRemoval(of: window)
-
-        let newColumn = NiriContainer()
-        newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
-
-        if direction == .right {
-            root.insertAfter(newColumn, reference: currentColumn)
-        } else {
-            root.insertBefore(newColumn, reference: currentColumn)
+        guard let plan = planColumnMutation(
+            op: .expelWindow,
+            sourceWindow: window,
+            direction: direction,
+            in: workspaceId,
+            maxVisibleColumns: maxVisibleColumns
+        ) else {
+            return false
         }
 
-        if let newColIdx = columnIndex(of: newColumn, in: workspaceId) {
+        let applyOutcome = NiriStateZigMutationApplier.apply(
+            outcome: plan.outcome,
+            snapshot: plan.snapshot,
+            engine: self
+        )
+        guard applyOutcome.applied else {
+            return false
+        }
+
+        // Strict planner-applier contract: target-producing mutations must resolve a target window.
+        guard let movedWindow = applyOutcome.targetWindow else {
+            return false
+        }
+        if let newColumn = findColumn(containing: movedWindow, in: workspaceId),
+           let newColIdx = columnIndex(of: newColumn, in: workspaceId)
+        {
             animateColumnsForAddition(
                 columnIndex: newColIdx,
                 in: workspaceId,
@@ -427,25 +555,17 @@ extension NiriLayoutEngine {
                 gaps: gaps,
                 workingAreaWidth: workingFrame.width
             )
-        }
 
-        window.detach()
-        newColumn.appendChild(window)
-
-        window.isHiddenInTabbedMode = false
-
-        let newCols = columns(in: workspaceId)
-        if let newColIdx = columnIndex(of: newColumn, in: workspaceId) {
+            let newCols = columns(in: workspaceId)
             let targetColX = state.columnX(at: newColIdx, columns: newCols, gap: gaps)
             let targetColRenderOffset = newColumn.renderOffset(at: now)
-
             let displacement = CGPoint(
                 x: sourceColX + sourceColRenderOffset.x - (targetColX + targetColRenderOffset.x),
                 y: sourceTileOffset
             )
 
             if displacement.x != 0 || displacement.y != 0 {
-                window.animateMoveFrom(
+                movedWindow.animateMoveFrom(
                     displacement: displacement,
                     clock: animationClock,
                     config: windowMovementAnimationConfig,
@@ -454,15 +574,8 @@ extension NiriLayoutEngine {
             }
         }
 
-        if wasTabbed, !currentColumn.children.isEmpty {
-            currentColumn.clampActiveTileIdx()
-            updateTabbedColumnVisibility(column: currentColumn)
-        }
-
-        cleanupEmptyColumn(currentColumn, in: workspaceId, state: &state)
-
         ensureSelectionVisible(
-            node: window,
+            node: movedWindow,
             in: workspaceId,
             state: &state,
             workingFrame: workingFrame,

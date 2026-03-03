@@ -53,6 +53,13 @@ enum BenchmarkBaselines {
         }
     }
 
+    struct Phase4ColumnOps: Decodable {
+        let date: String
+        let commit: String
+        let column_ops_planner_p95_sec: Double
+        let column_ops_full_path_p95_sec: Double
+    }
+
     private static var benchmarksDirectory: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -65,6 +72,10 @@ enum BenchmarkBaselines {
 
     static func loadPhase3WindowOps() throws -> Phase3WindowOps {
         try loadJSON(named: "phase3-window-ops-baseline.json", as: Phase3WindowOps.self)
+    }
+
+    static func loadPhase4ColumnOps() throws -> Phase4ColumnOps {
+        try loadJSON(named: "phase4-column-ops-baseline.json", as: Phase4ColumnOps.self)
     }
 
     private static func loadJSON<T: Decodable>(named name: String, as type: T.Type) throws -> T {

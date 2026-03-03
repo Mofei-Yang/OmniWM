@@ -141,12 +141,14 @@ pub const OmniNiriStateColumnInput = extern struct {
     window_count: usize,
     active_tile_idx: usize,
     is_tabbed: u8,
+    size_value: f64,
 };
 
 pub const OmniNiriStateWindowInput = extern struct {
     window_id: OmniUuid128,
     column_id: OmniUuid128,
     column_index: usize,
+    size_value: f64,
 };
 
 pub const OmniNiriStateValidationResult = extern struct {
@@ -192,6 +194,10 @@ pub const OmniNiriMutationRequest = extern struct {
     source_window_index: i64,
     target_window_index: i64,
     max_windows_per_column: i64,
+    source_column_index: i64,
+    target_column_index: i64,
+    insert_column_index: i64,
+    max_visible_columns: i64,
 };
 
 pub const OmniNiriMutationEdit = extern struct {
@@ -200,6 +206,8 @@ pub const OmniNiriMutationEdit = extern struct {
     related_index: i64,
     value_a: i64,
     value_b: i64,
+    scalar_a: f64,
+    scalar_b: f64,
 };
 
 pub const OmniNiriMutationResult = extern struct {
@@ -262,6 +270,16 @@ pub const OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_HORIZONTAL: u8 = 2;
 pub const OMNI_NIRI_MUTATION_OP_SWAP_WINDOW_HORIZONTAL: u8 = 3;
 pub const OMNI_NIRI_MUTATION_OP_SWAP_WINDOWS_BY_MOVE: u8 = 4;
 pub const OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_BY_MOVE: u8 = 5;
+pub const OMNI_NIRI_MUTATION_OP_MOVE_WINDOW_TO_COLUMN: u8 = 6;
+pub const OMNI_NIRI_MUTATION_OP_CREATE_COLUMN_AND_MOVE: u8 = 7;
+pub const OMNI_NIRI_MUTATION_OP_INSERT_WINDOW_IN_NEW_COLUMN: u8 = 8;
+pub const OMNI_NIRI_MUTATION_OP_MOVE_COLUMN: u8 = 9;
+pub const OMNI_NIRI_MUTATION_OP_CONSUME_WINDOW: u8 = 10;
+pub const OMNI_NIRI_MUTATION_OP_EXPEL_WINDOW: u8 = 11;
+pub const OMNI_NIRI_MUTATION_OP_CLEANUP_EMPTY_COLUMN: u8 = 12;
+pub const OMNI_NIRI_MUTATION_OP_NORMALIZE_COLUMN_SIZES: u8 = 13;
+pub const OMNI_NIRI_MUTATION_OP_NORMALIZE_WINDOW_SIZES: u8 = 14;
+pub const OMNI_NIRI_MUTATION_OP_BALANCE_SIZES: u8 = 15;
 
 pub const OMNI_NIRI_MUTATION_EDIT_SET_ACTIVE_TILE: u8 = 0;
 pub const OMNI_NIRI_MUTATION_EDIT_SWAP_WINDOWS: u8 = 1;
@@ -272,5 +290,11 @@ pub const OMNI_NIRI_MUTATION_EDIT_RESET_WINDOW_SIZE_HEIGHT: u8 = 5;
 pub const OMNI_NIRI_MUTATION_EDIT_REMOVE_COLUMN_IF_EMPTY: u8 = 6;
 pub const OMNI_NIRI_MUTATION_EDIT_REFRESH_TABBED_VISIBILITY: u8 = 7;
 pub const OMNI_NIRI_MUTATION_EDIT_DELEGATE_MOVE_COLUMN: u8 = 8;
+pub const OMNI_NIRI_MUTATION_EDIT_CREATE_COLUMN_ADJACENT_AND_MOVE_WINDOW: u8 = 9;
+pub const OMNI_NIRI_MUTATION_EDIT_INSERT_NEW_COLUMN_AT_INDEX_AND_MOVE_WINDOW: u8 = 10;
+pub const OMNI_NIRI_MUTATION_EDIT_SWAP_COLUMNS: u8 = 11;
+pub const OMNI_NIRI_MUTATION_EDIT_NORMALIZE_COLUMNS_BY_FACTOR: u8 = 12;
+pub const OMNI_NIRI_MUTATION_EDIT_NORMALIZE_COLUMN_WINDOWS_BY_FACTOR: u8 = 13;
+pub const OMNI_NIRI_MUTATION_EDIT_BALANCE_COLUMNS: u8 = 14;
 
 pub const OMNI_NIRI_MUTATION_MAX_EDITS: usize = 32;

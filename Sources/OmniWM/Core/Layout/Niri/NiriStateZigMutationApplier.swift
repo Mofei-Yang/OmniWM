@@ -38,6 +38,20 @@ enum NiriStateZigMutationApplier {
         return snapshot.columnEntries[index].column
     }
 
+    private static func root(snapshot: NiriStateZigKernel.Snapshot) -> NiriRoot? {
+        if let root = snapshot.columnEntries.first?.column.findRoot() {
+            return root
+        }
+        if let root = snapshot.windowEntries.first?.window.findRoot() {
+            return root
+        }
+        return nil
+    }
+
+    private static func clampedNormalizedSize(_ value: CGFloat) -> CGFloat {
+        max(0.5, min(2.0, value))
+    }
+
     static func apply(
         outcome: NiriStateZigKernel.MutationOutcome,
         snapshot: NiriStateZigKernel.Snapshot,
@@ -143,7 +157,12 @@ enum NiriStateZigMutationApplier {
                     return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
                 }
                 if targetColumn.children.isEmpty {
+                    let parentRoot = targetColumn.parent as? NiriRoot
                     targetColumn.remove()
+                    if let parentRoot, parentRoot.columns.isEmpty {
+                        // Planner should keep at least one placeholder column; this is a defensive backstop.
+                        parentRoot.appendChild(NiriContainer())
+                    }
                 }
 
             case .refreshTabbedVisibility:
@@ -159,6 +178,99 @@ enum NiriStateZigMutationApplier {
                     return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
                 }
                 delegatedMoveColumn = (targetColumn, direction)
+
+            case .createColumnAdjacentAndMoveWindow:
+                guard let movingWindow = window(at: edit.subjectIndex, snapshot: snapshot),
+                      let sourceColumn = movingWindow.parent as? NiriContainer,
+                      let root = sourceColumn.parent as? NiriRoot,
+                      let insertDirection = direction(from: edit.valueA),
+                      (insertDirection == .left || insertDirection == .right)
+                else {
+                    return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
+                }
+
+                let visibleColumns = max(1, edit.valueB)
+                let newColumn = NiriContainer()
+                newColumn.width = .proportion(1.0 / CGFloat(visibleColumns))
+                if insertDirection == .right {
+                    root.insertAfter(newColumn, reference: sourceColumn)
+                } else {
+                    root.insertBefore(newColumn, reference: sourceColumn)
+                }
+
+                movingWindow.detach()
+                newColumn.appendChild(movingWindow)
+                movingWindow.isHiddenInTabbedMode = false
+
+            case .insertNewColumnAtIndexAndMoveWindow:
+                guard let movingWindow = window(at: edit.subjectIndex, snapshot: snapshot),
+                      let currentColumn = movingWindow.parent as? NiriContainer,
+                      let root = currentColumn.parent as? NiriRoot
+                else {
+                    return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
+                }
+
+                let visibleColumns = max(1, edit.valueA)
+                let newColumn = NiriContainer()
+                newColumn.width = .proportion(1.0 / CGFloat(visibleColumns))
+
+                let cols = root.columns
+                let clampedIndex = max(0, min(edit.relatedIndex, cols.count))
+                if clampedIndex >= cols.count {
+                    root.appendChild(newColumn)
+                } else {
+                    root.insertBefore(newColumn, reference: cols[clampedIndex])
+                }
+
+                movingWindow.detach()
+                newColumn.appendChild(movingWindow)
+                movingWindow.isHiddenInTabbedMode = false
+
+            case .swapColumns:
+                guard let lhsColumn = column(at: edit.subjectIndex, snapshot: snapshot),
+                      let rhsColumn = column(at: edit.relatedIndex, snapshot: snapshot),
+                      let root = lhsColumn.parent as? NiriRoot,
+                      let rhsRoot = rhsColumn.parent as? NiriRoot,
+                      root === rhsRoot
+                else {
+                    return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
+                }
+                root.swapChildren(lhsColumn, rhsColumn)
+
+            case .normalizeColumnsByFactor:
+                guard let root = root(snapshot: snapshot), edit.scalarA > 0 else {
+                    return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
+                }
+                let factor = CGFloat(edit.scalarA)
+                for column in root.columns {
+                    let normalized = column.size * factor
+                    column.size = clampedNormalizedSize(normalized)
+                }
+
+            case .normalizeColumnWindowsByFactor:
+                guard let targetColumn = column(at: edit.subjectIndex, snapshot: snapshot), edit.scalarA > 0 else {
+                    return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
+                }
+                let factor = CGFloat(edit.scalarA)
+                for window in targetColumn.windowNodes {
+                    let normalized = window.size * factor
+                    window.size = clampedNormalizedSize(normalized)
+                }
+
+            case .balanceColumns:
+                guard let root = root(snapshot: snapshot), edit.scalarA > 0 else {
+                    return ApplyOutcome(applied: false, targetWindow: targetWindow, delegatedMoveColumn: nil)
+                }
+                let balancedWidth = CGFloat(edit.scalarA)
+                for column in root.columns {
+                    column.width = .proportion(balancedWidth)
+                    column.isFullWidth = false
+                    column.savedWidth = nil
+                    column.presetWidthIdx = nil
+                    for window in column.windowNodes {
+                        window.size = 1.0
+                    }
+                }
             }
         }
 

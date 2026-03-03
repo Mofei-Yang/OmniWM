@@ -395,6 +395,18 @@ enum NiriReferenceWindowOps {
             }
 
             return outcome(applied: true, targetWindowIndex: source.windowIndex, edits: edits)
+
+        case .moveWindowToColumn,
+             .createColumnAndMove,
+             .insertWindowInNewColumn,
+             .moveColumn,
+             .consumeWindow,
+             .expelWindow,
+             .cleanupEmptyColumn,
+             .normalizeColumnSizes,
+             .normalizeWindowSizes,
+             .balanceSizes:
+            return outcome(rc: mutationErrInvalidArgs)
         }
     }
 }

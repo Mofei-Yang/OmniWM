@@ -609,6 +609,17 @@ private func executeRuntimeMutation(
             workingFrame: workingFrame,
             gaps: gaps
         )
+    case .moveWindowToColumn,
+         .createColumnAndMove,
+         .insertWindowInNewColumn,
+         .moveColumn,
+         .consumeWindow,
+         .expelWindow,
+         .cleanupEmptyColumn,
+         .normalizeColumnSizes,
+         .normalizeWindowSizes,
+         .balanceSizes:
+        return false
     }
 }
 
