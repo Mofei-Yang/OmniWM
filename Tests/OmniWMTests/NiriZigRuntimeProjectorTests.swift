@@ -325,6 +325,48 @@ private func assertRuntimeMatchesSnapshot(
         #expect(result.failureReason != nil)
     }
 
+    @Test func projectorResolvesMissingHandleFromAdditionalHandleMap() {
+        let workspaceId = WorkspaceDescriptor.ID()
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 4, maxVisibleColumns: 3)
+        let root = engine.ensureRoot(for: workspaceId)
+        let column = root.columns[0]
+
+        let incomingWindowUUID = UUID()
+        let incomingHandle = makeHandle(id: incomingWindowUUID, pid: 4501)
+        let export = NiriStateZigKernel.RuntimeStateExport(
+            columns: [
+                .init(
+                    columnId: column.id,
+                    windowStart: 0,
+                    windowCount: 1,
+                    activeTileIdx: 0,
+                    isTabbed: false,
+                    sizeValue: 1.0
+                )
+            ],
+            windows: [
+                .init(
+                    windowId: NodeId(uuid: incomingWindowUUID),
+                    columnId: column.id,
+                    columnIndex: 0,
+                    sizeValue: 1.0
+                )
+            ]
+        )
+
+        let result = NiriStateZigRuntimeProjector.project(
+            export: export,
+            workspaceId: workspaceId,
+            engine: engine,
+            additionalHandlesById: [incomingWindowUUID: incomingHandle]
+        )
+        #expect(result.applied)
+        #expect(column.windowNodes.count == 1)
+        #expect(column.windowNodes[0].handle === incomingHandle)
+        #expect(column.windowNodes[0].id.uuid == incomingWindowUUID)
+        #expect(engine.handleToNode[incomingHandle] === column.windowNodes[0])
+    }
+
     @Test func eagerSyncHooksKeepRuntimeExportCoherent() {
         let workspaceId = WorkspaceDescriptor.ID()
         let engine = NiriLayoutEngine(maxWindowsPerColumn: 4, maxVisibleColumns: 3)

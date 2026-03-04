@@ -10,7 +10,8 @@ enum NiriStateZigRuntimeProjector {
         export: NiriStateZigKernel.RuntimeStateExport,
         hints: NiriStateZigKernel.RuntimeMutationHints = .none,
         workspaceId: WorkspaceDescriptor.ID,
-        engine: NiriLayoutEngine
+        engine: NiriLayoutEngine,
+        additionalHandlesById: [UUID: WindowHandle] = [:]
     ) -> ProjectionResult {
         struct ResolvedColumn {
             let column: NiriContainer
@@ -42,7 +43,12 @@ enum NiriStateZigRuntimeProjector {
         }
 
         var handleById: [UUID: WindowHandle] = [:]
-        handleById.reserveCapacity(engine.handleToNode.count)
+        handleById.reserveCapacity(
+            engine.handleToNode.count + initialWindows.count + additionalHandlesById.count
+        )
+        for (handleId, handle) in additionalHandlesById {
+            handleById[handleId] = handle
+        }
         for handle in engine.handleToNode.keys where handleById[handle.id] == nil {
             handleById[handle.id] = handle
         }

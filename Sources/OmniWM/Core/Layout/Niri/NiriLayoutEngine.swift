@@ -98,6 +98,11 @@ struct NiriRenderStyle {
 }
 
 final class NiriLayoutEngine {
+    enum Backend {
+        case zigContext
+        case legacyPlanApply
+    }
+
     struct RuntimeMirrorState {
         var isSeeded: Bool
         var columnCount: Int
@@ -118,6 +123,8 @@ final class NiriLayoutEngine {
 
     var framePool: [WindowHandle: CGRect] = [:]
     var hiddenPool: [WindowHandle: HideSide] = [:]
+
+    var backend: Backend
 
     var maxWindowsPerColumn: Int
     var maxVisibleColumns: Int
@@ -153,7 +160,13 @@ final class NiriLayoutEngine {
         .proportion(2.0 / 3.0)
     ]
 
-    init(maxWindowsPerColumn: Int = 3, maxVisibleColumns: Int = 3, infiniteLoop: Bool = false) {
+    init(
+        maxWindowsPerColumn: Int = 3,
+        maxVisibleColumns: Int = 3,
+        infiniteLoop: Bool = false,
+        backend: Backend = .zigContext
+    ) {
+        self.backend = backend
         self.maxWindowsPerColumn = max(1, min(10, maxWindowsPerColumn))
         self.maxVisibleColumns = max(1, min(5, maxVisibleColumns))
         self.infiniteLoop = infiniteLoop

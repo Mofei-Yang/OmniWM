@@ -75,6 +75,33 @@ private func layoutSignature(
     )
 }
 
+private enum LifecycleSelectionSignature: Equatable {
+    case none
+    case window(pid: Int32)
+    case column(index: Int)
+    case missing
+}
+
+private func selectionSignature(
+    for nodeId: NodeId?,
+    engine: NiriLayoutEngine,
+    workspaceId: WorkspaceDescriptor.ID
+) -> LifecycleSelectionSignature {
+    guard let nodeId else { return .none }
+    guard let node = engine.findNode(by: nodeId) else { return .missing }
+
+    if let window = node as? NiriWindow {
+        return .window(pid: window.handle.pid)
+    }
+    if let column = node as? NiriContainer,
+       let index = engine.columnIndex(of: column, in: workspaceId)
+    {
+        return .column(index: index)
+    }
+
+    return .missing
+}
+
 private struct LifecycleDualEngines {
     let zigEngine: NiriLayoutEngine
     let referenceEngine: NiriLayoutEngine
@@ -549,6 +576,7 @@ private func pickSeededColumn(
             afterSelection: zigSelected.id,
             focusedHandle: zigFocusedHandle
         )
+        #expect(zigAdded.id.uuid == newZigHandle.id)
 
         let referenceSnapshot = NiriStateZigKernel.makeSnapshot(columns: referenceEngine.columns(in: wsId))
         let referenceRequest = addRequest(
@@ -581,6 +609,7 @@ private func pickSeededColumn(
         let refHandle = makeTestHandle(pid: 130_010)
 
         let _ = zigEngine.addWindow(handle: zigHandle, to: workspaceId, afterSelection: nil)
+        #expect(zigEngine.findNode(for: zigHandle)?.id.uuid == zigHandle.id)
 
         let snapshot = NiriStateZigKernel.makeSnapshot(columns: referenceEngine.columns(in: workspaceId))
         let request = NiriStateZigKernel.MutationRequest(op: .addWindow, maxVisibleColumns: referenceEngine.maxVisibleColumns)
@@ -790,6 +819,7 @@ private func pickSeededColumn(
             afterSelection: selectedNodeId,
             focusedHandle: focusedHandle
         )
+        #expect(inserted.id.uuid == newHandle.id)
 
         guard let insertedColumn = engine.column(of: inserted),
               let insertedColumnIndex = engine.columnIndex(of: insertedColumn, in: workspaceId)
@@ -1000,6 +1030,144 @@ private func pickSeededColumn(
             #expect(layoutSignature(engine: dual.zigEngine, workspaceId: wsId) == layoutSignature(engine: dual.referenceEngine, workspaceId: wsId))
             assertMutationInvariants(engine: dual.zigEngine, workspaceId: wsId)
             assertMutationInvariants(engine: dual.referenceEngine, workspaceId: wsId)
+        }
+    }
+
+    @Test func backendSwitchLifecycleParityMatchesLegacyPlanApply() {
+        let dual = makeRandomDualEngines(seed: 0xFEEDFACECAFEBEEF)
+        let wsId = dual.workspaceId
+        let zigEngine = dual.zigEngine
+        let legacyEngine = dual.referenceEngine
+        legacyEngine.backend = .legacyPlanApply
+
+        var rng = LifecycleLCG(seed: 0x1357_2468_ABCD_EF01)
+        var nextPid: Int32 = 170_000
+
+        for _ in 0 ..< 1_000 {
+            let zigWindows = zigEngine.root(for: wsId)?.allWindows ?? []
+            let legacyWindows = legacyEngine.root(for: wsId)?.allWindows ?? []
+            let zigColumns = zigEngine.columns(in: wsId)
+            let legacyColumns = legacyEngine.columns(in: wsId)
+
+            let op = rng.nextInt(0 ... 3)
+            switch op {
+            case 0:
+                nextPid += 1
+                let zigHandle = makeTestHandle(pid: nextPid)
+                let legacyHandle = makeTestHandle(pid: nextPid)
+
+                let selectedMode = rng.nextInt(0 ... 3)
+                let zigSelectedNodeId: NodeId?
+                let legacySelectedNodeId: NodeId?
+                switch selectedMode {
+                case 1 where !zigWindows.isEmpty && !legacyWindows.isEmpty:
+                    let idx = rng.nextInt(0 ... min(zigWindows.count, legacyWindows.count) - 1)
+                    zigSelectedNodeId = zigWindows[idx].id
+                    legacySelectedNodeId = legacyWindows[idx].id
+                case 2 where !zigColumns.isEmpty && !legacyColumns.isEmpty:
+                    let idx = rng.nextInt(0 ... min(zigColumns.count, legacyColumns.count) - 1)
+                    zigSelectedNodeId = zigColumns[idx].id
+                    legacySelectedNodeId = legacyColumns[idx].id
+                case 3:
+                    let invalid = NodeId(uuid: UUID())
+                    zigSelectedNodeId = invalid
+                    legacySelectedNodeId = invalid
+                default:
+                    zigSelectedNodeId = nil
+                    legacySelectedNodeId = nil
+                }
+
+                let zigFocusedHandle: WindowHandle?
+                let legacyFocusedHandle: WindowHandle?
+                if !zigWindows.isEmpty, !legacyWindows.isEmpty, rng.nextBool(0.6) {
+                    let idx = rng.nextInt(0 ... min(zigWindows.count, legacyWindows.count) - 1)
+                    zigFocusedHandle = zigWindows[idx].handle
+                    legacyFocusedHandle = legacyWindows[idx].handle
+                } else {
+                    zigFocusedHandle = nil
+                    legacyFocusedHandle = nil
+                }
+
+                let zigAdded = zigEngine.addWindow(
+                    handle: zigHandle,
+                    to: wsId,
+                    afterSelection: zigSelectedNodeId,
+                    focusedHandle: zigFocusedHandle
+                )
+                _ = legacyEngine.addWindow(
+                    handle: legacyHandle,
+                    to: wsId,
+                    afterSelection: legacySelectedNodeId,
+                    focusedHandle: legacyFocusedHandle
+                )
+
+                #expect(zigAdded.id.uuid == zigHandle.id)
+
+            case 1:
+                if !zigWindows.isEmpty, !legacyWindows.isEmpty, rng.nextBool(0.85) {
+                    let idx = rng.nextInt(0 ... min(zigWindows.count, legacyWindows.count) - 1)
+                    zigEngine.removeWindow(handle: zigWindows[idx].handle)
+                    legacyEngine.removeWindow(handle: legacyWindows[idx].handle)
+                } else {
+                    let zigMissing = makeTestHandle(pid: nextPid + 10_000)
+                    let legacyMissing = makeTestHandle(pid: nextPid + 10_000)
+                    zigEngine.removeWindow(handle: zigMissing)
+                    legacyEngine.removeWindow(handle: legacyMissing)
+                }
+
+            case 2:
+                let selectedMode = rng.nextInt(0 ... 3)
+                let zigSelectedNodeId: NodeId?
+                let legacySelectedNodeId: NodeId?
+                switch selectedMode {
+                case 1 where !zigWindows.isEmpty && !legacyWindows.isEmpty:
+                    let idx = rng.nextInt(0 ... min(zigWindows.count, legacyWindows.count) - 1)
+                    zigSelectedNodeId = zigWindows[idx].id
+                    legacySelectedNodeId = legacyWindows[idx].id
+                case 2 where !zigColumns.isEmpty && !legacyColumns.isEmpty:
+                    let idx = rng.nextInt(0 ... min(zigColumns.count, legacyColumns.count) - 1)
+                    zigSelectedNodeId = zigColumns[idx].id
+                    legacySelectedNodeId = legacyColumns[idx].id
+                case 3:
+                    let invalid = NodeId(uuid: UUID())
+                    zigSelectedNodeId = invalid
+                    legacySelectedNodeId = invalid
+                default:
+                    zigSelectedNodeId = nil
+                    legacySelectedNodeId = nil
+                }
+
+                let zigResult = zigEngine.validateSelection(zigSelectedNodeId, in: wsId)
+                let legacyResult = legacyEngine.validateSelection(legacySelectedNodeId, in: wsId)
+                #expect(
+                    selectionSignature(for: zigResult, engine: zigEngine, workspaceId: wsId)
+                        == selectionSignature(for: legacyResult, engine: legacyEngine, workspaceId: wsId)
+                )
+
+            default:
+                let zigRemovingId: NodeId
+                let legacyRemovingId: NodeId
+                if !zigWindows.isEmpty, !legacyWindows.isEmpty {
+                    let idx = rng.nextInt(0 ... min(zigWindows.count, legacyWindows.count) - 1)
+                    zigRemovingId = zigWindows[idx].id
+                    legacyRemovingId = legacyWindows[idx].id
+                } else {
+                    let invalid = NodeId(uuid: UUID())
+                    zigRemovingId = invalid
+                    legacyRemovingId = invalid
+                }
+
+                let zigResult = zigEngine.fallbackSelectionOnRemoval(removing: zigRemovingId, in: wsId)
+                let legacyResult = legacyEngine.fallbackSelectionOnRemoval(removing: legacyRemovingId, in: wsId)
+                #expect(
+                    selectionSignature(for: zigResult, engine: zigEngine, workspaceId: wsId)
+                        == selectionSignature(for: legacyResult, engine: legacyEngine, workspaceId: wsId)
+                )
+            }
+
+            #expect(layoutSignature(engine: zigEngine, workspaceId: wsId) == layoutSignature(engine: legacyEngine, workspaceId: wsId))
+            assertMutationInvariants(engine: zigEngine, workspaceId: wsId)
+            assertMutationInvariants(engine: legacyEngine, workspaceId: wsId)
         }
     }
 
