@@ -63,7 +63,9 @@ enum NiriStateZigRuntimeProjector {
         resolvedColumns.reserveCapacity(export.columns.count)
 
         for (columnIndex, runtimeColumn) in export.columns.enumerated() {
-            let column = existingColumnsById[runtimeColumn.columnId] ?? NiriContainer(id: runtimeColumn.columnId)
+            let column = existingColumnsById[runtimeColumn.columnId]
+                ?? (engine.findNode(by: runtimeColumn.columnId) as? NiriContainer)
+                ?? NiriContainer(id: runtimeColumn.columnId)
             let columnObjectId = ObjectIdentifier(column)
             guard !usedColumns.contains(columnObjectId) else {
                 return fail("duplicate resolved column for id \(runtimeColumn.columnId.uuid)")
@@ -95,6 +97,8 @@ enum NiriStateZigRuntimeProjector {
                 let resolvedWindow: NiriWindow
                 if let nodeById = existingWindowsById[runtimeWindow.windowId] {
                     resolvedWindow = nodeById
+                } else if let globalNodeById = engine.findNode(by: runtimeWindow.windowId) as? NiriWindow {
+                    resolvedWindow = globalNodeById
                 } else if let nodeByHandle = existingWindowsByHandleId[runtimeWindow.windowId.uuid] {
                     resolvedWindow = nodeByHandle
                 } else if let handle = handleById[runtimeWindow.windowId.uuid] {

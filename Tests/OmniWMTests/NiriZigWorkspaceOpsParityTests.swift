@@ -385,6 +385,100 @@ private func applyColumnMoveParity(
     )
 }
 
+private func applyWindowMoveBackendParity(
+    zigEngine: NiriLayoutEngine,
+    legacyEngine: NiriLayoutEngine,
+    sourceWorkspaceId: WorkspaceDescriptor.ID,
+    targetWorkspaceId: WorkspaceDescriptor.ID,
+    pid: Int32,
+    zigStates: inout [WorkspaceDescriptor.ID: ViewportState],
+    legacyStates: inout [WorkspaceDescriptor.ID: ViewportState]
+) {
+    guard let zigWindow = findWindow(engine: zigEngine, workspaceId: sourceWorkspaceId, pid: pid),
+          let legacyWindow = findWindow(engine: legacyEngine, workspaceId: sourceWorkspaceId, pid: pid)
+    else {
+        return
+    }
+
+    var zigSourceState = zigStates[sourceWorkspaceId] ?? ViewportState()
+    var zigTargetState = zigStates[targetWorkspaceId] ?? ViewportState()
+    var legacySourceState = legacyStates[sourceWorkspaceId] ?? ViewportState()
+    var legacyTargetState = legacyStates[targetWorkspaceId] ?? ViewportState()
+
+    let zigResult = zigEngine.moveWindowToWorkspace(
+        zigWindow,
+        from: sourceWorkspaceId,
+        to: targetWorkspaceId,
+        sourceState: &zigSourceState,
+        targetState: &zigTargetState
+    )
+    let legacyResult = legacyEngine.moveWindowToWorkspace(
+        legacyWindow,
+        from: sourceWorkspaceId,
+        to: targetWorkspaceId,
+        sourceState: &legacySourceState,
+        targetState: &legacyTargetState
+    )
+
+    zigStates[sourceWorkspaceId] = zigSourceState
+    zigStates[targetWorkspaceId] = zigTargetState
+    legacyStates[sourceWorkspaceId] = legacySourceState
+    legacyStates[targetWorkspaceId] = legacyTargetState
+
+    #expect((zigResult != nil) == (legacyResult != nil))
+    if let zigResult, let legacyResult {
+        #expect(zigResult.movedHandle?.pid == legacyResult.movedHandle?.pid)
+    }
+}
+
+private func applyColumnMoveBackendParity(
+    zigEngine: NiriLayoutEngine,
+    legacyEngine: NiriLayoutEngine,
+    sourceWorkspaceId: WorkspaceDescriptor.ID,
+    targetWorkspaceId: WorkspaceDescriptor.ID,
+    sourceColumnIndex: Int,
+    zigStates: inout [WorkspaceDescriptor.ID: ViewportState],
+    legacyStates: inout [WorkspaceDescriptor.ID: ViewportState]
+) {
+    let zigColumns = zigEngine.columns(in: sourceWorkspaceId)
+    let legacyColumns = legacyEngine.columns(in: sourceWorkspaceId)
+    guard zigColumns.indices.contains(sourceColumnIndex),
+          legacyColumns.indices.contains(sourceColumnIndex)
+    else {
+        return
+    }
+
+    var zigSourceState = zigStates[sourceWorkspaceId] ?? ViewportState()
+    var zigTargetState = zigStates[targetWorkspaceId] ?? ViewportState()
+    var legacySourceState = legacyStates[sourceWorkspaceId] ?? ViewportState()
+    var legacyTargetState = legacyStates[targetWorkspaceId] ?? ViewportState()
+
+    let zigResult = zigEngine.moveColumnToWorkspace(
+        zigColumns[sourceColumnIndex],
+        from: sourceWorkspaceId,
+        to: targetWorkspaceId,
+        sourceState: &zigSourceState,
+        targetState: &zigTargetState
+    )
+    let legacyResult = legacyEngine.moveColumnToWorkspace(
+        legacyColumns[sourceColumnIndex],
+        from: sourceWorkspaceId,
+        to: targetWorkspaceId,
+        sourceState: &legacySourceState,
+        targetState: &legacyTargetState
+    )
+
+    zigStates[sourceWorkspaceId] = zigSourceState
+    zigStates[targetWorkspaceId] = zigTargetState
+    legacyStates[sourceWorkspaceId] = legacySourceState
+    legacyStates[targetWorkspaceId] = legacyTargetState
+
+    #expect((zigResult != nil) == (legacyResult != nil))
+    if let zigResult, let legacyResult {
+        #expect(zigResult.movedHandle?.pid == legacyResult.movedHandle?.pid)
+    }
+}
+
 @Suite struct NiriZigWorkspaceOpsParityTests {
     @Test func phase6ScenarioMoveWindowToEmptyWorkspaceReusesPlaceholderAndResetsWidth() {
         let dual = setupWorkspaceRoots(
@@ -542,6 +636,122 @@ private func applyColumnMoveParity(
         #expect(layoutSignature(engine: dual.zigEngine, workspaceIds: workspaceIds) == layoutSignature(engine: dual.referenceEngine, workspaceIds: workspaceIds))
         #expect(dual.zigEngine.columns(in: dual.workspaceA).count == 1)
         #expect(dual.zigEngine.columns(in: dual.workspaceA)[0].windowNodes.isEmpty)
+    }
+
+    @Test func phase6RuntimeProjectionReusesMovedColumnObjectAcrossWorkspaces() {
+        let dual = setupWorkspaceRoots(
+            workspaceAColumns: [[270_001], [270_002, 270_003]],
+            workspaceBColumns: [[280_001]]
+        )
+
+        let zigEngine = dual.zigEngine
+        zigEngine.backend = .zigContext
+
+        var sourceState = ViewportState()
+        var targetState = ViewportState()
+
+        let sourceColumns = zigEngine.columns(in: dual.workspaceA)
+        #expect(sourceColumns.count >= 2)
+        guard sourceColumns.count >= 2 else { return }
+
+        let movedColumn = sourceColumns[1]
+        let movedWindows = movedColumn.windowNodes
+
+        let result = zigEngine.moveColumnToWorkspace(
+            movedColumn,
+            from: dual.workspaceA,
+            to: dual.workspaceB,
+            sourceState: &sourceState,
+            targetState: &targetState
+        )
+
+        #expect(result != nil)
+        guard result != nil else { return }
+
+        #expect(movedColumn.findRoot()?.workspaceId == dual.workspaceB)
+        #expect(zigEngine.columns(in: dual.workspaceB).contains(where: { $0 === movedColumn }))
+        #expect(!zigEngine.columns(in: dual.workspaceA).contains(where: { $0 === movedColumn }))
+
+        for window in movedWindows {
+            #expect(movedColumn.windowNodes.contains(where: { $0 === window }))
+            #expect(window.findRoot()?.workspaceId == dual.workspaceB)
+            #expect(zigEngine.handleToNode[window.handle] === window)
+        }
+    }
+
+    @Test func phase6BackendSwitchRandomizedWorkspaceParityMatchesLegacyPlanApply() {
+        let dual = setupWorkspaceRoots(
+            workspaceAColumns: [[290_001, 290_002], [290_003], [290_004, 290_005]],
+            workspaceBColumns: [[291_001], [291_002, 291_003]]
+        )
+        let workspaceIds = [dual.workspaceA, dual.workspaceB]
+        let zigEngine = dual.zigEngine
+        let legacyEngine = dual.referenceEngine
+        zigEngine.backend = .zigContext
+        legacyEngine.backend = .legacyPlanApply
+
+        var zigStates: [WorkspaceDescriptor.ID: ViewportState] = [:]
+        var legacyStates: [WorkspaceDescriptor.ID: ViewportState] = [:]
+        var rng = WorkspaceLCG(seed: 0xFACE_FEED_BAAD_C0DE)
+
+        for _ in 0 ..< 1_500 {
+            let sourceWorkspaceId: WorkspaceDescriptor.ID = if rng.nextBool(0.5) {
+                dual.workspaceA
+            } else {
+                dual.workspaceB
+            }
+            let targetWorkspaceId = sourceWorkspaceId == dual.workspaceA ? dual.workspaceB : dual.workspaceA
+            let doWindowMove = rng.nextBool(0.65)
+
+            if doWindowMove,
+               let pid = chooseRandomWindowPid(engine: zigEngine, workspaceId: sourceWorkspaceId, rng: &rng)
+            {
+                applyWindowMoveBackendParity(
+                    zigEngine: zigEngine,
+                    legacyEngine: legacyEngine,
+                    sourceWorkspaceId: sourceWorkspaceId,
+                    targetWorkspaceId: targetWorkspaceId,
+                    pid: pid,
+                    zigStates: &zigStates,
+                    legacyStates: &legacyStates
+                )
+            } else if let sourceColumnIndex = chooseRandomMovableColumnIndex(
+                engine: zigEngine,
+                workspaceId: sourceWorkspaceId,
+                rng: &rng
+            ) {
+                applyColumnMoveBackendParity(
+                    zigEngine: zigEngine,
+                    legacyEngine: legacyEngine,
+                    sourceWorkspaceId: sourceWorkspaceId,
+                    targetWorkspaceId: targetWorkspaceId,
+                    sourceColumnIndex: sourceColumnIndex,
+                    zigStates: &zigStates,
+                    legacyStates: &legacyStates
+                )
+            } else {
+                continue
+            }
+
+            #expect(layoutSignature(engine: zigEngine, workspaceIds: workspaceIds) == layoutSignature(engine: legacyEngine, workspaceIds: workspaceIds))
+            assertWorkspaceInvariants(engine: zigEngine, workspaceIds: workspaceIds)
+            assertWorkspaceInvariants(engine: legacyEngine, workspaceIds: workspaceIds)
+
+            for workspaceId in workspaceIds {
+                #expect(
+                    selectionSignature(
+                        engine: zigEngine,
+                        workspaceId: workspaceId,
+                        state: zigStates[workspaceId] ?? ViewportState()
+                    ) ==
+                        selectionSignature(
+                            engine: legacyEngine,
+                            workspaceId: workspaceId,
+                            state: legacyStates[workspaceId] ?? ViewportState()
+                        )
+                )
+            }
+        }
     }
 
     @Test func randomizedWorkspaceTransferTraceParityMatchesReferenceModel() {
