@@ -36,10 +36,6 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v6),
                 .interoperabilityMode(.C),
-                .define("OMNI_NIRI_LEGACY_TEST_BACKEND", .when(configuration: .debug)),
-                // Test/reference-only Dwindle backend toggle. Runtime selection is additionally
-                // guarded to XCTest environments in DwindleLayoutEngine.
-                .define("OMNI_DWINDLE_LEGACY_TEST_BACKEND", .when(configuration: .debug)),
                 .unsafeFlags(["-enable-testing"])
             ],
             linkerSettings: [

@@ -56,32 +56,6 @@ extension NiriLayoutEngine {
         return WindowMutationPreparedRequest(snapshot: snapshot, request: request)
     }
 
-    #if OMNI_NIRI_LEGACY_TEST_BACKEND
-    private func applyLegacyWindowMutation(
-        _ prepared: WindowMutationPreparedRequest
-    ) -> WindowMutationApplyOutcome? {
-        let outcome = NiriStateZigKernel.resolveMutation(
-            snapshot: prepared.snapshot,
-            request: prepared.request
-        )
-        guard outcome.rc == 0 else {
-            return nil
-        }
-
-        let applyOutcome = NiriStateZigMutationApplier.apply(
-            outcome: outcome,
-            snapshot: prepared.snapshot,
-            engine: self
-        )
-
-        return WindowMutationApplyOutcome(
-            applied: applyOutcome.applied,
-            targetWindow: applyOutcome.targetWindow,
-            delegatedMoveColumn: applyOutcome.delegatedMoveColumn
-        )
-    }
-    #endif
-
     private func applyRuntimeWindowMutation(
         _ prepared: WindowMutationPreparedRequest,
         in workspaceId: WorkspaceDescriptor.ID
@@ -172,16 +146,7 @@ extension NiriLayoutEngine {
         _ prepared: WindowMutationPreparedRequest,
         in workspaceId: WorkspaceDescriptor.ID
     ) -> WindowMutationApplyOutcome? {
-        switch backend {
-        case .legacyPlanApply:
-            #if OMNI_NIRI_LEGACY_TEST_BACKEND
-            return applyLegacyWindowMutation(prepared)
-            #else
-            preconditionFailure("Niri legacy backend is test-only and unavailable in this build")
-            #endif
-        case .zigContext:
-            return applyRuntimeWindowMutation(prepared, in: workspaceId)
-        }
+        applyRuntimeWindowMutation(prepared, in: workspaceId)
     }
 
     func applyWindowMutation(
@@ -309,40 +274,6 @@ extension NiriLayoutEngine {
             )
         )
     }
-
-    #if OMNI_NIRI_LEGACY_TEST_BACKEND
-    func planMutation(
-        op: NiriStateZigKernel.MutationOp,
-        sourceWindow: NiriWindow,
-        targetWindow: NiriWindow? = nil,
-        direction: Direction? = nil,
-        insertPosition: InsertPosition? = nil,
-        in workspaceId: WorkspaceDescriptor.ID
-    ) -> (snapshot: NiriStateZigKernel.Snapshot, outcome: NiriStateZigKernel.MutationOutcome)? {
-        guard backend == .legacyPlanApply else {
-            return nil
-        }
-        guard let prepared = prepareWindowMutationRequest(
-            op: op,
-            sourceWindow: sourceWindow,
-            targetWindow: targetWindow,
-            direction: direction,
-            insertPosition: insertPosition,
-            in: workspaceId
-        ) else {
-            return nil
-        }
-        let outcome = NiriStateZigKernel.resolveMutation(
-            snapshot: prepared.snapshot,
-            request: prepared.request
-        )
-        guard outcome.rc == 0 else {
-            return nil
-        }
-
-        return (prepared.snapshot, outcome)
-    }
-    #endif
 
     func moveWindow(
         _ node: NiriWindow,

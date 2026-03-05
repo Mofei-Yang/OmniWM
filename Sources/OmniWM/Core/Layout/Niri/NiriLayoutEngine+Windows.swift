@@ -62,201 +62,108 @@ extension NiriLayoutEngine {
         return LifecycleRuntimePreparation(context: context, snapshot: snapshot)
     }
 
-    #if OMNI_NIRI_LEGACY_TEST_BACKEND
-    private func planLifecycleMutation(
-        op: NiriStateZigKernel.MutationOp,
-        in workspaceId: WorkspaceDescriptor.ID,
-        sourceWindow: NiriWindow? = nil,
-        selectedNodeId: NodeId? = nil,
-        focusedHandle: WindowHandle? = nil
-    ) -> (snapshot: NiriStateZigKernel.Snapshot, outcome: NiriStateZigKernel.MutationOutcome)? {
-        let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
-
-        let sourceWindowIndex: Int
-        if let sourceWindow {
-            guard let resolvedIndex = snapshot.windowIndexByNodeId[sourceWindow.id] else {
-                return nil
-            }
-            sourceWindowIndex = resolvedIndex
-        } else {
-            sourceWindowIndex = -1
-        }
-
-        let focusedWindowIndex: Int
-        if let focusedHandle,
-           let focusedNode = handleToNode[focusedHandle],
-           let resolvedFocusedIndex = snapshot.windowIndexByNodeId[focusedNode.id]
-        {
-            focusedWindowIndex = resolvedFocusedIndex
-        } else {
-            focusedWindowIndex = -1
-        }
-
-        let selectedTarget = NiriStateZigKernel.mutationNodeTarget(
-            for: selectedNodeId,
-            snapshot: snapshot
-        )
-
-        let request = NiriStateZigKernel.MutationRequest(
-            op: op,
-            sourceWindowIndex: sourceWindowIndex,
-            maxVisibleColumns: maxVisibleColumns,
-            selectedNodeKind: selectedTarget.kind,
-            selectedNodeIndex: selectedTarget.index,
-            focusedWindowIndex: focusedWindowIndex
-        )
-
-        let outcome = NiriStateZigKernel.resolveMutation(snapshot: snapshot, request: request)
-        guard outcome.rc == 0 else {
-            return nil
-        }
-
-        return (snapshot, outcome)
-    }
-    #endif
-
     func addWindow(
         handle: WindowHandle,
         to workspaceId: WorkspaceDescriptor.ID,
         afterSelection selectedNodeId: NodeId?,
         focusedHandle: WindowHandle? = nil
     ) -> NiriWindow {
-        switch backend {
-        case .legacyPlanApply:
-            #if OMNI_NIRI_LEGACY_TEST_BACKEND
-            _ = ensureRoot(for: workspaceId)
-
-            guard let plan = planLifecycleMutation(
+        guard let prepared = prepareLifecycleRuntime(
+            workspaceId: workspaceId,
+            ensureWorkspaceRoot: true
+        ) else {
+            lifecycleContractFailure(
                 op: .addWindow,
-                in: workspaceId,
-                selectedNodeId: selectedNodeId,
-                focusedHandle: focusedHandle
-            ) else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "planner returned nil"
-                )
-            }
-
-            let applyOutcome = NiriStateZigMutationApplier.apply(
-                outcome: plan.outcome,
-                snapshot: plan.snapshot,
-                engine: self,
-                incomingWindowHandle: handle
-            )
-            guard applyOutcome.applied, let targetWindow = applyOutcome.targetWindow else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "applier returned applied=false or missing target window"
-                )
-            }
-            return targetWindow
-            #else
-            preconditionFailure("Niri legacy backend is test-only and unavailable in this build")
-            #endif
-
-        case .zigContext:
-            guard let prepared = prepareLifecycleRuntime(
                 workspaceId: workspaceId,
-                ensureWorkspaceRoot: true
-            ) else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "runtime preparation failed"
-                )
-            }
-
-            let selectedTarget = NiriStateZigKernel.mutationNodeTarget(
-                for: selectedNodeId,
-                snapshot: prepared.snapshot
+                sourceHandle: handle,
+                reason: "runtime preparation failed"
             )
-
-            let focusedWindowIndex: Int
-            if let focusedHandle,
-               let focusedNode = handleToNode[focusedHandle],
-               let resolvedFocusedIndex = prepared.snapshot.windowIndexByNodeId[focusedNode.id]
-            {
-                focusedWindowIndex = resolvedFocusedIndex
-            } else {
-                focusedWindowIndex = -1
-            }
-
-            let request = NiriStateZigKernel.MutationRequest(
-                op: .addWindow,
-                maxVisibleColumns: maxVisibleColumns,
-                selectedNodeKind: selectedTarget.kind,
-                selectedNodeIndex: selectedTarget.index,
-                focusedWindowIndex: focusedWindowIndex
-            )
-            let applyRequest = NiriStateZigKernel.MutationApplyRequest(
-                request: request,
-                incomingWindowId: handle.id,
-                createdColumnId: UUID(),
-                placeholderColumnId: UUID()
-            )
-            let applyOutcome = NiriStateZigKernel.applyMutation(
-                context: prepared.context,
-                request: applyRequest
-            )
-            guard applyOutcome.rc == 0 else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "ctx apply failed rc=\(applyOutcome.rc)"
-                )
-            }
-            guard applyOutcome.applied else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "ctx apply returned applied=false"
-                )
-            }
-
-            let exported = NiriStateZigKernel.exportRuntimeState(context: prepared.context)
-            guard exported.rc == 0 else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "ctx export failed rc=\(exported.rc)"
-                )
-            }
-
-            let projection = NiriStateZigRuntimeProjector.project(
-                export: exported.export,
-                hints: applyOutcome.hints,
-                workspaceId: workspaceId,
-                engine: self,
-                additionalHandlesById: [handle.id: handle]
-            )
-            guard projection.applied else {
-                let reason = projection.failureReason ?? "unknown projection failure"
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "runtime projection failed: \(reason)"
-                )
-            }
-            guard let targetWindow = handleToNode[handle] else {
-                lifecycleContractFailure(
-                    op: .addWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "missing projected incoming window node"
-                )
-            }
-            return targetWindow
         }
+
+        let selectedTarget = NiriStateZigKernel.mutationNodeTarget(
+            for: selectedNodeId,
+            snapshot: prepared.snapshot
+        )
+
+        let focusedWindowIndex: Int
+        if let focusedHandle,
+           let focusedNode = handleToNode[focusedHandle],
+           let resolvedFocusedIndex = prepared.snapshot.windowIndexByNodeId[focusedNode.id]
+        {
+            focusedWindowIndex = resolvedFocusedIndex
+        } else {
+            focusedWindowIndex = -1
+        }
+
+        let request = NiriStateZigKernel.MutationRequest(
+            op: .addWindow,
+            maxVisibleColumns: maxVisibleColumns,
+            selectedNodeKind: selectedTarget.kind,
+            selectedNodeIndex: selectedTarget.index,
+            focusedWindowIndex: focusedWindowIndex
+        )
+        let applyRequest = NiriStateZigKernel.MutationApplyRequest(
+            request: request,
+            incomingWindowId: handle.id,
+            createdColumnId: UUID(),
+            placeholderColumnId: UUID()
+        )
+        let applyOutcome = NiriStateZigKernel.applyMutation(
+            context: prepared.context,
+            request: applyRequest
+        )
+        guard applyOutcome.rc == 0 else {
+            lifecycleContractFailure(
+                op: .addWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "ctx apply failed rc=\(applyOutcome.rc)"
+            )
+        }
+        guard applyOutcome.applied else {
+            lifecycleContractFailure(
+                op: .addWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "ctx apply returned applied=false"
+            )
+        }
+
+        let exported = NiriStateZigKernel.exportRuntimeState(context: prepared.context)
+        guard exported.rc == 0 else {
+            lifecycleContractFailure(
+                op: .addWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "ctx export failed rc=\(exported.rc)"
+            )
+        }
+
+        let projection = NiriStateZigRuntimeProjector.project(
+            export: exported.export,
+            hints: applyOutcome.hints,
+            workspaceId: workspaceId,
+            engine: self,
+            additionalHandlesById: [handle.id: handle]
+        )
+        guard projection.applied else {
+            let reason = projection.failureReason ?? "unknown projection failure"
+            lifecycleContractFailure(
+                op: .addWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "runtime projection failed: \(reason)"
+            )
+        }
+        guard let targetWindow = handleToNode[handle] else {
+            lifecycleContractFailure(
+                op: .addWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "missing projected incoming window node"
+            )
+        }
+        return targetWindow
     }
 
     func removeWindow(handle: WindowHandle) {
@@ -270,114 +177,79 @@ extension NiriLayoutEngine {
             )
         }
 
-        switch backend {
-        case .legacyPlanApply:
-            #if OMNI_NIRI_LEGACY_TEST_BACKEND
-            guard let plan = planLifecycleMutation(
+        guard let prepared = prepareLifecycleRuntime(
+            workspaceId: workspaceId,
+            ensureWorkspaceRoot: false
+        ) else {
+            lifecycleContractFailure(
                 op: .removeWindow,
-                in: workspaceId,
-                sourceWindow: node
-            ) else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "planner returned nil"
-                )
-            }
-
-            let applyOutcome = NiriStateZigMutationApplier.apply(
-                outcome: plan.outcome,
-                snapshot: plan.snapshot,
-                engine: self
-            )
-            guard applyOutcome.applied else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "applier returned applied=false"
-                )
-            }
-            #else
-            preconditionFailure("Niri legacy backend is test-only and unavailable in this build")
-            #endif
-
-        case .zigContext:
-            guard let prepared = prepareLifecycleRuntime(
                 workspaceId: workspaceId,
-                ensureWorkspaceRoot: false
-            ) else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "runtime preparation failed"
-                )
-            }
-            guard let sourceWindowIndex = prepared.snapshot.windowIndexByNodeId[node.id] else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "source window missing from runtime snapshot"
-                )
-            }
-
-            let request = NiriStateZigKernel.MutationRequest(
+                sourceHandle: handle,
+                reason: "runtime preparation failed"
+            )
+        }
+        guard let sourceWindowIndex = prepared.snapshot.windowIndexByNodeId[node.id] else {
+            lifecycleContractFailure(
                 op: .removeWindow,
-                sourceWindowIndex: sourceWindowIndex
-            )
-            let applyRequest = NiriStateZigKernel.MutationApplyRequest(
-                request: request,
-                placeholderColumnId: UUID()
-            )
-            let applyOutcome = NiriStateZigKernel.applyMutation(
-                context: prepared.context,
-                request: applyRequest
-            )
-            guard applyOutcome.rc == 0 else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "ctx apply failed rc=\(applyOutcome.rc)"
-                )
-            }
-            guard applyOutcome.applied else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "ctx apply returned applied=false"
-                )
-            }
-
-            let exported = NiriStateZigKernel.exportRuntimeState(context: prepared.context)
-            guard exported.rc == 0 else {
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "ctx export failed rc=\(exported.rc)"
-                )
-            }
-
-            let projection = NiriStateZigRuntimeProjector.project(
-                export: exported.export,
-                hints: applyOutcome.hints,
                 workspaceId: workspaceId,
-                engine: self
+                sourceHandle: handle,
+                reason: "source window missing from runtime snapshot"
             )
-            guard projection.applied else {
-                let reason = projection.failureReason ?? "unknown projection failure"
-                lifecycleContractFailure(
-                    op: .removeWindow,
-                    workspaceId: workspaceId,
-                    sourceHandle: handle,
-                    reason: "runtime projection failed: \(reason)"
-                )
-            }
+        }
+
+        let request = NiriStateZigKernel.MutationRequest(
+            op: .removeWindow,
+            sourceWindowIndex: sourceWindowIndex
+        )
+        let applyRequest = NiriStateZigKernel.MutationApplyRequest(
+            request: request,
+            placeholderColumnId: UUID()
+        )
+        let applyOutcome = NiriStateZigKernel.applyMutation(
+            context: prepared.context,
+            request: applyRequest
+        )
+        guard applyOutcome.rc == 0 else {
+            lifecycleContractFailure(
+                op: .removeWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "ctx apply failed rc=\(applyOutcome.rc)"
+            )
+        }
+        guard applyOutcome.applied else {
+            lifecycleContractFailure(
+                op: .removeWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "ctx apply returned applied=false"
+            )
+        }
+
+        let exported = NiriStateZigKernel.exportRuntimeState(context: prepared.context)
+        guard exported.rc == 0 else {
+            lifecycleContractFailure(
+                op: .removeWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "ctx export failed rc=\(exported.rc)"
+            )
+        }
+
+        let projection = NiriStateZigRuntimeProjector.project(
+            export: exported.export,
+            hints: applyOutcome.hints,
+            workspaceId: workspaceId,
+            engine: self
+        )
+        guard projection.applied else {
+            let reason = projection.failureReason ?? "unknown projection failure"
+            lifecycleContractFailure(
+                op: .removeWindow,
+                workspaceId: workspaceId,
+                sourceHandle: handle,
+                reason: "runtime projection failed: \(reason)"
+            )
         }
     }
 
@@ -423,103 +295,58 @@ extension NiriLayoutEngine {
         _ selectedNodeId: NodeId?,
         in workspaceId: WorkspaceDescriptor.ID
     ) -> NodeId? {
-        switch backend {
-        case .legacyPlanApply:
-            #if OMNI_NIRI_LEGACY_TEST_BACKEND
-            let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
-            let selectedTarget = NiriStateZigKernel.mutationNodeTarget(
-                for: selectedNodeId,
-                snapshot: snapshot
-            )
-            let request = NiriStateZigKernel.MutationRequest(
-                op: .validateSelection,
-                selectedNodeKind: selectedTarget.kind,
-                selectedNodeIndex: selectedTarget.index
-            )
-            let outcome = NiriStateZigKernel.resolveMutation(snapshot: snapshot, request: request)
-            guard outcome.rc == 0 else {
-                return columns(in: workspaceId).first?.firstChild()?.id
-            }
-            return NiriStateZigKernel.nodeId(from: outcome.targetNode, snapshot: snapshot)
-            #else
-            preconditionFailure("Niri legacy backend is test-only and unavailable in this build")
-            #endif
-
-        case .zigContext:
-            guard root(for: workspaceId) != nil else { return nil }
-            guard let prepared = prepareLifecycleRuntime(
-                workspaceId: workspaceId,
-                ensureWorkspaceRoot: false
-            ) else {
-                return columns(in: workspaceId).first?.firstChild()?.id
-            }
-
-            let selectedTarget = NiriStateZigKernel.mutationNodeTarget(
-                for: selectedNodeId,
-                snapshot: prepared.snapshot
-            )
-            let request = NiriStateZigKernel.MutationRequest(
-                op: .validateSelection,
-                selectedNodeKind: selectedTarget.kind,
-                selectedNodeIndex: selectedTarget.index
-            )
-            let outcome = NiriStateZigKernel.applyMutation(
-                context: prepared.context,
-                request: .init(request: request)
-            )
-            guard outcome.rc == 0 else {
-                return columns(in: workspaceId).first?.firstChild()?.id
-            }
-            return outcome.targetNode?.nodeId
+        guard root(for: workspaceId) != nil else { return nil }
+        guard let prepared = prepareLifecycleRuntime(
+            workspaceId: workspaceId,
+            ensureWorkspaceRoot: false
+        ) else {
+            return columns(in: workspaceId).first?.firstChild()?.id
         }
+
+        let selectedTarget = NiriStateZigKernel.mutationNodeTarget(
+            for: selectedNodeId,
+            snapshot: prepared.snapshot
+        )
+        let request = NiriStateZigKernel.MutationRequest(
+            op: .validateSelection,
+            selectedNodeKind: selectedTarget.kind,
+            selectedNodeIndex: selectedTarget.index
+        )
+        let outcome = NiriStateZigKernel.applyMutation(
+            context: prepared.context,
+            request: .init(request: request)
+        )
+        guard outcome.rc == 0 else {
+            return columns(in: workspaceId).first?.firstChild()?.id
+        }
+        return outcome.targetNode?.nodeId
     }
 
     func fallbackSelectionOnRemoval(
         removing removingNodeId: NodeId,
         in workspaceId: WorkspaceDescriptor.ID
     ) -> NodeId? {
-        switch backend {
-        case .legacyPlanApply:
-            #if OMNI_NIRI_LEGACY_TEST_BACKEND
-            let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))
-            guard let sourceWindowIndex = snapshot.windowIndexByNodeId[removingNodeId] else {
-                return nil
-            }
-
-            let request = NiriStateZigKernel.MutationRequest(
-                op: .fallbackSelectionOnRemoval,
-                sourceWindowIndex: sourceWindowIndex
-            )
-            let outcome = NiriStateZigKernel.resolveMutation(snapshot: snapshot, request: request)
-            guard outcome.rc == 0 else { return nil }
-            return NiriStateZigKernel.nodeId(from: outcome.targetNode, snapshot: snapshot)
-            #else
-            preconditionFailure("Niri legacy backend is test-only and unavailable in this build")
-            #endif
-
-        case .zigContext:
-            guard root(for: workspaceId) != nil else { return nil }
-            guard let prepared = prepareLifecycleRuntime(
-                workspaceId: workspaceId,
-                ensureWorkspaceRoot: false
-            ) else {
-                return nil
-            }
-            guard let sourceWindowIndex = prepared.snapshot.windowIndexByNodeId[removingNodeId] else {
-                return nil
-            }
-
-            let request = NiriStateZigKernel.MutationRequest(
-                op: .fallbackSelectionOnRemoval,
-                sourceWindowIndex: sourceWindowIndex
-            )
-            let outcome = NiriStateZigKernel.applyMutation(
-                context: prepared.context,
-                request: .init(request: request)
-            )
-            guard outcome.rc == 0 else { return nil }
-            return outcome.targetNode?.nodeId
+        guard root(for: workspaceId) != nil else { return nil }
+        guard let prepared = prepareLifecycleRuntime(
+            workspaceId: workspaceId,
+            ensureWorkspaceRoot: false
+        ) else {
+            return nil
         }
+        guard let sourceWindowIndex = prepared.snapshot.windowIndexByNodeId[removingNodeId] else {
+            return nil
+        }
+
+        let request = NiriStateZigKernel.MutationRequest(
+            op: .fallbackSelectionOnRemoval,
+            sourceWindowIndex: sourceWindowIndex
+        )
+        let outcome = NiriStateZigKernel.applyMutation(
+            context: prepared.context,
+            request: .init(request: request)
+        )
+        guard outcome.rc == 0 else { return nil }
+        return outcome.targetNode?.nodeId
     }
 
     func updateFocusTimestamp(for nodeId: NodeId) {

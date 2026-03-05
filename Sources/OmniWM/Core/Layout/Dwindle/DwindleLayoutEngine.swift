@@ -3,14 +3,6 @@ import Foundation
 import QuartzCore
 
 final class DwindleLayoutEngine {
-    enum Backend {
-        case zigContext
-#if OMNI_DWINDLE_LEGACY_TEST_BACKEND
-        case legacyDeterministic
-#endif
-    }
-
-    let backend: Backend
     private let deterministicBackend: any DwindleDeterministicBackend
 
     var settings: DwindleSettings {
@@ -33,56 +25,9 @@ final class DwindleLayoutEngine {
         set { deterministicBackend.windowMovementAnimationConfig = newValue }
     }
 
-    init(backend: Backend = .zigContext) {
-        self.backend = backend
-
-        switch backend {
-        case .zigContext:
-            deterministicBackend = DwindleZigDeterministicBackend()
-#if OMNI_DWINDLE_LEGACY_TEST_BACKEND
-        case .legacyDeterministic:
-            guard Self.isRunningUnderXCTest else {
-                preconditionFailure("Dwindle legacy backend is test-only and unavailable in this runtime")
-            }
-            deterministicBackend = DwindleLegacyDeterministicBackendAdapter()
-#endif
-        }
+    init() {
+        deterministicBackend = DwindleZigDeterministicBackend()
     }
-
-#if OMNI_DWINDLE_LEGACY_TEST_BACKEND
-    private static var isRunningUnderXCTest: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        if environment["XCTestConfigurationFilePath"] != nil
-            || environment["XCTestBundlePath"] != nil
-            || environment.keys.contains(where: { $0.hasPrefix("SWIFT_TESTING") })
-        {
-            return true
-        }
-
-        if NSClassFromString("XCTestCase") != nil {
-            return true
-        }
-
-        if Bundle.allBundles.contains(where: { $0.bundlePath.hasSuffix(".xctest") }) {
-            return true
-        }
-
-        let processName = ProcessInfo.processInfo.processName.lowercased()
-        if processName.contains("xctest") || processName.contains("packagetests") {
-            return true
-        }
-
-        let arguments = ProcessInfo.processInfo.arguments.joined(separator: " ").lowercased()
-        if arguments.contains("xctest")
-            || arguments.contains("swift-testing")
-            || arguments.contains("packagetests")
-        {
-            return true
-        }
-
-        return Bundle.main.bundlePath.hasSuffix(".xctest")
-    }
-#endif
 
     func updateWindowConstraints(for handle: WindowHandle, constraints: WindowSizeConstraints) {
         deterministicBackend.updateWindowConstraints(for: handle, constraints: constraints)

@@ -98,11 +98,6 @@ struct NiriRenderStyle {
 }
 
 final class NiriLayoutEngine {
-    enum Backend {
-        case zigContext
-        case legacyPlanApply
-    }
-
     struct RuntimeMirrorState {
         var isSeeded: Bool
         var columnCount: Int
@@ -123,12 +118,6 @@ final class NiriLayoutEngine {
 
     var framePool: [WindowHandle: CGRect] = [:]
     var hiddenPool: [WindowHandle: HideSide] = [:]
-
-    var backend: Backend {
-        didSet {
-            validateBackendSelection()
-        }
-    }
 
     var maxWindowsPerColumn: Int
     var maxVisibleColumns: Int
@@ -167,69 +156,12 @@ final class NiriLayoutEngine {
     init(
         maxWindowsPerColumn: Int = 3,
         maxVisibleColumns: Int = 3,
-        infiniteLoop: Bool = false,
-        backend: Backend = .zigContext
+        infiniteLoop: Bool = false
     ) {
-        self.backend = backend
         self.maxWindowsPerColumn = max(1, min(10, maxWindowsPerColumn))
         self.maxVisibleColumns = max(1, min(5, maxVisibleColumns))
         self.infiniteLoop = infiniteLoop
         centerFocusedColumn = .onOverflow
-        validateBackendSelection()
-    }
-
-    private static var isRunningUnderXCTest: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        if environment["XCTestConfigurationFilePath"] != nil
-            || environment["XCTestBundlePath"] != nil
-            || environment.keys.contains(where: { $0.hasPrefix("SWIFT_TESTING") })
-        {
-            return true
-        }
-        if NSClassFromString("XCTestCase") != nil {
-            return true
-        }
-
-        if Bundle.allBundles.contains(where: { $0.bundlePath.hasSuffix(".xctest") }) {
-            return true
-        }
-
-        let processName = ProcessInfo.processInfo.processName.lowercased()
-        if processName.contains("xctest") || processName.contains("packagetests") {
-            return true
-        }
-
-        let arguments = ProcessInfo.processInfo.arguments.joined(separator: " ").lowercased()
-        if arguments.contains("xctest")
-            || arguments.contains("swift-testing")
-            || arguments.contains("packagetests")
-        {
-            return true
-        }
-
-        return Bundle.main.bundlePath.hasSuffix(".xctest")
-    }
-
-    private static var isLegacyTestBackendCompiled: Bool {
-#if OMNI_NIRI_LEGACY_TEST_BACKEND
-        true
-#else
-        false
-#endif
-    }
-
-    private func validateBackendSelection(
-        file _: StaticString = #fileID,
-        line _: UInt = #line
-    ) {
-        switch backend {
-        case .zigContext:
-            return
-        case .legacyPlanApply:
-            guard Self.isLegacyTestBackendCompiled, Self.isRunningUnderXCTest else {
-                preconditionFailure("Niri legacy backend is test-only and unavailable in this runtime")
-            }
-        }
     }
 
     func ensureRoot(for workspaceId: WorkspaceDescriptor.ID) -> NiriRoot {

@@ -5,8 +5,6 @@ extension NiriLayoutEngine {
     private struct WorkspacePreparedRequest {
         let sourceWorkspaceId: WorkspaceDescriptor.ID
         let targetWorkspaceId: WorkspaceDescriptor.ID
-        let sourceRoot: NiriRoot
-        let targetRoot: NiriRoot
         let sourceSnapshot: NiriStateZigKernel.Snapshot
         let targetSnapshot: NiriStateZigKernel.Snapshot
         let request: NiriStateZigKernel.WorkspaceRequest
@@ -26,36 +24,6 @@ extension NiriLayoutEngine {
 
         let targetWorkspaceId: WorkspaceDescriptor.ID
     }
-
-    #if OMNI_NIRI_LEGACY_TEST_BACKEND
-    private func applyLegacyWorkspaceMutation(
-        _ prepared: WorkspacePreparedRequest
-    ) -> WorkspaceApplyOutcome? {
-        let outcome = NiriStateZigKernel.resolveWorkspace(
-            sourceSnapshot: prepared.sourceSnapshot,
-            targetSnapshot: prepared.targetSnapshot,
-            request: prepared.request
-        )
-        guard outcome.rc == 0 else { return nil }
-
-        let applyOutcome = NiriStateZigWorkspaceApplier.apply(
-            outcome: outcome,
-            request: prepared.request,
-            sourceSnapshot: prepared.sourceSnapshot,
-            targetSnapshot: prepared.targetSnapshot,
-            sourceRoot: prepared.sourceRoot,
-            targetRoot: prepared.targetRoot,
-            engine: self
-        )
-
-        return WorkspaceApplyOutcome(
-            applied: applyOutcome.applied,
-            newSourceFocusNodeId: applyOutcome.newSourceFocusNodeId,
-            targetSelectionNodeId: applyOutcome.targetSelectionNodeId,
-            movedHandle: applyOutcome.movedHandle
-        )
-    }
-    #endif
 
     private func applyRuntimeWorkspaceMutation(
         _ prepared: WorkspacePreparedRequest,
@@ -186,20 +154,11 @@ extension NiriLayoutEngine {
         targetCreatedColumnId: UUID? = nil,
         sourcePlaceholderColumnId: UUID? = nil
     ) -> WorkspaceApplyOutcome? {
-        switch backend {
-        case .legacyPlanApply:
-            #if OMNI_NIRI_LEGACY_TEST_BACKEND
-            return applyLegacyWorkspaceMutation(prepared)
-            #else
-            preconditionFailure("Niri legacy backend is test-only and unavailable in this build")
-            #endif
-        case .zigContext:
-            return applyRuntimeWorkspaceMutation(
-                prepared,
-                targetCreatedColumnId: targetCreatedColumnId,
-                sourcePlaceholderColumnId: sourcePlaceholderColumnId
-            )
-        }
+        applyRuntimeWorkspaceMutation(
+            prepared,
+            targetCreatedColumnId: targetCreatedColumnId,
+            sourcePlaceholderColumnId: sourcePlaceholderColumnId
+        )
     }
 
     private func prepareMoveWindowToWorkspaceRequest(
@@ -231,8 +190,6 @@ extension NiriLayoutEngine {
         return WorkspacePreparedRequest(
             sourceWorkspaceId: sourceWorkspaceId,
             targetWorkspaceId: targetWorkspaceId,
-            sourceRoot: sourceRoot,
-            targetRoot: targetRoot,
             sourceSnapshot: sourceSnapshot,
             targetSnapshot: targetSnapshot,
             request: request
@@ -267,8 +224,6 @@ extension NiriLayoutEngine {
         return WorkspacePreparedRequest(
             sourceWorkspaceId: sourceWorkspaceId,
             targetWorkspaceId: targetWorkspaceId,
-            sourceRoot: sourceRoot,
-            targetRoot: targetRoot,
             sourceSnapshot: sourceSnapshot,
             targetSnapshot: targetSnapshot,
             request: request
