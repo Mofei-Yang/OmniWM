@@ -9,8 +9,35 @@ enum NiriStateZigDeltaProjector {
     static func project(
         delta: NiriStateZigKernel.DeltaExport,
         workspaceId: WorkspaceDescriptor.ID,
+        engine: NiriLayoutEngine
+    ) -> ProjectionResult {
+        projectInternal(
+            delta: delta,
+            workspaceId: workspaceId,
+            engine: engine,
+            additionalHandlesById: [:]
+        )
+    }
+
+    static func projectLifecycle(
+        delta: NiriStateZigKernel.DeltaExport,
+        workspaceId: WorkspaceDescriptor.ID,
         engine: NiriLayoutEngine,
-        additionalHandlesById: [UUID: WindowHandle] = [:]
+        incomingHandlesById: [UUID: WindowHandle]
+    ) -> ProjectionResult {
+        projectInternal(
+            delta: delta,
+            workspaceId: workspaceId,
+            engine: engine,
+            additionalHandlesById: incomingHandlesById
+        )
+    }
+
+    private static func projectInternal(
+        delta: NiriStateZigKernel.DeltaExport,
+        workspaceId: WorkspaceDescriptor.ID,
+        engine: NiriLayoutEngine,
+        additionalHandlesById: [UUID: WindowHandle]
     ) -> ProjectionResult {
         struct ResolvedColumn {
             let column: NiriContainer

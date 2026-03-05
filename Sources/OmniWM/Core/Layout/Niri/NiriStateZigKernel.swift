@@ -803,50 +803,6 @@ enum NiriStateZigKernel {
         }
     }
 
-    private static func rawMutationRequest(from request: MutationRequest) -> OmniNiriMutationRequest {
-        OmniNiriMutationRequest(
-            op: mutationOpCode(request.op),
-            direction: mutationDirectionCode(request.direction),
-            infinite_loop: request.infiniteLoop ? 1 : 0,
-            insert_position: insertPositionCode(request.insertPosition),
-            source_window_index: Int64(request.sourceWindowIndex),
-            target_window_index: Int64(request.targetWindowIndex),
-            max_windows_per_column: Int64(request.maxWindowsPerColumn),
-            source_column_index: Int64(request.sourceColumnIndex),
-            target_column_index: Int64(request.targetColumnIndex),
-            insert_column_index: Int64(request.insertColumnIndex),
-            max_visible_columns: Int64(request.maxVisibleColumns),
-            selected_node_kind: mutationNodeKindCode(request.selectedNodeKind),
-            selected_node_index: Int64(request.selectedNodeIndex),
-            focused_window_index: Int64(request.focusedWindowIndex)
-        )
-    }
-
-    private static func rawWorkspaceRequest(from request: WorkspaceRequest) -> OmniNiriWorkspaceRequest {
-        OmniNiriWorkspaceRequest(
-            op: workspaceOpCode(request.op),
-            source_window_index: Int64(request.sourceWindowIndex),
-            source_column_index: Int64(request.sourceColumnIndex),
-            max_visible_columns: Int64(request.maxVisibleColumns)
-        )
-    }
-
-    private static func rawNavigationRequest(from request: NavigationRequest) -> OmniNiriNavigationRequest {
-        OmniNiriNavigationRequest(
-            op: navigationOpCode(request.op),
-            direction: navigationDirectionCode(request.direction),
-            orientation: orientationCode(request.orientation),
-            infinite_loop: request.infiniteLoop ? 1 : 0,
-            selected_window_index: Int64(request.selectedWindowIndex),
-            selected_column_index: Int64(request.selectedColumnIndex),
-            selected_row_index: Int64(request.selectedRowIndex),
-            step: Int64(request.step),
-            target_row_index: Int64(request.targetRowIndex),
-            target_column_index: Int64(request.targetColumnIndex),
-            target_window_index: Int64(request.targetWindowIndex)
-        )
-    }
-
     static func runtimeStateExport(snapshot: Snapshot) -> RuntimeStateExport {
         let columns = snapshot.columns.map { column in
             RuntimeColumnState(
@@ -1375,11 +1331,13 @@ enum NiriStateZigKernel {
         context: NiriLayoutZigKernel.LayoutContext,
         request: MutationApplyRequest
     ) -> MutationApplyOutcome {
-        let outcome = applyTxn(.mutation(context: context, request: request))
-        let delta = exportDelta(context: context)
-        guard outcome.rc == OMNI_OK, delta.rc == OMNI_OK else {
+        let exported = applyTxnAndExportSingleContext(
+            .mutation(context: context, request: request),
+            context: context
+        )
+        guard exported.outcome.rc == OMNI_OK, exported.deltaRC == OMNI_OK else {
             return MutationApplyOutcome(
-                rc: outcome.rc != OMNI_OK ? outcome.rc : delta.rc,
+                rc: exported.outcome.rc != OMNI_OK ? exported.outcome.rc : exported.deltaRC,
                 applied: false,
                 targetWindowId: nil,
                 targetNode: nil,
@@ -1387,11 +1345,11 @@ enum NiriStateZigKernel {
             )
         }
         return MutationApplyOutcome(
-            rc: outcome.rc,
-            applied: outcome.applied,
-            targetWindowId: outcome.targetWindowId,
-            targetNode: outcome.targetNode,
-            delta: delta.export
+            rc: exported.outcome.rc,
+            applied: exported.outcome.applied,
+            targetWindowId: exported.outcome.targetWindowId,
+            targetNode: exported.outcome.targetNode,
+            delta: exported.delta
         )
     }
 
@@ -1400,17 +1358,19 @@ enum NiriStateZigKernel {
         targetContext: NiriLayoutZigKernel.LayoutContext,
         request: WorkspaceApplyRequest
     ) -> WorkspaceApplyOutcome {
-        let outcome = applyTxn(.workspace(sourceContext: sourceContext, targetContext: targetContext, request: request))
-        let sourceDelta = exportDelta(context: sourceContext)
-        let targetDelta = exportDelta(context: targetContext)
+        let exported = applyTxnAndExportWorkspace(
+            sourceContext: sourceContext,
+            targetContext: targetContext,
+            request: request
+        )
         return WorkspaceApplyOutcome(
-            rc: outcome.rc,
-            applied: outcome.applied,
-            sourceSelectionWindowId: sourceDelta.rc == OMNI_OK ? sourceDelta.export.sourceSelectionWindowId : nil,
-            targetSelectionWindowId: targetDelta.rc == OMNI_OK ? targetDelta.export.targetSelectionWindowId : nil,
-            movedWindowId: targetDelta.rc == OMNI_OK ? targetDelta.export.movedWindowId : nil,
-            sourceDelta: sourceDelta.rc == OMNI_OK ? sourceDelta.export : nil,
-            targetDelta: targetDelta.rc == OMNI_OK ? targetDelta.export : nil
+            rc: exported.outcome.rc,
+            applied: exported.outcome.applied,
+            sourceSelectionWindowId: exported.sourceDelta?.sourceSelectionWindowId,
+            targetSelectionWindowId: exported.targetDelta?.targetSelectionWindowId,
+            movedWindowId: exported.targetDelta?.movedWindowId,
+            sourceDelta: exported.sourceDelta,
+            targetDelta: exported.targetDelta
         )
     }
 
@@ -1418,23 +1378,67 @@ enum NiriStateZigKernel {
         context: NiriLayoutZigKernel.LayoutContext,
         request: NavigationApplyRequest
     ) -> NavigationApplyOutcome {
-        let outcome = applyTxn(.navigation(context: context, request: request))
-        let delta = exportDelta(context: context)
+        let exported = applyTxnAndExportSingleContext(
+            .navigation(context: context, request: request),
+            context: context
+        )
         let refreshColumnIds: [NodeId]
-        if delta.rc == OMNI_OK {
-            refreshColumnIds = delta.export.refreshTabbedVisibilityColumnIds
+        if exported.deltaRC == OMNI_OK, let delta = exported.delta {
+            refreshColumnIds = delta.refreshTabbedVisibilityColumnIds
         } else {
             refreshColumnIds = []
         }
         return NavigationApplyOutcome(
-            rc: outcome.rc,
-            applied: outcome.applied,
-            targetWindowId: outcome.targetWindowId,
+            rc: exported.outcome.rc,
+            applied: exported.outcome.applied,
+            targetWindowId: exported.outcome.targetWindowId,
             sourceActiveTileUpdate: nil,
             targetActiveTileUpdate: nil,
             refreshSourceColumnId: refreshColumnIds.first,
             refreshTargetColumnId: refreshColumnIds.count > 1 ? refreshColumnIds[1] : nil,
+            delta: exported.deltaRC == OMNI_OK ? exported.delta : nil
+        )
+    }
+
+    private static func applyTxnAndExportSingleContext(
+        _ request: TxnRequest,
+        context: NiriLayoutZigKernel.LayoutContext
+    ) -> (
+        outcome: TxnOutcome,
+        deltaRC: Int32,
+        delta: DeltaExport?
+    ) {
+        let outcome = applyTxn(request)
+        let delta = exportDelta(context: context)
+        return (
+            outcome: outcome,
+            deltaRC: delta.rc,
             delta: delta.rc == OMNI_OK ? delta.export : nil
+        )
+    }
+
+    private static func applyTxnAndExportWorkspace(
+        sourceContext: NiriLayoutZigKernel.LayoutContext,
+        targetContext: NiriLayoutZigKernel.LayoutContext,
+        request: WorkspaceApplyRequest
+    ) -> (
+        outcome: TxnOutcome,
+        sourceDelta: DeltaExport?,
+        targetDelta: DeltaExport?
+    ) {
+        let outcome = applyTxn(
+            .workspace(
+                sourceContext: sourceContext,
+                targetContext: targetContext,
+                request: request
+            )
+        )
+        let sourceDelta = exportDelta(context: sourceContext)
+        let targetDelta = exportDelta(context: targetContext)
+        return (
+            outcome: outcome,
+            sourceDelta: sourceDelta.rc == OMNI_OK ? sourceDelta.export : nil,
+            targetDelta: targetDelta.rc == OMNI_OK ? targetDelta.export : nil
         )
     }
 }

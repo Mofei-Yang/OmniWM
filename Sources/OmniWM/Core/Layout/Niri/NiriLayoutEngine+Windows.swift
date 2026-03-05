@@ -128,19 +128,17 @@ extension NiriLayoutEngine {
             )
         }
 
-        let projection = NiriStateZigDeltaProjector.project(
-            delta: delta,
+        guard applyProjectedLifecycleRuntimeExport(
+            context: prepared.context,
             workspaceId: workspaceId,
-            engine: self,
-            additionalHandlesById: [handle.id: handle]
-        )
-        guard projection.applied else {
-            let reason = projection.failureReason ?? "unknown projection failure"
+            incomingHandlesById: [handle.id: handle],
+            delta: delta
+        ) != nil else {
             lifecycleContractFailure(
                 op: .addWindow,
                 workspaceId: workspaceId,
                 sourceHandle: handle,
-                reason: "runtime projection failed: \(reason)"
+                reason: "runtime lifecycle projection failed"
             )
         }
         guard let targetWindow = handleToNode[handle] else {
@@ -152,11 +150,6 @@ extension NiriLayoutEngine {
             )
         }
 
-        setRuntimeMirrorState(
-            for: workspaceId,
-            columnCount: delta.columns.count,
-            windowCount: delta.windows.count
-        )
         return targetWindow
     }
 

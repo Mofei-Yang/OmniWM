@@ -315,6 +315,12 @@ Update the tracked baseline file with the latest run:
 Scripts/niri-phase0-benchmark.sh --update-baseline
 ```
 
+Run the hard performance gate (fails on any p95/p99 regression vs baseline):
+
+```bash
+Scripts/niri-phase0-perf-gate.sh
+```
+
 Benchmark outputs:
 - Latest report: `dist/benchmarks/niri-phase0-latest.json`
 - Tracked baseline: `benchmarks/niri/phase0-baseline.json`

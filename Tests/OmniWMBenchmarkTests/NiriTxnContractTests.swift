@@ -22,6 +22,13 @@ final class NiriTxnContractTests: XCTestCase {
         repoRootURL().appendingPathComponent("Sources/OmniWM/Core/Layout/Niri")
     }
 
+    private func zigLayoutContextURL() -> URL {
+        repoRootURL()
+            .appendingPathComponent("zig")
+            .appendingPathComponent("omni")
+            .appendingPathComponent("layout_context.zig")
+    }
+
     private func niriSwiftFiles() throws -> [URL] {
         let fileManager = FileManager.default
         let baseURL = niriSourceDirURL()
@@ -65,5 +72,18 @@ final class NiriTxnContractTests: XCTestCase {
 
         XCTAssertTrue(kernelContent.contains("omni_niri_ctx_apply_txn"))
         XCTAssertTrue(kernelContent.contains("omni_niri_ctx_export_delta"))
+    }
+
+    func testTxnDispatcherHasNoLegacyBridgeMarkersInZig() throws {
+        let zigContent = try String(contentsOf: zigLayoutContextURL(), encoding: .utf8)
+
+        XCTAssertFalse(zigContent.contains("legacy_request"))
+        XCTAssertFalse(zigContent.contains("legacy_result"))
+        XCTAssertFalse(zigContent.contains("buildNavigationApplyRequestFromTxn"))
+        XCTAssertFalse(zigContent.contains("buildMutationApplyRequestFromTxn"))
+        XCTAssertFalse(zigContent.contains("buildWorkspaceApplyRequestFromTxn"))
+        XCTAssertFalse(zigContent.contains("omni_niri_ctx_apply_navigation_impl"))
+        XCTAssertFalse(zigContent.contains("omni_niri_ctx_apply_mutation_impl"))
+        XCTAssertFalse(zigContent.contains("omni_niri_ctx_apply_workspace_impl"))
     }
 }

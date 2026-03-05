@@ -78,6 +78,46 @@ extension NiriLayoutEngine {
         return resolvedDelta
     }
 
+    @discardableResult
+    func applyProjectedLifecycleRuntimeExport(
+        context: NiriLayoutZigKernel.LayoutContext,
+        workspaceId: WorkspaceDescriptor.ID,
+        incomingHandlesById: [UUID: WindowHandle],
+        delta: NiriStateZigKernel.DeltaExport? = nil,
+        refreshMirrorStateFromExport: Bool = true
+    ) -> NiriStateZigKernel.DeltaExport? {
+        let resolvedDelta: NiriStateZigKernel.DeltaExport
+        if let delta {
+            resolvedDelta = delta
+        } else {
+            let exported = NiriStateZigKernel.exportDelta(context: context)
+            guard exported.rc == 0 else {
+                return nil
+            }
+            resolvedDelta = exported.export
+        }
+
+        let projection = NiriStateZigDeltaProjector.projectLifecycle(
+            delta: resolvedDelta,
+            workspaceId: workspaceId,
+            engine: self,
+            incomingHandlesById: incomingHandlesById
+        )
+        guard projection.applied else {
+            return nil
+        }
+
+        if refreshMirrorStateFromExport {
+            setRuntimeMirrorState(
+                for: workspaceId,
+                columnCount: resolvedDelta.columns.count,
+                windowCount: resolvedDelta.windows.count
+            )
+        }
+
+        return resolvedDelta
+    }
+
     func navigationRefreshColumnIds(
         sourceColumnId: NodeId?,
         targetColumnId: NodeId?

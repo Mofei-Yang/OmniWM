@@ -1518,17 +1518,311 @@ pub fn omni_niri_ctx_export_runtime_state_impl(
     return abi.OMNI_OK;
 }
 
-pub fn omni_niri_ctx_apply_mutation_impl(
-    context: [*c]OmniNiriLayoutContext,
-    request: [*c]const abi.OmniNiriMutationApplyRequest,
-    out_result: [*c]abi.OmniNiriMutationApplyResult,
+fn appendRefreshColumnMeta(meta: *TxnDeltaMeta, column_id: abi.OmniUuid128) void {
+    var idx: usize = 0;
+    while (idx < meta.refresh_count) : (idx += 1) {
+        if (uuidEqual(meta.refresh_column_ids[idx], column_id)) return;
+    }
+    if (meta.refresh_count >= abi.OMNI_NIRI_RUNTIME_HINT_MAX_COLUMNS) return;
+    meta.refresh_column_ids[meta.refresh_count] = column_id;
+    meta.refresh_count += 1;
+}
+
+fn resolveWindowIndexFromTxn(
+    state: *const RuntimeState,
+    has_window_id: u8,
+    window_id: abi.OmniUuid128,
+    out_index: *i64,
 ) i32 {
-    const ctx = asMutableContext(context) orelse return abi.OMNI_ERR_INVALID_ARGS;
-    if (request == null or out_result == null) return abi.OMNI_ERR_INVALID_ARGS;
+    if (has_window_id == 0) {
+        out_index.* = -1;
+        return abi.OMNI_OK;
+    }
+    const idx = findWindowIndexById(state, window_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+    out_index.* = std.math.cast(i64, idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+    return abi.OMNI_OK;
+}
 
-    initMutationApplyResult(out_result);
+fn resolveColumnIndexFromTxn(
+    state: *const RuntimeState,
+    has_column_id: u8,
+    column_id: abi.OmniUuid128,
+    out_index: *i64,
+) i32 {
+    if (has_column_id == 0) {
+        out_index.* = -1;
+        return abi.OMNI_OK;
+    }
+    const idx = findColumnIndexById(state, column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+    out_index.* = std.math.cast(i64, idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+    return abi.OMNI_OK;
+}
 
-    var runtime_state = runtimeStateFromContext(ctx);
+fn applyNavigationTxn(
+    source_ctx: *OmniNiriLayoutContext,
+    payload: abi.OmniNiriTxnNavigationPayload,
+    out_result: [*c]abi.OmniNiriTxnResult,
+    source_delta_meta: *TxnDeltaMeta,
+) i32 {
+    var runtime_state = runtimeStateFromContext(source_ctx);
+
+    var selected_window_index: i64 = -1;
+    var selected_column_index: i64 = -1;
+    var target_window_index: i64 = -1;
+    var target_column_index: i64 = -1;
+
+    var rc = resolveWindowIndexFromTxn(
+        &runtime_state,
+        payload.has_selected_window_id,
+        payload.selected_window_id,
+        &selected_window_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveColumnIndexFromTxn(
+        &runtime_state,
+        payload.has_selected_column_id,
+        payload.selected_column_id,
+        &selected_column_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveWindowIndexFromTxn(
+        &runtime_state,
+        payload.has_target_window_id,
+        payload.target_window_id,
+        &target_window_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveColumnIndexFromTxn(
+        &runtime_state,
+        payload.has_target_column_id,
+        payload.target_column_id,
+        &target_column_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    var selected_row_index = payload.selected_row_index;
+    if (selected_row_index < 0 and selected_window_index >= 0) {
+        const window_idx = std.math.cast(usize, selected_window_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        if (window_idx >= runtime_state.window_count) return abi.OMNI_ERR_OUT_OF_RANGE;
+
+        const derived_column_idx = runtime_state.windows[window_idx].column_index;
+        if (derived_column_idx >= runtime_state.column_count) return abi.OMNI_ERR_OUT_OF_RANGE;
+
+        if (selected_column_index < 0) {
+            selected_column_index = std.math.cast(i64, derived_column_idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        }
+
+        const column = runtime_state.columns[derived_column_idx];
+        if (window_idx < column.window_start or window_idx >= column.window_start + column.window_count) {
+            return abi.OMNI_ERR_OUT_OF_RANGE;
+        }
+        selected_row_index = std.math.cast(i64, window_idx - column.window_start) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+    }
+
+    const request: abi.OmniNiriNavigationRequest = .{
+        .op = payload.op,
+        .direction = payload.direction,
+        .orientation = payload.orientation,
+        .infinite_loop = payload.infinite_loop,
+        .selected_window_index = selected_window_index,
+        .selected_column_index = selected_column_index,
+        .selected_row_index = selected_row_index,
+        .step = payload.step,
+        .target_row_index = payload.target_row_index,
+        .target_column_index = target_column_index,
+        .target_window_index = target_window_index,
+    };
+
+    var nav_result: abi.OmniNiriNavigationResult = undefined;
+    const nav_rc = navigation.omni_niri_navigation_resolve_impl(
+        runtimeColumnsStatePtr(&runtime_state),
+        runtime_state.column_count,
+        runtimeWindowsStatePtr(&runtime_state),
+        runtime_state.window_count,
+        &request,
+        &nav_result,
+    );
+    if (nav_rc != abi.OMNI_OK) return nav_rc;
+
+    var pre_column_ids = [_]abi.OmniUuid128{zeroUuid()} ** abi.MAX_WINDOWS;
+    var pre_window_ids = [_]abi.OmniUuid128{zeroUuid()} ** abi.MAX_WINDOWS;
+    capturePreIds(&runtime_state, &pre_column_ids, &pre_window_ids);
+
+    if (nav_result.has_target != 0) {
+        const target_window_id = preWindowId(
+            &pre_window_ids,
+            runtime_state.window_count,
+            nav_result.target_window_index,
+        ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        out_result[0].has_target_window_id = 1;
+        out_result[0].target_window_id = target_window_id;
+        source_delta_meta.has_target_window_id = true;
+        source_delta_meta.target_window_id = target_window_id;
+    }
+
+    var mutated = false;
+
+    if (nav_result.update_source_active_tile != 0) {
+        const column_id = preColumnId(
+            &pre_column_ids,
+            runtime_state.column_count,
+            nav_result.source_column_index,
+        ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+
+        const column_idx = findColumnIndexById(&runtime_state, column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        const row_idx = std.math.cast(usize, nav_result.source_active_tile_idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        if (runtime_state.columns[column_idx].active_tile_idx != row_idx) {
+            runtime_state.columns[column_idx].active_tile_idx = row_idx;
+            mutated = true;
+        }
+    }
+
+    if (nav_result.update_target_active_tile != 0) {
+        const column_id = preColumnId(
+            &pre_column_ids,
+            runtime_state.column_count,
+            nav_result.target_column_index,
+        ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+
+        const column_idx = findColumnIndexById(&runtime_state, column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        const row_idx = std.math.cast(usize, nav_result.target_active_tile_idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        if (runtime_state.columns[column_idx].active_tile_idx != row_idx) {
+            runtime_state.columns[column_idx].active_tile_idx = row_idx;
+            mutated = true;
+        }
+    }
+
+    if (nav_result.refresh_tabbed_visibility_source != 0) {
+        const column_id = preColumnId(
+            &pre_column_ids,
+            runtime_state.column_count,
+            nav_result.source_column_index,
+        ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        appendRefreshColumnMeta(source_delta_meta, column_id);
+    }
+
+    if (nav_result.refresh_tabbed_visibility_target != 0) {
+        const column_id = preColumnId(
+            &pre_column_ids,
+            runtime_state.column_count,
+            nav_result.target_column_index,
+        ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        appendRefreshColumnMeta(source_delta_meta, column_id);
+    }
+
+    if (mutated) {
+        const refresh_rc = refreshRuntimeState(&runtime_state);
+        if (refresh_rc != abi.OMNI_OK) return refresh_rc;
+
+        commitRuntimeState(source_ctx, &runtime_state);
+        out_result[0].applied = 1;
+        out_result[0].changed_source_context = 1;
+    }
+
+    return abi.OMNI_OK;
+}
+
+fn applyMutationTxn(
+    source_ctx: *OmniNiriLayoutContext,
+    payload: abi.OmniNiriTxnMutationPayload,
+    out_result: [*c]abi.OmniNiriTxnResult,
+    source_delta_meta: *TxnDeltaMeta,
+) i32 {
+    var runtime_state = runtimeStateFromContext(source_ctx);
+
+    var source_window_index: i64 = -1;
+    var target_window_index: i64 = -1;
+    var source_column_index: i64 = -1;
+    var target_column_index: i64 = -1;
+    var focused_window_index: i64 = -1;
+
+    var rc = resolveWindowIndexFromTxn(
+        &runtime_state,
+        payload.has_source_window_id,
+        payload.source_window_id,
+        &source_window_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveWindowIndexFromTxn(
+        &runtime_state,
+        payload.has_target_window_id,
+        payload.target_window_id,
+        &target_window_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveColumnIndexFromTxn(
+        &runtime_state,
+        payload.has_source_column_id,
+        payload.source_column_id,
+        &source_column_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveColumnIndexFromTxn(
+        &runtime_state,
+        payload.has_target_column_id,
+        payload.target_column_id,
+        &target_column_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveWindowIndexFromTxn(
+        &runtime_state,
+        payload.has_focused_window_id,
+        payload.focused_window_id,
+        &focused_window_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    var selected_node_index: i64 = -1;
+    if (payload.has_selected_node_id != 0) {
+        switch (payload.selected_node_kind) {
+            abi.OMNI_NIRI_MUTATION_NODE_WINDOW => {
+                rc = resolveWindowIndexFromTxn(&runtime_state, 1, payload.selected_node_id, &selected_node_index);
+                if (rc != abi.OMNI_OK) return rc;
+            },
+            abi.OMNI_NIRI_MUTATION_NODE_COLUMN => {
+                rc = resolveColumnIndexFromTxn(&runtime_state, 1, payload.selected_node_id, &selected_node_index);
+                if (rc != abi.OMNI_OK) return rc;
+            },
+            abi.OMNI_NIRI_MUTATION_NODE_NONE => {
+                selected_node_index = -1;
+            },
+            else => return abi.OMNI_ERR_INVALID_ARGS,
+        }
+    }
+
+    const request: abi.OmniNiriMutationRequest = .{
+        .op = payload.op,
+        .direction = payload.direction,
+        .infinite_loop = payload.infinite_loop,
+        .insert_position = payload.insert_position,
+        .source_window_index = source_window_index,
+        .target_window_index = target_window_index,
+        .max_windows_per_column = payload.max_windows_per_column,
+        .source_column_index = source_column_index,
+        .target_column_index = target_column_index,
+        .insert_column_index = payload.insert_column_index,
+        .max_visible_columns = payload.max_visible_columns,
+        .selected_node_kind = payload.selected_node_kind,
+        .selected_node_index = selected_node_index,
+        .focused_window_index = focused_window_index,
+    };
+
+    const apply_request: abi.OmniNiriMutationApplyRequest = .{
+        .request = request,
+        .has_incoming_window_id = payload.has_incoming_window_id,
+        .incoming_window_id = payload.incoming_window_id,
+        .has_created_column_id = payload.has_created_column_id,
+        .created_column_id = payload.created_column_id,
+        .has_placeholder_column_id = payload.has_placeholder_column_id,
+        .placeholder_column_id = payload.placeholder_column_id,
+    };
 
     var plan_result: abi.OmniNiriMutationResult = undefined;
     const planner_rc = mutation.omni_niri_mutation_plan_impl(
@@ -1536,7 +1830,7 @@ pub fn omni_niri_ctx_apply_mutation_impl(
         runtime_state.column_count,
         runtimeWindowsStatePtr(&runtime_state),
         runtime_state.window_count,
-        &request[0].request,
+        &apply_request.request,
         &plan_result,
     );
     if (planner_rc != abi.OMNI_OK) return workspaceFail(planner_rc, "planner_rc");
@@ -1546,23 +1840,43 @@ pub fn omni_niri_ctx_apply_mutation_impl(
     capturePreIds(&runtime_state, &pre_column_ids, &pre_window_ids);
 
     if (plan_result.has_target_window != 0) {
-        const target_window_id = preWindowId(&pre_window_ids, runtime_state.window_count, plan_result.target_window_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
+        const target_window_id = preWindowId(
+            &pre_window_ids,
+            runtime_state.window_count,
+            plan_result.target_window_index,
+        ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
         out_result[0].has_target_window_id = 1;
         out_result[0].target_window_id = target_window_id;
+        source_delta_meta.has_target_window_id = true;
+        source_delta_meta.target_window_id = target_window_id;
     }
 
     if (plan_result.has_target_node != 0) {
+        out_result[0].has_target_node_id = 1;
         out_result[0].target_node_kind = plan_result.target_node_kind;
+
         switch (plan_result.target_node_kind) {
             abi.OMNI_NIRI_MUTATION_NODE_WINDOW => {
-                const target_window_id = preWindowId(&pre_window_ids, runtime_state.window_count, plan_result.target_node_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-                out_result[0].has_target_node_id = 1;
+                const target_window_id = preWindowId(
+                    &pre_window_ids,
+                    runtime_state.window_count,
+                    plan_result.target_node_index,
+                ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
                 out_result[0].target_node_id = target_window_id;
+                source_delta_meta.has_target_node_id = true;
+                source_delta_meta.target_node_kind = plan_result.target_node_kind;
+                source_delta_meta.target_node_id = target_window_id;
             },
             abi.OMNI_NIRI_MUTATION_NODE_COLUMN => {
-                const target_column_id = preColumnId(&pre_column_ids, runtime_state.column_count, plan_result.target_node_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-                out_result[0].has_target_node_id = 1;
+                const target_column_id = preColumnId(
+                    &pre_column_ids,
+                    runtime_state.column_count,
+                    plan_result.target_node_index,
+                ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
                 out_result[0].target_node_id = target_column_id;
+                source_delta_meta.has_target_node_id = true;
+                source_delta_meta.target_node_kind = plan_result.target_node_kind;
+                source_delta_meta.target_node_id = target_column_id;
             },
             else => return abi.OMNI_ERR_INVALID_ARGS,
         }
@@ -1574,12 +1888,11 @@ pub fn omni_niri_ctx_apply_mutation_impl(
     }
 
     var hints = initMutationApplyHints();
-
     const max_edits = @min(plan_result.edit_count, abi.OMNI_NIRI_MUTATION_MAX_EDITS);
     for (0..max_edits) |idx| {
         const apply_rc = applyMutationEdit(
             &runtime_state,
-            request[0],
+            apply_request,
             plan_result.edits[idx],
             &pre_column_ids,
             &pre_window_ids,
@@ -1593,36 +1906,65 @@ pub fn omni_niri_ctx_apply_mutation_impl(
     const final_validation_rc = validateRuntimeState(&runtime_state);
     if (final_validation_rc != abi.OMNI_OK) return final_validation_rc;
 
-    commitRuntimeState(ctx, &runtime_state);
-
+    commitRuntimeState(source_ctx, &runtime_state);
     out_result[0].applied = 1;
-    out_result[0].refresh_tabbed_visibility_count = std.math.cast(u8, hints.refresh_count) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-    for (0..hints.refresh_count) |idx| {
-        out_result[0].refresh_tabbed_visibility_column_ids[idx] = hints.refresh_column_ids[idx];
-    }
-    out_result[0].reset_all_column_cached_widths = @intFromBool(hints.reset_all_column_cached_widths);
-    out_result[0].has_delegate_move_column = @intFromBool(hints.has_delegate_move_column);
-    out_result[0].delegate_move_column_id = hints.delegate_move_column_id;
-    out_result[0].delegate_move_direction = hints.delegate_move_direction;
+    out_result[0].changed_source_context = 1;
+
+    source_delta_meta.refresh_count = hints.refresh_count;
+    source_delta_meta.refresh_column_ids = hints.refresh_column_ids;
+    source_delta_meta.reset_all_column_cached_widths = hints.reset_all_column_cached_widths;
+    source_delta_meta.has_delegate_move_column = hints.has_delegate_move_column;
+    source_delta_meta.delegate_move_column_id = hints.delegate_move_column_id;
+    source_delta_meta.delegate_move_direction = hints.delegate_move_direction;
 
     return abi.OMNI_OK;
 }
 
-pub fn omni_niri_ctx_apply_workspace_impl(
-    source_context: [*c]OmniNiriLayoutContext,
-    target_context: [*c]OmniNiriLayoutContext,
-    request: [*c]const abi.OmniNiriWorkspaceApplyRequest,
-    out_result: [*c]abi.OmniNiriWorkspaceApplyResult,
+fn applyWorkspaceTxn(
+    source_ctx: *OmniNiriLayoutContext,
+    target_ctx: *OmniNiriLayoutContext,
+    payload: abi.OmniNiriTxnWorkspacePayload,
+    out_result: [*c]abi.OmniNiriTxnResult,
+    source_meta: *TxnDeltaMeta,
+    target_meta: *TxnDeltaMeta,
 ) i32 {
-    const source_ctx = asMutableContext(source_context) orelse return abi.OMNI_ERR_INVALID_ARGS;
-    const target_ctx = asMutableContext(target_context) orelse return abi.OMNI_ERR_INVALID_ARGS;
-    if (request == null or out_result == null) return abi.OMNI_ERR_INVALID_ARGS;
-
-    initWorkspaceApplyResult(out_result);
-
     var source_state = runtimeStateFromContext(source_ctx);
     var target_state = runtimeStateFromContext(target_ctx);
     const target_had_no_windows_before_move = target_state.window_count == 0;
+
+    var source_window_index: i64 = -1;
+    var source_column_index: i64 = -1;
+
+    var rc = resolveWindowIndexFromTxn(
+        &source_state,
+        payload.has_source_window_id,
+        payload.source_window_id,
+        &source_window_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    rc = resolveColumnIndexFromTxn(
+        &source_state,
+        payload.has_source_column_id,
+        payload.source_column_id,
+        &source_column_index,
+    );
+    if (rc != abi.OMNI_OK) return rc;
+
+    const request: abi.OmniNiriWorkspaceRequest = .{
+        .op = payload.op,
+        .source_window_index = source_window_index,
+        .source_column_index = source_column_index,
+        .max_visible_columns = payload.max_visible_columns,
+    };
+
+    const apply_request: abi.OmniNiriWorkspaceApplyRequest = .{
+        .request = request,
+        .has_target_created_column_id = payload.has_target_created_column_id,
+        .target_created_column_id = payload.target_created_column_id,
+        .has_source_placeholder_column_id = payload.has_source_placeholder_column_id,
+        .source_placeholder_column_id = payload.source_placeholder_column_id,
+    };
 
     var plan_result: abi.OmniNiriWorkspaceResult = undefined;
     const planner_rc = workspace.omni_niri_workspace_plan_impl(
@@ -1634,7 +1976,7 @@ pub fn omni_niri_ctx_apply_workspace_impl(
         target_state.column_count,
         runtimeWindowsStatePtr(&target_state),
         target_state.window_count,
-        &request[0].request,
+        &apply_request.request,
         &plan_result,
     );
     if (planner_rc != abi.OMNI_OK) return planner_rc;
@@ -1662,7 +2004,7 @@ pub fn omni_niri_ctx_apply_workspace_impl(
 
     var has_reuse_target_column = false;
     var reuse_target_column_id = zeroUuid();
-    var create_target_visible_count: i64 = request[0].request.max_visible_columns;
+    var create_target_visible_count: i64 = apply_request.request.max_visible_columns;
     var prune_target_empty_columns_if_no_windows = false;
 
     const max_edits = @min(plan_result.edit_count, abi.OMNI_NIRI_WORKSPACE_MAX_EDITS);
@@ -1744,12 +2086,12 @@ pub fn omni_niri_ctx_apply_workspace_impl(
 
     var moved_window_id_opt: ?abi.OmniUuid128 = null;
 
-    switch (request[0].request.op) {
+    switch (apply_request.request.op) {
         abi.OMNI_NIRI_WORKSPACE_OP_MOVE_WINDOW_TO_WORKSPACE => {
             const moving_window_id = preWindowId(
                 &pre_source_window_ids,
                 source_state.window_count,
-                request[0].request.source_window_index,
+                apply_request.request.source_window_index,
             ) orelse return workspaceFail(abi.OMNI_ERR_OUT_OF_RANGE, "moving_window_id");
 
             const source_window_idx = findWindowIndexById(&source_state, moving_window_id) orelse return workspaceFail(abi.OMNI_ERR_OUT_OF_RANGE, "source_window_idx");
@@ -1768,8 +2110,8 @@ pub fn omni_niri_ctx_apply_workspace_impl(
                 target_state.columns[target_column_idx].width_kind = abi.OMNI_NIRI_SIZE_KIND_PROPORTION;
                 target_column_id = reuse_target_column_id;
             } else {
-                if (request[0].has_target_created_column_id == 0) return workspaceFail(abi.OMNI_ERR_INVALID_ARGS, "missing_target_created_column_id");
-                const unique_target_rc = ensureUniqueColumnId(&target_state, request[0].target_created_column_id);
+                if (apply_request.has_target_created_column_id == 0) return workspaceFail(abi.OMNI_ERR_INVALID_ARGS, "missing_target_created_column_id");
+                const unique_target_rc = ensureUniqueColumnId(&target_state, apply_request.target_created_column_id);
                 if (unique_target_rc != abi.OMNI_OK) return workspaceFail(unique_target_rc, "target_created_column_id_not_unique");
 
                 const visible_count_i32 = visibleCountFromRaw(create_target_visible_count);
@@ -1777,7 +2119,7 @@ pub fn omni_niri_ctx_apply_workspace_impl(
                 const visible_count: usize = @intCast(visible_count_i32);
 
                 const add_column_rc = insertColumnAt(&target_state, target_state.column_count, .{
-                    .column_id = request[0].target_created_column_id,
+                    .column_id = apply_request.target_created_column_id,
                     .window_start = 0,
                     .window_count = 0,
                     .active_tile_idx = 0,
@@ -1792,7 +2134,7 @@ pub fn omni_niri_ctx_apply_workspace_impl(
                 if (add_column_rc != abi.OMNI_OK) return workspaceFail(add_column_rc, "add_target_column");
                 const cache_rc = refreshRuntimeState(&target_state);
                 if (cache_rc != abi.OMNI_OK) return workspaceFail(cache_rc, "rebuild_target_cache_after_add");
-                target_column_id = request[0].target_created_column_id;
+                target_column_id = apply_request.target_created_column_id;
             }
 
             const moved_window = removeWindowAt(&source_state, source_window_idx);
@@ -1813,7 +2155,7 @@ pub fn omni_niri_ctx_apply_workspace_impl(
             const moving_column_id = preColumnId(
                 &pre_source_column_ids,
                 source_state.column_count,
-                request[0].request.source_column_index,
+                apply_request.request.source_column_index,
             ) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
 
             const source_column_idx = findColumnIndexById(&source_state, moving_column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
@@ -1866,7 +2208,7 @@ pub fn omni_niri_ctx_apply_workspace_impl(
         }
     }
 
-    if (request[0].request.op == abi.OMNI_NIRI_WORKSPACE_OP_MOVE_WINDOW_TO_WORKSPACE and target_had_no_windows_before_move) {
+    if (apply_request.request.op == abi.OMNI_NIRI_WORKSPACE_OP_MOVE_WINDOW_TO_WORKSPACE and target_had_no_windows_before_move) {
         var idx: usize = 0;
         while (idx < target_state.column_count) {
             if (target_state.columns[idx].window_count == 0) {
@@ -1877,13 +2219,13 @@ pub fn omni_niri_ctx_apply_workspace_impl(
         }
     }
 
-    const should_insert_source_placeholder = source_state.column_count == 0 and request[0].has_source_placeholder_column_id != 0;
+    const should_insert_source_placeholder = source_state.column_count == 0 and apply_request.has_source_placeholder_column_id != 0;
     if (should_insert_source_placeholder) {
-        const unique_placeholder_rc = ensureUniqueColumnId(&source_state, request[0].source_placeholder_column_id);
+        const unique_placeholder_rc = ensureUniqueColumnId(&source_state, apply_request.source_placeholder_column_id);
         if (unique_placeholder_rc != abi.OMNI_OK) return unique_placeholder_rc;
 
         const add_placeholder_rc = insertColumnAt(&source_state, 0, .{
-            .column_id = request[0].source_placeholder_column_id,
+            .column_id = apply_request.source_placeholder_column_id,
             .window_start = 0,
             .window_count = 0,
             .active_tile_idx = 0,
@@ -1905,337 +2247,42 @@ pub fn omni_niri_ctx_apply_workspace_impl(
     if (target_refresh_rc != abi.OMNI_OK) return workspaceFail(target_refresh_rc, "target_final_refresh");
 
     if (source_selection_cleared) {
-        out_result[0].has_source_selection_window_id = 0;
+        source_meta.has_source_selection_window_id = false;
     } else if (has_source_selection_window_id) {
         if (findWindowIndexById(&source_state, source_selection_window_id) != null) {
-            out_result[0].has_source_selection_window_id = 1;
-            out_result[0].source_selection_window_id = source_selection_window_id;
+            source_meta.has_source_selection_window_id = true;
+            source_meta.source_selection_window_id = source_selection_window_id;
         }
     }
 
     if (has_target_selection_moved_window) {
         if (findWindowIndexById(&target_state, target_selection_moved_window_id) != null) {
-            out_result[0].has_target_selection_window_id = 1;
-            out_result[0].target_selection_window_id = target_selection_moved_window_id;
+            target_meta.has_target_selection_window_id = true;
+            target_meta.target_selection_window_id = target_selection_moved_window_id;
         }
     } else if (has_target_selection_moved_column) {
         if (findColumnIndexById(&target_state, target_selection_moved_column_id)) |column_idx| {
             const column = target_state.columns[column_idx];
             if (column.window_count > 0) {
-                out_result[0].has_target_selection_window_id = 1;
-                out_result[0].target_selection_window_id = target_state.windows[column.window_start].window_id;
+                target_meta.has_target_selection_window_id = true;
+                target_meta.target_selection_window_id = target_state.windows[column.window_start].window_id;
             }
         }
     }
 
     if (moved_window_id_opt) |moved_window_id| {
         if (findWindowIndexById(&target_state, moved_window_id) != null) {
-            out_result[0].has_moved_window_id = 1;
-            out_result[0].moved_window_id = moved_window_id;
+            target_meta.has_moved_window_id = true;
+            target_meta.moved_window_id = moved_window_id;
         }
     }
 
     commitRuntimeState(source_ctx, &source_state);
     commitRuntimeState(target_ctx, &target_state);
     out_result[0].applied = 1;
+    out_result[0].changed_source_context = 1;
+    out_result[0].changed_target_context = 1;
 
-    return abi.OMNI_OK;
-}
-
-pub fn omni_niri_ctx_apply_navigation_impl(
-    context: [*c]OmniNiriLayoutContext,
-    request: [*c]const abi.OmniNiriNavigationApplyRequest,
-    out_result: [*c]abi.OmniNiriNavigationApplyResult,
-) i32 {
-    const ctx = asMutableContext(context) orelse return abi.OMNI_ERR_INVALID_ARGS;
-    if (request == null or out_result == null) return abi.OMNI_ERR_INVALID_ARGS;
-
-    initNavigationApplyResult(out_result);
-
-    var runtime_state = runtimeStateFromContext(ctx);
-
-    var nav_result: abi.OmniNiriNavigationResult = undefined;
-    const nav_rc = navigation.omni_niri_navigation_resolve_impl(
-        runtimeColumnsStatePtr(&runtime_state),
-        runtime_state.column_count,
-        runtimeWindowsStatePtr(&runtime_state),
-        runtime_state.window_count,
-        &request[0].request,
-        &nav_result,
-    );
-    if (nav_rc != abi.OMNI_OK) return nav_rc;
-
-    var pre_column_ids = [_]abi.OmniUuid128{zeroUuid()} ** abi.MAX_WINDOWS;
-    var pre_window_ids = [_]abi.OmniUuid128{zeroUuid()} ** abi.MAX_WINDOWS;
-    capturePreIds(&runtime_state, &pre_column_ids, &pre_window_ids);
-
-    if (nav_result.has_target != 0) {
-        const target_window_id = preWindowId(&pre_window_ids, runtime_state.window_count, nav_result.target_window_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        out_result[0].has_target_window_id = 1;
-        out_result[0].target_window_id = target_window_id;
-    }
-
-    var mutated = false;
-
-    if (nav_result.update_source_active_tile != 0) {
-        const column_id = preColumnId(&pre_column_ids, runtime_state.column_count, nav_result.source_column_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        out_result[0].update_source_active_tile = 1;
-        out_result[0].source_column_id = column_id;
-        out_result[0].source_active_tile_idx = nav_result.source_active_tile_idx;
-
-        const column_idx = findColumnIndexById(&runtime_state, column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        const row_idx = std.math.cast(usize, nav_result.source_active_tile_idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        if (runtime_state.columns[column_idx].active_tile_idx != row_idx) {
-            runtime_state.columns[column_idx].active_tile_idx = row_idx;
-            mutated = true;
-        }
-    }
-
-    if (nav_result.update_target_active_tile != 0) {
-        const column_id = preColumnId(&pre_column_ids, runtime_state.column_count, nav_result.target_column_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        out_result[0].update_target_active_tile = 1;
-        out_result[0].target_column_id = column_id;
-        out_result[0].target_active_tile_idx = nav_result.target_active_tile_idx;
-
-        const column_idx = findColumnIndexById(&runtime_state, column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        const row_idx = std.math.cast(usize, nav_result.target_active_tile_idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        if (runtime_state.columns[column_idx].active_tile_idx != row_idx) {
-            runtime_state.columns[column_idx].active_tile_idx = row_idx;
-            mutated = true;
-        }
-    }
-
-    if (nav_result.refresh_tabbed_visibility_source != 0) {
-        const column_id = preColumnId(&pre_column_ids, runtime_state.column_count, nav_result.source_column_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        out_result[0].refresh_tabbed_visibility_source = 1;
-        out_result[0].refresh_source_column_id = column_id;
-    }
-
-    if (nav_result.refresh_tabbed_visibility_target != 0) {
-        const column_id = preColumnId(&pre_column_ids, runtime_state.column_count, nav_result.target_column_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        out_result[0].refresh_tabbed_visibility_target = 1;
-        out_result[0].refresh_target_column_id = column_id;
-    }
-
-    if (mutated) {
-        const refresh_rc = refreshRuntimeState(&runtime_state);
-        if (refresh_rc != abi.OMNI_OK) return refresh_rc;
-
-        commitRuntimeState(ctx, &runtime_state);
-        out_result[0].applied = 1;
-    }
-
-    return abi.OMNI_OK;
-}
-
-fn appendRefreshColumnMeta(meta: *TxnDeltaMeta, column_id: abi.OmniUuid128) void {
-    var idx: usize = 0;
-    while (idx < meta.refresh_count) : (idx += 1) {
-        if (uuidEqual(meta.refresh_column_ids[idx], column_id)) return;
-    }
-    if (meta.refresh_count >= abi.OMNI_NIRI_RUNTIME_HINT_MAX_COLUMNS) return;
-    meta.refresh_column_ids[meta.refresh_count] = column_id;
-    meta.refresh_count += 1;
-}
-
-fn resolveWindowIndexFromTxn(
-    state: *const RuntimeState,
-    has_window_id: u8,
-    window_id: abi.OmniUuid128,
-    out_index: *i64,
-) i32 {
-    if (has_window_id == 0) {
-        out_index.* = -1;
-        return abi.OMNI_OK;
-    }
-    const idx = findWindowIndexById(state, window_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-    out_index.* = std.math.cast(i64, idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-    return abi.OMNI_OK;
-}
-
-fn resolveColumnIndexFromTxn(
-    state: *const RuntimeState,
-    has_column_id: u8,
-    column_id: abi.OmniUuid128,
-    out_index: *i64,
-) i32 {
-    if (has_column_id == 0) {
-        out_index.* = -1;
-        return abi.OMNI_OK;
-    }
-    const idx = findColumnIndexById(state, column_id) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-    out_index.* = std.math.cast(i64, idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-    return abi.OMNI_OK;
-}
-
-fn buildNavigationApplyRequestFromTxn(
-    state: *const RuntimeState,
-    payload: abi.OmniNiriTxnNavigationPayload,
-    out_request: *abi.OmniNiriNavigationApplyRequest,
-) i32 {
-    var selected_window_index: i64 = -1;
-    var selected_column_index: i64 = -1;
-    var target_window_index: i64 = -1;
-    var target_column_index: i64 = -1;
-
-    const selected_window_rc = resolveWindowIndexFromTxn(
-        state,
-        payload.has_selected_window_id,
-        payload.selected_window_id,
-        &selected_window_index,
-    );
-    if (selected_window_rc != abi.OMNI_OK) return selected_window_rc;
-
-    const selected_column_rc = resolveColumnIndexFromTxn(
-        state,
-        payload.has_selected_column_id,
-        payload.selected_column_id,
-        &selected_column_index,
-    );
-    if (selected_column_rc != abi.OMNI_OK) return selected_column_rc;
-
-    const target_window_rc = resolveWindowIndexFromTxn(
-        state,
-        payload.has_target_window_id,
-        payload.target_window_id,
-        &target_window_index,
-    );
-    if (target_window_rc != abi.OMNI_OK) return target_window_rc;
-
-    const target_column_rc = resolveColumnIndexFromTxn(
-        state,
-        payload.has_target_column_id,
-        payload.target_column_id,
-        &target_column_index,
-    );
-    if (target_column_rc != abi.OMNI_OK) return target_column_rc;
-
-    var selected_row_index = payload.selected_row_index;
-    if (selected_row_index < 0 and selected_window_index >= 0) {
-        const window_idx = std.math.cast(usize, selected_window_index) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        if (window_idx >= state.window_count) return abi.OMNI_ERR_OUT_OF_RANGE;
-        const derived_column_idx = state.windows[window_idx].column_index;
-        if (derived_column_idx >= state.column_count) return abi.OMNI_ERR_OUT_OF_RANGE;
-        if (selected_column_index < 0) {
-            selected_column_index = std.math.cast(i64, derived_column_idx) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-        }
-        const column = state.columns[derived_column_idx];
-        if (window_idx < column.window_start or window_idx >= column.window_start + column.window_count) {
-            return abi.OMNI_ERR_OUT_OF_RANGE;
-        }
-        selected_row_index = std.math.cast(i64, window_idx - column.window_start) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-    }
-
-    out_request.* = .{
-        .request = .{
-            .op = payload.op,
-            .direction = payload.direction,
-            .orientation = payload.orientation,
-            .infinite_loop = payload.infinite_loop,
-            .selected_window_index = selected_window_index,
-            .selected_column_index = selected_column_index,
-            .selected_row_index = selected_row_index,
-            .step = payload.step,
-            .target_row_index = payload.target_row_index,
-            .target_column_index = target_column_index,
-            .target_window_index = target_window_index,
-        },
-    };
-    return abi.OMNI_OK;
-}
-
-fn buildMutationApplyRequestFromTxn(
-    state: *const RuntimeState,
-    payload: abi.OmniNiriTxnMutationPayload,
-    out_request: *abi.OmniNiriMutationApplyRequest,
-) i32 {
-    var source_window_index: i64 = -1;
-    var target_window_index: i64 = -1;
-    var source_column_index: i64 = -1;
-    var target_column_index: i64 = -1;
-    var focused_window_index: i64 = -1;
-
-    var rc = resolveWindowIndexFromTxn(state, payload.has_source_window_id, payload.source_window_id, &source_window_index);
-    if (rc != abi.OMNI_OK) return rc;
-    rc = resolveWindowIndexFromTxn(state, payload.has_target_window_id, payload.target_window_id, &target_window_index);
-    if (rc != abi.OMNI_OK) return rc;
-    rc = resolveColumnIndexFromTxn(state, payload.has_source_column_id, payload.source_column_id, &source_column_index);
-    if (rc != abi.OMNI_OK) return rc;
-    rc = resolveColumnIndexFromTxn(state, payload.has_target_column_id, payload.target_column_id, &target_column_index);
-    if (rc != abi.OMNI_OK) return rc;
-    rc = resolveWindowIndexFromTxn(state, payload.has_focused_window_id, payload.focused_window_id, &focused_window_index);
-    if (rc != abi.OMNI_OK) return rc;
-
-    var selected_node_index: i64 = -1;
-    if (payload.has_selected_node_id != 0) {
-        switch (payload.selected_node_kind) {
-            abi.OMNI_NIRI_MUTATION_NODE_WINDOW => {
-                rc = resolveWindowIndexFromTxn(state, 1, payload.selected_node_id, &selected_node_index);
-                if (rc != abi.OMNI_OK) return rc;
-            },
-            abi.OMNI_NIRI_MUTATION_NODE_COLUMN => {
-                rc = resolveColumnIndexFromTxn(state, 1, payload.selected_node_id, &selected_node_index);
-                if (rc != abi.OMNI_OK) return rc;
-            },
-            abi.OMNI_NIRI_MUTATION_NODE_NONE => {
-                selected_node_index = -1;
-            },
-            else => return abi.OMNI_ERR_INVALID_ARGS,
-        }
-    }
-
-    out_request.* = .{
-        .request = .{
-            .op = payload.op,
-            .direction = payload.direction,
-            .infinite_loop = payload.infinite_loop,
-            .insert_position = payload.insert_position,
-            .source_window_index = source_window_index,
-            .target_window_index = target_window_index,
-            .max_windows_per_column = payload.max_windows_per_column,
-            .source_column_index = source_column_index,
-            .target_column_index = target_column_index,
-            .insert_column_index = payload.insert_column_index,
-            .max_visible_columns = payload.max_visible_columns,
-            .selected_node_kind = payload.selected_node_kind,
-            .selected_node_index = selected_node_index,
-            .focused_window_index = focused_window_index,
-        },
-        .has_incoming_window_id = payload.has_incoming_window_id,
-        .incoming_window_id = payload.incoming_window_id,
-        .has_created_column_id = payload.has_created_column_id,
-        .created_column_id = payload.created_column_id,
-        .has_placeholder_column_id = payload.has_placeholder_column_id,
-        .placeholder_column_id = payload.placeholder_column_id,
-    };
-    return abi.OMNI_OK;
-}
-
-fn buildWorkspaceApplyRequestFromTxn(
-    source_state: *const RuntimeState,
-    payload: abi.OmniNiriTxnWorkspacePayload,
-    out_request: *abi.OmniNiriWorkspaceApplyRequest,
-) i32 {
-    var source_window_index: i64 = -1;
-    var source_column_index: i64 = -1;
-
-    var rc = resolveWindowIndexFromTxn(source_state, payload.has_source_window_id, payload.source_window_id, &source_window_index);
-    if (rc != abi.OMNI_OK) return rc;
-    rc = resolveColumnIndexFromTxn(source_state, payload.has_source_column_id, payload.source_column_id, &source_column_index);
-    if (rc != abi.OMNI_OK) return rc;
-
-    out_request.* = .{
-        .request = .{
-            .op = payload.op,
-            .source_window_index = source_window_index,
-            .source_column_index = source_column_index,
-            .max_visible_columns = payload.max_visible_columns,
-        },
-        .has_target_created_column_id = payload.has_target_created_column_id,
-        .target_created_column_id = payload.target_created_column_id,
-        .has_source_placeholder_column_id = payload.has_source_placeholder_column_id,
-        .source_placeholder_column_id = payload.source_placeholder_column_id,
-    };
     return abi.OMNI_OK;
 }
 
@@ -2295,36 +2342,14 @@ pub fn omni_niri_ctx_apply_txn_impl(
 
     switch (request[0].kind) {
         abi.OMNI_NIRI_TXN_NAVIGATION => {
-            var legacy_request: abi.OmniNiriNavigationApplyRequest = undefined;
-            const request_rc = buildNavigationApplyRequestFromTxn(
-                &pre_source_state,
+            const rc = applyNavigationTxn(
+                source_ctx,
                 request[0].navigation,
-                &legacy_request,
+                out_result,
+                &source_delta_meta,
             );
-            if (request_rc != abi.OMNI_OK) {
-                out_result[0].error_code = request_rc;
-                return request_rc;
-            }
-
-            var legacy_result: abi.OmniNiriNavigationApplyResult = undefined;
-            const rc = omni_niri_ctx_apply_navigation_impl(source_context, &legacy_request, &legacy_result);
             out_result[0].error_code = rc;
             if (rc != abi.OMNI_OK) return rc;
-
-            out_result[0].applied = legacy_result.applied;
-            out_result[0].changed_source_context = legacy_result.applied;
-            if (legacy_result.has_target_window_id != 0) {
-                out_result[0].has_target_window_id = 1;
-                out_result[0].target_window_id = legacy_result.target_window_id;
-                source_delta_meta.has_target_window_id = true;
-                source_delta_meta.target_window_id = legacy_result.target_window_id;
-            }
-            if (legacy_result.refresh_tabbed_visibility_source != 0) {
-                appendRefreshColumnMeta(&source_delta_meta, legacy_result.refresh_source_column_id);
-            }
-            if (legacy_result.refresh_tabbed_visibility_target != 0) {
-                appendRefreshColumnMeta(&source_delta_meta, legacy_result.refresh_target_column_id);
-            }
 
             const delta_rc = storeTxnDeltaForContext(source_ctx, &pre_source_state, &source_delta_meta);
             if (delta_rc != abi.OMNI_OK) return delta_rc;
@@ -2336,48 +2361,14 @@ pub fn omni_niri_ctx_apply_txn_impl(
             return abi.OMNI_OK;
         },
         abi.OMNI_NIRI_TXN_MUTATION => {
-            var legacy_request: abi.OmniNiriMutationApplyRequest = undefined;
-            const request_rc = buildMutationApplyRequestFromTxn(
-                &pre_source_state,
+            const rc = applyMutationTxn(
+                source_ctx,
                 request[0].mutation,
-                &legacy_request,
+                out_result,
+                &source_delta_meta,
             );
-            if (request_rc != abi.OMNI_OK) {
-                out_result[0].error_code = request_rc;
-                return request_rc;
-            }
-
-            var legacy_result: abi.OmniNiriMutationApplyResult = undefined;
-            const rc = omni_niri_ctx_apply_mutation_impl(source_context, &legacy_request, &legacy_result);
             out_result[0].error_code = rc;
             if (rc != abi.OMNI_OK) return rc;
-
-            out_result[0].applied = legacy_result.applied;
-            out_result[0].changed_source_context = legacy_result.applied;
-            if (legacy_result.has_target_window_id != 0) {
-                out_result[0].has_target_window_id = 1;
-                out_result[0].target_window_id = legacy_result.target_window_id;
-                source_delta_meta.has_target_window_id = true;
-                source_delta_meta.target_window_id = legacy_result.target_window_id;
-            }
-            if (legacy_result.has_target_node_id != 0) {
-                out_result[0].has_target_node_id = 1;
-                out_result[0].target_node_kind = legacy_result.target_node_kind;
-                out_result[0].target_node_id = legacy_result.target_node_id;
-                source_delta_meta.has_target_node_id = true;
-                source_delta_meta.target_node_kind = legacy_result.target_node_kind;
-                source_delta_meta.target_node_id = legacy_result.target_node_id;
-            }
-
-            const refresh_count = std.math.cast(usize, legacy_result.refresh_tabbed_visibility_count) orelse return abi.OMNI_ERR_OUT_OF_RANGE;
-            source_delta_meta.refresh_count = @min(refresh_count, abi.OMNI_NIRI_RUNTIME_HINT_MAX_COLUMNS);
-            for (0..source_delta_meta.refresh_count) |idx| {
-                source_delta_meta.refresh_column_ids[idx] = legacy_result.refresh_tabbed_visibility_column_ids[idx];
-            }
-            source_delta_meta.reset_all_column_cached_widths = legacy_result.reset_all_column_cached_widths != 0;
-            source_delta_meta.has_delegate_move_column = legacy_result.has_delegate_move_column != 0;
-            source_delta_meta.delegate_move_column_id = legacy_result.delegate_move_column_id;
-            source_delta_meta.delegate_move_direction = legacy_result.delegate_move_direction;
 
             const delta_rc = storeTxnDeltaForContext(source_ctx, &pre_source_state, &source_delta_meta);
             if (delta_rc != abi.OMNI_OK) return delta_rc;
@@ -2394,38 +2385,16 @@ pub fn omni_niri_ctx_apply_txn_impl(
             var source_meta = initTxnDeltaMeta();
             var target_meta = initTxnDeltaMeta();
 
-            var legacy_request: abi.OmniNiriWorkspaceApplyRequest = undefined;
-            const request_rc = buildWorkspaceApplyRequestFromTxn(
-                &pre_source_state,
+            const rc = applyWorkspaceTxn(
+                source_ctx,
+                target_ctx,
                 request[0].workspace,
-                &legacy_request,
+                out_result,
+                &source_meta,
+                &target_meta,
             );
-            if (request_rc != abi.OMNI_OK) {
-                out_result[0].error_code = request_rc;
-                return request_rc;
-            }
-
-            var legacy_result: abi.OmniNiriWorkspaceApplyResult = undefined;
-            const rc = omni_niri_ctx_apply_workspace_impl(source_context, target_context, &legacy_request, &legacy_result);
             out_result[0].error_code = rc;
             if (rc != abi.OMNI_OK) return rc;
-
-            out_result[0].applied = legacy_result.applied;
-            out_result[0].changed_source_context = legacy_result.applied;
-            out_result[0].changed_target_context = legacy_result.applied;
-
-            if (legacy_result.has_source_selection_window_id != 0) {
-                source_meta.has_source_selection_window_id = true;
-                source_meta.source_selection_window_id = legacy_result.source_selection_window_id;
-            }
-            if (legacy_result.has_target_selection_window_id != 0) {
-                target_meta.has_target_selection_window_id = true;
-                target_meta.target_selection_window_id = legacy_result.target_selection_window_id;
-            }
-            if (legacy_result.has_moved_window_id != 0) {
-                target_meta.has_moved_window_id = true;
-                target_meta.moved_window_id = legacy_result.moved_window_id;
-            }
 
             const source_delta_rc = storeTxnDeltaForContext(source_ctx, &pre_source_state, &source_meta);
             if (source_delta_rc != abi.OMNI_OK) return source_delta_rc;
