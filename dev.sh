@@ -74,18 +74,18 @@ if [[ "${APP_MODE}" == "true" ]]; then
     if [[ -f "${ZIG_LIB}" ]]; then
         echo "==> Zig archive timestamp:"
         stat -f "%Sm %N" "${ZIG_LIB}"
-        if rg -q "omni_niri_mutation_plan" < <(nm "${ZIG_LIB}" 2>/dev/null || true); then
-            echo "==> Zig archive check: omni_niri_mutation_plan found"
+        if rg -q "omni_niri_ctx_apply_mutation" < <(nm "${ZIG_LIB}" 2>/dev/null || true); then
+            echo "==> Zig archive check: omni_niri_ctx_apply_mutation found"
         else
-            echo "==> Zig archive check: ERROR missing omni_niri_mutation_plan" >&2
+            echo "==> Zig archive check: ERROR missing omni_niri_ctx_apply_mutation" >&2
             exit 1
         fi
     fi
     if [[ -x "${APP_BIN}" ]]; then
         echo "==> App binary timestamp:"
         stat -f "%Sm %N" "${APP_BIN}"
-        if rg -q "omni_niri_mutation_plan" < <(nm "${APP_BIN}" 2>/dev/null || true); then
-            echo "==> App binary symbol check: omni_niri_mutation_plan visible"
+        if rg -q "omni_niri_ctx_apply_mutation" < <(nm "${APP_BIN}" 2>/dev/null || true); then
+            echo "==> App binary symbol check: omni_niri_ctx_apply_mutation visible"
         else
             echo "==> App binary symbol check: symbol not visible (likely linker-internalized/stripped)"
         fi

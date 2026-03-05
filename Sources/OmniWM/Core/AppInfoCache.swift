@@ -19,12 +19,6 @@ final class AppInfoCache {
         insertionOrder.removeAll { $0 == pid }
     }
 
-    func evictAll<S: Sequence>(_ pids: S) where S.Element == pid_t {
-        for pid in pids {
-            evict(pid: pid)
-        }
-    }
-
     func info(for pid: pid_t) -> AppInfo? {
         if let cached = cache[pid] { return cached }
         guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }
@@ -51,7 +45,4 @@ final class AppInfoCache {
         info(for: pid)?.bundleId
     }
 
-    func hasCachedInfo(for pid: pid_t) -> Bool {
-        cache[pid] != nil
-    }
 }

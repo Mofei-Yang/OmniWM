@@ -37,10 +37,6 @@ final class FocusManager {
         lastFocusedByWorkspace[workspaceId] = handle
     }
 
-    func clearWorkspaceFocusMemory(for workspaceId: WorkspaceDescriptor.ID) {
-        lastFocusedByWorkspace[workspaceId] = nil
-    }
-
     func resolveWorkspaceFocus(
         for workspaceId: WorkspaceDescriptor.ID,
         entries: [WindowModel.Entry]

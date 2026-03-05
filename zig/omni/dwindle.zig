@@ -1461,19 +1461,6 @@ fn addWindowInternal(
     return abi.OMNI_OK;
 }
 
-fn cachedFrameRectForWindowId(
-    ctx: *const OmniDwindleLayoutContext,
-    window_id: abi.OmniUuid128,
-) ?Rect {
-    for (0..ctx.cached_frame_count) |idx| {
-        const frame = ctx.cached_frames[idx];
-        if (uuidEqual(frame.window_id, window_id)) {
-            return frameToRect(frame);
-        }
-    }
-    return null;
-}
-
 fn removeWindowInternal(ctx: *OmniDwindleLayoutContext, window_id: abi.OmniUuid128, out_applied: *bool) i32 {
     out_applied.* = false;
     const leaf_idx = findLeafByWindowId(ctx, window_id) orelse return abi.OMNI_OK;

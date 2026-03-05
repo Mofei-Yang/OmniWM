@@ -4,7 +4,7 @@ import Foundation
 
 enum NiriLayoutZigKernel {
     struct InteractionIndex {
-        let windowEntries: [InteractionSnapshot.WindowEntry]
+        let windowEntries: [InteractionWindowEntry]
         let windowIndexByNodeId: [NodeId: Int]
     }
 
@@ -77,38 +77,15 @@ enum NiriLayoutZigKernel {
         let newViewOffset: CGFloat
     }
 
-    struct InteractionSnapshot {
-        struct WindowEntry {
-            let window: NiriWindow
-            let columnIndex: Int
-            let frame: CGRect
-        }
-
-        struct ColumnDropzoneMeta {
-            let minY: CGFloat
-            let maxY: CGFloat
-            let postInsertionCount: Int
-        }
-
-        let windowEntries: [WindowEntry]
-        let inputs: [OmniNiriHitTestWindow]
-        let windowIndexByNodeId: [NodeId: Int]
-        let columnDropzoneMeta: [ColumnDropzoneMeta?]
+    struct InteractionWindowEntry {
+        let window: NiriWindow
+        let columnIndex: Int
+        let frame: CGRect
     }
 
     struct MoveTargetResult {
         let window: NiriWindow
         let insertPosition: InsertPosition
-    }
-
-    struct DropzoneComputationInput {
-        let targetFrame: CGRect
-        let columnIndex: Int
-        let columnMinY: CGFloat
-        let columnMaxY: CGFloat
-        let postInsertionCount: Int
-        let gap: CGFloat
-        let position: InsertPosition
     }
 
     private static func orientationCode(_ orientation: Monitor.Orientation) -> UInt8 {
@@ -395,76 +372,12 @@ enum NiriLayoutZigKernel {
         return LayoutPassResult(windows: windows, columns: columnsOut)
     }
 
-    static func makeInteractionSnapshot(columns: [NiriContainer]) -> InteractionSnapshot {
-        let estimatedWindowCount = columns.reduce(0) { partial, column in
-            partial + column.windowNodes.count
-        }
-
-        var entries: [InteractionSnapshot.WindowEntry] = []
-        entries.reserveCapacity(estimatedWindowCount)
-
-        var inputs: [OmniNiriHitTestWindow] = []
-        inputs.reserveCapacity(estimatedWindowCount)
-
-        var indexByNodeId: [NodeId: Int] = [:]
-        indexByNodeId.reserveCapacity(estimatedWindowCount)
-
-        var columnMeta = Array<InteractionSnapshot.ColumnDropzoneMeta?>(
-            repeating: nil,
-            count: columns.count
-        )
-
-        for (columnIndex, column) in columns.enumerated() {
-            let windows = column.windowNodes
-            if let firstFrame = windows.first?.frame,
-               let lastFrame = windows.last?.frame
-            {
-                columnMeta[columnIndex] = InteractionSnapshot.ColumnDropzoneMeta(
-                    minY: firstFrame.minY,
-                    maxY: lastFrame.maxY,
-                    postInsertionCount: windows.count + 1
-                )
-            }
-
-            for window in windows {
-                guard let frame = window.frame else { continue }
-                let index = entries.count
-                entries.append(
-                    InteractionSnapshot.WindowEntry(
-                        window: window,
-                        columnIndex: columnIndex,
-                        frame: frame
-                    )
-                )
-                indexByNodeId[window.id] = index
-                inputs.append(
-                    OmniNiriHitTestWindow(
-                        window_index: index,
-                        column_index: columnIndex,
-                        frame_x: Double(frame.origin.x),
-                        frame_y: Double(frame.origin.y),
-                        frame_width: Double(frame.width),
-                        frame_height: Double(frame.height),
-                        is_fullscreen: window.isFullscreen ? 1 : 0
-                    )
-                )
-            }
-        }
-
-        return InteractionSnapshot(
-            windowEntries: entries,
-            inputs: inputs,
-            windowIndexByNodeId: indexByNodeId,
-            columnDropzoneMeta: columnMeta
-        )
-    }
-
     static func makeInteractionIndex(columns: [NiriContainer]) -> InteractionIndex {
         let estimatedWindowCount = columns.reduce(0) { partial, column in
             partial + column.windowNodes.count
         }
 
-        var entries: [InteractionSnapshot.WindowEntry] = []
+        var entries: [InteractionWindowEntry] = []
         entries.reserveCapacity(estimatedWindowCount)
 
         var indexByNodeId: [NodeId: Int] = [:]
@@ -475,7 +388,7 @@ enum NiriLayoutZigKernel {
                 guard let frame = window.frame else { continue }
                 let index = entries.count
                 entries.append(
-                    InteractionSnapshot.WindowEntry(
+                    InteractionWindowEntry(
                         window: window,
                         columnIndex: columnIndex,
                         frame: frame
@@ -489,46 +402,6 @@ enum NiriLayoutZigKernel {
             windowEntries: entries,
             windowIndexByNodeId: indexByNodeId
         )
-    }
-
-    @discardableResult
-    static func seedInteractionContext(
-        context: LayoutContext,
-        snapshot: InteractionSnapshot
-    ) -> Bool {
-        var rawColumnMeta = [OmniNiriColumnDropzoneMeta](
-            repeating: OmniNiriColumnDropzoneMeta(
-                is_valid: 0,
-                min_y: 0,
-                max_y: 0,
-                post_insertion_count: 0
-            ),
-            count: snapshot.columnDropzoneMeta.count
-        )
-
-        for (index, meta) in snapshot.columnDropzoneMeta.enumerated() {
-            guard let meta else { continue }
-            rawColumnMeta[index] = OmniNiriColumnDropzoneMeta(
-                is_valid: 1,
-                min_y: Double(meta.minY),
-                max_y: Double(meta.maxY),
-                post_insertion_count: meta.postInsertionCount
-            )
-        }
-
-        let rc = snapshot.inputs.withUnsafeBufferPointer { windowBuf in
-            rawColumnMeta.withUnsafeBufferPointer { columnBuf in
-                omni_niri_layout_context_set_interaction(
-                    context.raw,
-                    windowBuf.baseAddress,
-                    windowBuf.count,
-                    columnBuf.baseAddress,
-                    columnBuf.count
-                )
-            }
-        }
-
-        return rc == OMNI_OK
     }
 
     static func hitTestTiled(
@@ -650,141 +523,6 @@ enum NiriLayoutZigKernel {
             )
         }
         precondition(rc == OMNI_OK, "omni_niri_ctx_insertion_dropzone failed rc=\(rc)")
-        guard rawOutput.is_valid != 0 else { return nil }
-        return CGRect(
-            x: rawOutput.frame_x,
-            y: rawOutput.frame_y,
-            width: rawOutput.frame_width,
-            height: rawOutput.frame_height
-        )
-    }
-
-    static func hitTestTiled(
-        snapshot: InteractionSnapshot,
-        point: CGPoint
-    ) -> NiriWindow? {
-        guard !snapshot.inputs.isEmpty else { return nil }
-
-        var outIndex: Int64 = -1
-        let rc = snapshot.inputs.withUnsafeBufferPointer { buf in
-            withUnsafeMutablePointer(to: &outIndex) { outPtr in
-                omni_niri_hit_test_tiled(
-                    buf.baseAddress,
-                    buf.count,
-                    Double(point.x),
-                    Double(point.y),
-                    outPtr
-                )
-            }
-        }
-
-        precondition(rc == OMNI_OK, "omni_niri_hit_test_tiled failed rc=\(rc)")
-        guard outIndex >= 0, outIndex < Int64(snapshot.windowEntries.count) else { return nil }
-        return snapshot.windowEntries[Int(outIndex)].window
-    }
-
-    static func hitTestResize(
-        snapshot: InteractionSnapshot,
-        point: CGPoint,
-        threshold: CGFloat
-    ) -> ResizeHitResult? {
-        guard !snapshot.inputs.isEmpty else { return nil }
-
-        var out = OmniNiriResizeHitResult(window_index: -1, edges: 0)
-        let rc = snapshot.inputs.withUnsafeBufferPointer { buf in
-            withUnsafeMutablePointer(to: &out) { outPtr in
-                omni_niri_hit_test_resize(
-                    buf.baseAddress,
-                    buf.count,
-                    Double(point.x),
-                    Double(point.y),
-                    Double(threshold),
-                    outPtr
-                )
-            }
-        }
-
-        precondition(rc == OMNI_OK, "omni_niri_hit_test_resize failed rc=\(rc)")
-        guard out.window_index >= 0, out.window_index < Int64(snapshot.windowEntries.count) else { return nil }
-
-        let index = Int(out.window_index)
-        let entry = snapshot.windowEntries[index]
-        let edges = resizeEdgeFromCode(out.edges)
-        guard !edges.isEmpty else { return nil }
-
-        return ResizeHitResult(
-            window: entry.window,
-            columnIndex: entry.columnIndex,
-            edges: edges,
-            frame: entry.frame
-        )
-    }
-
-    static func hitTestMoveTarget(
-        snapshot: InteractionSnapshot,
-        point: CGPoint,
-        excludingWindowId: NodeId,
-        isInsertMode: Bool
-    ) -> MoveTargetResult? {
-        guard !snapshot.inputs.isEmpty else { return nil }
-
-        let excludingIndex = snapshot.windowIndexByNodeId[excludingWindowId].map(Int64.init) ?? -1
-        var out = OmniNiriMoveTargetResult(
-            window_index: -1,
-            insert_position: insertPositionCode(.swap)
-        )
-
-        let rc = snapshot.inputs.withUnsafeBufferPointer { buf in
-            withUnsafeMutablePointer(to: &out) { outPtr in
-                omni_niri_hit_test_move_target(
-                    buf.baseAddress,
-                    buf.count,
-                    Double(point.x),
-                    Double(point.y),
-                    excludingIndex,
-                    isInsertMode ? 1 : 0,
-                    outPtr
-                )
-            }
-        }
-
-        precondition(rc == OMNI_OK, "omni_niri_hit_test_move_target failed rc=\(rc)")
-        guard out.window_index >= 0, out.window_index < Int64(snapshot.windowEntries.count) else { return nil }
-        guard let position = insertPositionFromCode(out.insert_position) else { return nil }
-
-        return MoveTargetResult(
-            window: snapshot.windowEntries[Int(out.window_index)].window,
-            insertPosition: position
-        )
-    }
-
-    static func computeInsertionDropzone(_ input: DropzoneComputationInput) -> CGRect? {
-        var rawInput = OmniNiriDropzoneInput(
-            target_frame_x: Double(input.targetFrame.origin.x),
-            target_frame_y: Double(input.targetFrame.origin.y),
-            target_frame_width: Double(input.targetFrame.width),
-            target_frame_height: Double(input.targetFrame.height),
-            column_min_y: Double(input.columnMinY),
-            column_max_y: Double(input.columnMaxY),
-            gap: Double(input.gap),
-            insert_position: insertPositionCode(input.position),
-            post_insertion_count: input.postInsertionCount
-        )
-        var rawOutput = OmniNiriDropzoneResult(
-            frame_x: 0,
-            frame_y: 0,
-            frame_width: 0,
-            frame_height: 0,
-            is_valid: 0
-        )
-
-        let rc = withUnsafePointer(to: &rawInput) { inputPtr in
-            withUnsafeMutablePointer(to: &rawOutput) { outputPtr in
-                omni_niri_insertion_dropzone(inputPtr, outputPtr)
-            }
-        }
-
-        precondition(rc == OMNI_OK, "omni_niri_insertion_dropzone failed rc=\(rc)")
         guard rawOutput.is_valid != 0 else { return nil }
         return CGRect(
             x: rawOutput.frame_x,

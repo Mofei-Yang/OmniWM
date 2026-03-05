@@ -3,72 +3,18 @@
 /// ABI facade for the OmniWM Zig kernel.
 /// Internal logic lives in `zig/omni/` modules:
 /// - `abi_types.zig`: C ABI structs/constants
-/// - `geometry.zig`: shared numeric/geometry helpers
-/// - `axis_solver.zig`: axis solving logic
 /// - `state_validation.zig`: snapshot validation
-/// - `navigation.zig`: navigation resolver
-/// - `mutation.zig`: mutation planner
-/// - `workspace.zig`: workspace transfer planner
-/// - `layout_pass.zig`: tiled layout pass
 /// - `interaction.zig`: hit-testing/dropzone/resize math
 /// - `viewport.zig`: viewport offset/snap math
+/// - `layout_context.zig`: context-based Niri layout and state ops
 /// - `dwindle.zig`: Dwindle context ABI scaffolding
 
 const abi = @import("omni/abi_types.zig");
-const axis_solver = @import("omni/axis_solver.zig");
 const state_validation = @import("omni/state_validation.zig");
-const navigation = @import("omni/navigation.zig");
-const mutation = @import("omni/mutation.zig");
-const workspace = @import("omni/workspace.zig");
-const layout_pass = @import("omni/layout_pass.zig");
 const interaction = @import("omni/interaction.zig");
 const layout_context = @import("omni/layout_context.zig");
 const viewport = @import("omni/viewport.zig");
 const dwindle = @import("omni/dwindle.zig");
-
-/// Solve axis layout for `window_count` windows.
-///
-/// Returns `OMNI_OK` on success and `OMNI_ERR_INVALID_ARGS` for invalid pointer/count combinations.
-export fn omni_axis_solve(
-    windows: [*c]const abi.OmniAxisInput,
-    window_count: usize,
-    available_space: f64,
-    gap_size: f64,
-    is_tabbed: u8,
-    out: [*c]abi.OmniAxisOutput,
-    out_count: usize,
-) i32 {
-    return axis_solver.omni_axis_solve_impl(
-        windows,
-        window_count,
-        available_space,
-        gap_size,
-        is_tabbed,
-        out,
-        out_count,
-    );
-}
-
-/// Solve tabbed axis layout where all windows share one span.
-///
-/// Returns `OMNI_OK` on success and `OMNI_ERR_INVALID_ARGS` for invalid pointer/count combinations.
-export fn omni_axis_solve_tabbed(
-    windows: [*c]const abi.OmniAxisInput,
-    window_count: usize,
-    available_space: f64,
-    gap_size: f64,
-    out: [*c]abi.OmniAxisOutput,
-    out_count: usize,
-) i32 {
-    return axis_solver.omni_axis_solve_tabbed_impl(
-        windows,
-        window_count,
-        available_space,
-        gap_size,
-        out,
-        out_count,
-    );
-}
 
 /// Validate a Niri state snapshot for bounds, ownership, and assignment consistency.
 ///
@@ -86,199 +32,6 @@ export fn omni_niri_validate_state_snapshot(
         windows,
         window_count,
         out_result,
-    );
-}
-
-/// Resolve navigation behavior for a snapshot and request.
-///
-/// Returns `OMNI_OK` and fills `out_result` even when no target is resolved.
-export fn omni_niri_navigation_resolve(
-    columns: [*c]const abi.OmniNiriStateColumnInput,
-    column_count: usize,
-    windows: [*c]const abi.OmniNiriStateWindowInput,
-    window_count: usize,
-    request: [*c]const abi.OmniNiriNavigationRequest,
-    out_result: [*c]abi.OmniNiriNavigationResult,
-) i32 {
-    return navigation.omni_niri_navigation_resolve_impl(
-        columns,
-        column_count,
-        windows,
-        window_count,
-        request,
-        out_result,
-    );
-}
-
-/// Build a mutation edit plan for a snapshot and request.
-///
-/// Returns `OMNI_OK` when planning succeeds and fills `out_result`.
-export fn omni_niri_mutation_plan(
-    columns: [*c]const abi.OmniNiriStateColumnInput,
-    column_count: usize,
-    windows: [*c]const abi.OmniNiriStateWindowInput,
-    window_count: usize,
-    request: [*c]const abi.OmniNiriMutationRequest,
-    out_result: [*c]abi.OmniNiriMutationResult,
-) i32 {
-    return mutation.omni_niri_mutation_plan_impl(
-        columns,
-        column_count,
-        windows,
-        window_count,
-        request,
-        out_result,
-    );
-}
-
-/// Build workspace transfer edit plan between source and target snapshots.
-///
-/// Returns `OMNI_OK` when planning succeeds and fills `out_result`.
-export fn omni_niri_workspace_plan(
-    source_columns: [*c]const abi.OmniNiriStateColumnInput,
-    source_column_count: usize,
-    source_windows: [*c]const abi.OmniNiriStateWindowInput,
-    source_window_count: usize,
-    target_columns: [*c]const abi.OmniNiriStateColumnInput,
-    target_column_count: usize,
-    target_windows: [*c]const abi.OmniNiriStateWindowInput,
-    target_window_count: usize,
-    request: [*c]const abi.OmniNiriWorkspaceRequest,
-    out_result: [*c]abi.OmniNiriWorkspaceResult,
-) i32 {
-    return workspace.omni_niri_workspace_plan_impl(
-        source_columns,
-        source_column_count,
-        source_windows,
-        source_window_count,
-        target_columns,
-        target_column_count,
-        target_windows,
-        target_window_count,
-        request,
-        out_result,
-    );
-}
-
-/// Run Niri tiled layout pass (v1 compatibility entrypoint).
-///
-/// Equivalent to `omni_niri_layout_pass_v2` without column outputs.
-export fn omni_niri_layout_pass(
-    columns: [*c]const abi.OmniNiriColumnInput,
-    column_count: usize,
-    windows: [*c]const abi.OmniNiriWindowInput,
-    window_count: usize,
-    working_x: f64,
-    working_y: f64,
-    working_width: f64,
-    working_height: f64,
-    view_x: f64,
-    view_y: f64,
-    view_width: f64,
-    view_height: f64,
-    fullscreen_x: f64,
-    fullscreen_y: f64,
-    fullscreen_width: f64,
-    fullscreen_height: f64,
-    primary_gap: f64,
-    secondary_gap: f64,
-    view_start: f64,
-    viewport_span: f64,
-    workspace_offset: f64,
-    scale: f64,
-    orientation: u8,
-    out_windows: [*c]abi.OmniNiriWindowOutput,
-    out_window_count: usize,
-) i32 {
-    return layout_pass.omni_niri_layout_pass_impl(
-        columns,
-        column_count,
-        windows,
-        window_count,
-        working_x,
-        working_y,
-        working_width,
-        working_height,
-        view_x,
-        view_y,
-        view_width,
-        view_height,
-        fullscreen_x,
-        fullscreen_y,
-        fullscreen_width,
-        fullscreen_height,
-        primary_gap,
-        secondary_gap,
-        view_start,
-        viewport_span,
-        workspace_offset,
-        scale,
-        orientation,
-        out_windows,
-        out_window_count,
-    );
-}
-
-/// Run Niri tiled layout pass and optionally emit column frames.
-///
-/// Returns `OMNI_OK` on success or an error code for invalid arguments and range failures.
-export fn omni_niri_layout_pass_v2(
-    columns: [*c]const abi.OmniNiriColumnInput,
-    column_count: usize,
-    windows: [*c]const abi.OmniNiriWindowInput,
-    window_count: usize,
-    working_x: f64,
-    working_y: f64,
-    working_width: f64,
-    working_height: f64,
-    view_x: f64,
-    view_y: f64,
-    view_width: f64,
-    view_height: f64,
-    fullscreen_x: f64,
-    fullscreen_y: f64,
-    fullscreen_width: f64,
-    fullscreen_height: f64,
-    primary_gap: f64,
-    secondary_gap: f64,
-    view_start: f64,
-    viewport_span: f64,
-    workspace_offset: f64,
-    scale: f64,
-    orientation: u8,
-    out_windows: [*c]abi.OmniNiriWindowOutput,
-    out_window_count: usize,
-    out_columns: [*c]abi.OmniNiriColumnOutput,
-    out_column_count: usize,
-) i32 {
-    return layout_pass.omni_niri_layout_pass_v2_impl(
-        columns,
-        column_count,
-        windows,
-        window_count,
-        working_x,
-        working_y,
-        working_width,
-        working_height,
-        view_x,
-        view_y,
-        view_width,
-        view_height,
-        fullscreen_x,
-        fullscreen_y,
-        fullscreen_width,
-        fullscreen_height,
-        primary_gap,
-        secondary_gap,
-        view_start,
-        viewport_span,
-        workspace_offset,
-        scale,
-        orientation,
-        out_windows,
-        out_window_count,
-        out_columns,
-        out_column_count,
     );
 }
 
@@ -688,31 +441,6 @@ export fn omni_viewport_compute_visible_offset(
         always_center_single_column,
         from_container_index,
         out_target_offset,
-    );
-}
-
-/// Find the nearest viewport snap target based on projected view position.
-export fn omni_viewport_find_snap_target(
-    spans: [*c]const f64,
-    span_count: usize,
-    gap: f64,
-    viewport_span: f64,
-    projected_view_pos: f64,
-    current_view_pos: f64,
-    center_mode: u8,
-    always_center_single_column: u8,
-    out_result: [*c]abi.OmniSnapResult,
-) i32 {
-    return viewport.omni_viewport_find_snap_target_impl(
-        spans,
-        span_count,
-        gap,
-        viewport_span,
-        projected_view_pos,
-        current_view_pos,
-        center_mode,
-        always_center_single_column,
-        out_result,
     );
 }
 

@@ -242,31 +242,6 @@ enum {
     OMNI_ERR_OUT_OF_RANGE = -2
 };
 
-/// Solve axis layout for window_count windows.
-///
-/// is_tabbed: 0 = normal (weighted) layout, 1 = tabbed (all windows share one span).
-///
-/// Returns 0 on success.
-/// Returns -1 if out_count < window_count or window_count exceeds the internal limit.
-int32_t omni_axis_solve(
-    const OmniAxisInput *windows,
-    size_t window_count,
-    double available_space,
-    double gap_size,
-    uint8_t is_tabbed,
-    OmniAxisOutput *out,
-    size_t out_count);
-
-/// Tabbed variant (all windows get the same span, gaps are ignored).
-/// Equivalent to calling omni_axis_solve with is_tabbed = 1.
-int32_t omni_axis_solve_tabbed(
-    const OmniAxisInput *windows,
-    size_t window_count,
-    double available_space,
-    double gap_size,
-    OmniAxisOutput *out,
-    size_t out_count);
-
 /// Compute viewport offset needed to reveal a target container index.
 /// Returns 0 on success, -1 for invalid args, -2 when index/range is invalid.
 int32_t omni_viewport_compute_visible_offset(
@@ -280,19 +255,6 @@ int32_t omni_viewport_compute_visible_offset(
     uint8_t always_center_single_column,
     int64_t from_container_index,
     double *out_target_offset);
-
-/// Find the nearest snap target for projected viewport position.
-/// Returns 0 on success, -1 for invalid args.
-int32_t omni_viewport_find_snap_target(
-    const double *spans,
-    size_t span_count,
-    double gap,
-    double viewport_span,
-    double projected_view_pos,
-    double current_view_pos,
-    uint8_t center_mode,
-    uint8_t always_center_single_column,
-    OmniSnapResult *out_result);
 
 /// Compute transition plan values for switching active container to requested index.
 /// Returns 0 on success, -1 for invalid args, -2 for range errors.
@@ -378,66 +340,6 @@ int32_t omni_viewport_gesture_end(
     uint8_t center_mode,
     uint8_t always_center_single_column,
     OmniViewportGestureEndResult *out_result);
-
-/// Run tiled layout pass and emit window frames.
-/// Returns 0 on success, -1 for invalid args, -2 for range/assignment errors.
-int32_t omni_niri_layout_pass(
-    const OmniNiriColumnInput *columns,
-    size_t column_count,
-    const OmniNiriWindowInput *windows,
-    size_t window_count,
-    double working_x,
-    double working_y,
-    double working_width,
-    double working_height,
-    double view_x,
-    double view_y,
-    double view_width,
-    double view_height,
-    double fullscreen_x,
-    double fullscreen_y,
-    double fullscreen_width,
-    double fullscreen_height,
-    double primary_gap,
-    double secondary_gap,
-    double view_start,
-    double viewport_span,
-    double workspace_offset,
-    double scale,
-    uint8_t orientation,
-    OmniNiriWindowOutput *out_windows,
-    size_t out_window_count);
-
-/// Layout-pass v2 also emits optional column frames.
-/// Returns 0 on success, -1 for invalid args, -2 for range/assignment errors.
-int32_t omni_niri_layout_pass_v2(
-    const OmniNiriColumnInput *columns,
-    size_t column_count,
-    const OmniNiriWindowInput *windows,
-    size_t window_count,
-    double working_x,
-    double working_y,
-    double working_width,
-    double working_height,
-    double view_x,
-    double view_y,
-    double view_width,
-    double view_height,
-    double fullscreen_x,
-    double fullscreen_y,
-    double fullscreen_width,
-    double fullscreen_height,
-    double primary_gap,
-    double secondary_gap,
-    double view_start,
-    double viewport_span,
-    double workspace_offset,
-    double scale,
-    uint8_t orientation,
-    OmniNiriWindowOutput *out_windows,
-    size_t out_window_count,
-    OmniNiriColumnOutput *out_columns,
-    size_t out_column_count);
 
 /// Create a reusable Niri layout context.
 /// Returns NULL on allocation failure.
@@ -722,16 +624,6 @@ typedef struct {
     OmniUuid128 refresh_target_column_id;
 } OmniNiriNavigationApplyResult;
 
-/// Resolve navigation request against a validated snapshot.
-/// Returns 0 on success, -1 for invalid args, -2 for range errors.
-int32_t omni_niri_navigation_resolve(
-    const OmniNiriStateColumnInput *columns,
-    size_t column_count,
-    const OmniNiriStateWindowInput *windows,
-    size_t window_count,
-    const OmniNiriNavigationRequest *request,
-    OmniNiriNavigationResult *out_result);
-
 /// Apply navigation request against context authoritative runtime state.
 /// Returns 0 on success, -1 for invalid args, -2 for range errors.
 int32_t omni_niri_ctx_apply_navigation(
@@ -871,16 +763,6 @@ typedef struct {
     uint8_t delegate_move_direction;
 } OmniNiriMutationApplyResult;
 
-/// Build mutation edit plan for a snapshot and mutation request.
-/// Returns 0 on success, -1 for invalid args, -2 for range/edit-limit errors.
-int32_t omni_niri_mutation_plan(
-    const OmniNiriStateColumnInput *columns,
-    size_t column_count,
-    const OmniNiriStateWindowInput *windows,
-    size_t window_count,
-    const OmniNiriMutationRequest *request,
-    OmniNiriMutationResult *out_result);
-
 /// Apply mutation request against context authoritative runtime state.
 /// Returns 0 on success, -1 for invalid args, -2 for range errors.
 int32_t omni_niri_ctx_apply_mutation(
@@ -947,20 +829,6 @@ typedef struct {
     uint8_t has_moved_window_id;
     OmniUuid128 moved_window_id;
 } OmniNiriWorkspaceApplyResult;
-
-/// Build workspace transfer edit plan for source/target snapshots.
-/// Returns 0 on success, -1 for invalid args, -2 for range/edit-limit errors.
-int32_t omni_niri_workspace_plan(
-    const OmniNiriStateColumnInput *source_columns,
-    size_t source_column_count,
-    const OmniNiriStateWindowInput *source_windows,
-    size_t source_window_count,
-    const OmniNiriStateColumnInput *target_columns,
-    size_t target_column_count,
-    const OmniNiriStateWindowInput *target_windows,
-    size_t target_window_count,
-    const OmniNiriWorkspaceRequest *request,
-    OmniNiriWorkspaceResult *out_result);
 
 /// Apply workspace request against source/target context authoritative runtime states.
 /// Returns 0 on success, -1 for invalid args, -2 for range errors.

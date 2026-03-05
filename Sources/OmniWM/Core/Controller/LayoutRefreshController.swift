@@ -153,14 +153,6 @@ import QuartzCore
         stopDisplayLinkIfIdle(for: displayId)
     }
 
-    func stopAllScrollAnimations() {
-        let displayIds = Array(niriHandler.scrollAnimationByDisplay.keys)
-        niriHandler.scrollAnimationByDisplay.removeAll()
-        for displayId in displayIds {
-            stopDisplayLinkIfIdle(for: displayId)
-        }
-    }
-
     func startDwindleAnimation(for workspaceId: WorkspaceDescriptor.ID, monitor: Monitor) {
         let targetDisplayId = monitor.displayId
 
@@ -208,14 +200,6 @@ import QuartzCore
     func stopDwindleAnimation(for displayId: CGDirectDisplayID) {
         dwindleHandler.dwindleAnimationByDisplay.removeValue(forKey: displayId)
         stopDisplayLinkIfIdle(for: displayId)
-    }
-
-    func stopAllDwindleAnimations() {
-        let displayIds = Array(dwindleHandler.dwindleAnimationByDisplay.keys)
-        dwindleHandler.dwindleAnimationByDisplay.removeAll()
-        for displayId in displayIds {
-            stopDisplayLinkIfIdle(for: displayId)
-        }
     }
 
     func hasDwindleAnimationRunning(in workspaceId: WorkspaceDescriptor.ID) -> Bool {

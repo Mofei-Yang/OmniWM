@@ -25,15 +25,6 @@ enum NiriStateZigKernel {
         var columnIndexByNodeId: [NodeId: Int]
     }
 
-    struct ValidationOutcome {
-        let rc: Int32
-        let result: OmniNiriStateValidationResult
-
-        var isValid: Bool {
-            rc == OMNI_OK && result.first_error_code == OMNI_OK
-        }
-    }
-
     struct SelectionContext {
         let selectedWindowIndex: Int
         let selectedColumnIndex: Int
@@ -688,32 +679,6 @@ enum NiriStateZigKernel {
         case .none:
             return nil
         }
-    }
-
-    static func validate(snapshot: Snapshot) -> ValidationOutcome {
-        var rawResult = OmniNiriStateValidationResult(
-            column_count: 0,
-            window_count: 0,
-            first_invalid_column_index: -1,
-            first_invalid_window_index: -1,
-            first_error_code: Int32(OMNI_OK)
-        )
-
-        let rc: Int32 = snapshot.columns.withUnsafeBufferPointer { columnBuf in
-            snapshot.windows.withUnsafeBufferPointer { windowBuf in
-                withUnsafeMutablePointer(to: &rawResult) { resultPtr in
-                    omni_niri_validate_state_snapshot(
-                        columnBuf.baseAddress,
-                        columnBuf.count,
-                        windowBuf.baseAddress,
-                        windowBuf.count,
-                        resultPtr
-                    )
-                }
-            }
-        }
-
-        return ValidationOutcome(rc: rc, result: rawResult)
     }
 
     private static func direction(from rawCode: UInt8) -> Direction? {

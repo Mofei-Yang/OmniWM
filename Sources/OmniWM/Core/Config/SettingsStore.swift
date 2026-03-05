@@ -728,10 +728,6 @@ final class SettingsStore {
         defaults.set(data, forKey: Keys.appRules)
     }
 
-    func appRule(for bundleId: String) -> AppRule? {
-        appRules.first { $0.bundleId == bundleId }
-    }
-
     func orientationSettings(for monitor: Monitor) -> MonitorOrientationSettings? {
         MonitorSettingsStore.get(for: monitor, in: monitorOrientationSettings)
     }
