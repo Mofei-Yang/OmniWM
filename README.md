@@ -2,6 +2,50 @@
 
 A powerful tiling window manager for macOS.
 
+## Contributors
+
+<p align="center">
+  Thank you to everyone who contributed to OmniWM. Your ideas and code made a real difference.
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <a href="https://github.com/balazshevesi" title="Balazs Hevesi">
+        <img src="https://github.com/balazshevesi.png?size=96" width="96" alt="Balazs Hevesi">
+      </a>
+      <br>
+      <a href="https://github.com/balazshevesi"><strong>Balazs Hevesi</strong></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/janhesters" title="Jan Hesters">
+        <img src="https://github.com/janhesters.png?size=96" width="96" alt="Jan Hesters">
+      </a>
+      <br>
+      <a href="https://github.com/janhesters"><strong>Jan Hesters</strong></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/jcardama" title="Jose Cardama">
+        <img src="https://github.com/jcardama.png?size=96" width="96" alt="Jose Cardama">
+      </a>
+      <br>
+      <a href="https://github.com/jcardama"><strong>Jose Cardama</strong></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/lgerlinski" title="Lukas Gerlinski">
+        <img src="https://github.com/lgerlinski.png?size=96" width="96" alt="Lukas Gerlinski">
+      </a>
+      <br>
+      <a href="https://github.com/lgerlinski"><strong>Lukas Gerlinski</strong></a>
+    </td>
+    <td align="center">
+      <img src="https://github.com/ghost.png?size=96" width="96" alt="williamufo">
+      <br>
+      <strong>williamufo</strong>
+    </td>
+  </tr>
+</table>
+
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-15.0%2B-green?logo=apple&logoColor=white" alt="macOS">
   <img src="https://img.shields.io/badge/Apple%20Silicon-supported-green?logo=apple&logoColor=white" alt="Apple Silicon">
@@ -288,28 +332,6 @@ If you find OmniWM useful, consider supporting development:
 
 - [GitHub Sponsors](https://github.com/sponsors/BarutSRB)
 - [PayPal](https://paypal.me/beacon2024)
-
-## Contributors
-
-<p align="center">
-  Thank you to everyone who contributed to OmniWM. Your ideas and code made a real difference.
-</p>
-
-<p align="center">
-  <a href="https://github.com/janhesters" title="Jan Hesters">
-    <img src="https://github.com/janhesters.png?size=96" width="96" alt="Jan Hesters">
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/balazshevesi" title="Balazs Hevesi">
-    <img src="https://github.com/balazshevesi.png?size=96" width="96" alt="Balazs Hevesi">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/janhesters"><strong>Jan Hesters</strong></a>
-  &nbsp;•&nbsp;
-  <a href="https://github.com/balazshevesi"><strong>Balazs Hevesi</strong></a>
-</p>
 
 ## Contributing
 
