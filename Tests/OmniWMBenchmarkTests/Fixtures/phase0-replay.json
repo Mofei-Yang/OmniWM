@@ -1,0 +1,54 @@
+{
+  "name": "phase0-default",
+  "warmupIterations": 100,
+  "measuredIterations": 400,
+  "seed": {
+    "maxWindowsPerColumn": 3,
+    "maxVisibleColumns": 3,
+    "gap": 8,
+    "scale": 2,
+    "monitor": {
+      "displayId": 424242,
+      "width": 3440,
+      "height": 1440,
+      "visibleInsets": {
+        "left": 0,
+        "right": 0,
+        "top": 0,
+        "bottom": 0
+      }
+    },
+    "workspaces": [
+      {
+        "name": "bench-primary",
+        "windowCount": 6
+      },
+      {
+        "name": "bench-secondary",
+        "windowCount": 4
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "layoutPass",
+      "count": 1
+    },
+    {
+      "kind": "windowMove",
+      "count": 1
+    },
+    {
+      "kind": "resizeDragUpdate",
+      "count": 1
+    },
+    {
+      "kind": "navigationStep",
+      "count": 1
+    },
+    {
+      "kind": "workspaceMove",
+      "count": 1
+    }
+  ]
+}

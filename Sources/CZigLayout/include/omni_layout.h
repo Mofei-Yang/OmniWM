@@ -358,6 +358,7 @@ int32_t omni_niri_layout_context_set_interaction(
     size_t column_count);
 
 /// Layout-pass v3 emits the same outputs as v2 and updates interaction feed in context.
+/// `out_windows` may be NULL only when `window_count == 0` and `out_window_count == 0`.
 /// Returns 0 on success, -1 for invalid args, -2 for range/assignment/capacity errors.
 int32_t omni_niri_layout_pass_v3(
     OmniNiriLayoutContext *context,

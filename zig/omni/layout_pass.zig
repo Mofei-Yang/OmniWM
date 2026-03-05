@@ -278,7 +278,8 @@ pub fn omni_niri_layout_pass_v2_impl(
     out_columns: [*c]abi.OmniNiriColumnOutput,
     out_column_count: usize,
 ) i32 {
-    if (out_windows == null) return abi.OMNI_ERR_INVALID_ARGS;
+    if (out_windows == null and out_window_count != 0) return abi.OMNI_ERR_INVALID_ARGS;
+    if (window_count > 0 and out_windows == null) return abi.OMNI_ERR_INVALID_ARGS;
     if (out_window_count < window_count) return abi.OMNI_ERR_INVALID_ARGS;
     if (column_count > 0 and columns == null) return abi.OMNI_ERR_INVALID_ARGS;
     if (window_count > 0 and windows == null) return abi.OMNI_ERR_INVALID_ARGS;
@@ -495,4 +496,125 @@ pub fn omni_niri_layout_pass_v2_impl(
     }
 
     return abi.OMNI_OK;
+}
+
+test "layout pass allows null window output for zero-window snapshots" {
+    const testing = @import("std").testing;
+
+    var columns = [_]abi.OmniNiriColumnInput{
+        .{
+            .span = 120.0,
+            .render_offset_x = 0.0,
+            .render_offset_y = 0.0,
+            .is_tabbed = 0,
+            .tab_indicator_width = 0.0,
+            .window_start = 0,
+            .window_count = 0,
+        },
+    };
+    var out_columns = [_]abi.OmniNiriColumnOutput{
+        .{
+            .frame_x = 0.0,
+            .frame_y = 0.0,
+            .frame_width = 0.0,
+            .frame_height = 0.0,
+            .hide_side = abi.OMNI_NIRI_HIDE_NONE,
+            .is_visible = 0,
+        },
+    };
+
+    const rc = omni_niri_layout_pass_v2_impl(
+        &columns,
+        columns.len,
+        null,
+        0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        8.0,
+        8.0,
+        0.0,
+        1920.0,
+        0.0,
+        1.0,
+        abi.OMNI_NIRI_ORIENTATION_HORIZONTAL,
+        null,
+        0,
+        &out_columns,
+        out_columns.len,
+    );
+
+    try testing.expectEqual(@as(i32, abi.OMNI_OK), rc);
+    try testing.expectEqual(@as(u8, 1), out_columns[0].is_visible);
+}
+
+test "layout pass rejects null window output when windows are present" {
+    const testing = @import("std").testing;
+
+    var columns = [_]abi.OmniNiriColumnInput{
+        .{
+            .span = 120.0,
+            .render_offset_x = 0.0,
+            .render_offset_y = 0.0,
+            .is_tabbed = 0,
+            .tab_indicator_width = 0.0,
+            .window_start = 0,
+            .window_count = 1,
+        },
+    };
+    var windows = [_]abi.OmniNiriWindowInput{
+        .{
+            .weight = 1.0,
+            .min_constraint = 0.0,
+            .max_constraint = 0.0,
+            .has_max_constraint = 0,
+            .is_constraint_fixed = 0,
+            .has_fixed_value = 0,
+            .fixed_value = 0.0,
+            .sizing_mode = abi.OMNI_NIRI_SIZING_NORMAL,
+            .render_offset_x = 0.0,
+            .render_offset_y = 0.0,
+        },
+    };
+
+    const rc = omni_niri_layout_pass_v2_impl(
+        &columns,
+        columns.len,
+        &windows,
+        windows.len,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        8.0,
+        8.0,
+        0.0,
+        1920.0,
+        0.0,
+        1.0,
+        abi.OMNI_NIRI_ORIENTATION_HORIZONTAL,
+        null,
+        0,
+        null,
+        0,
+    );
+
+    try testing.expectEqual(@as(i32, abi.OMNI_ERR_INVALID_ARGS), rc);
 }

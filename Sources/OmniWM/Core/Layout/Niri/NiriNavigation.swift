@@ -26,15 +26,10 @@ extension NiriLayoutEngine {
             column.setActiveTileIdx(targetUpdate.activeTileIdx)
         }
 
-        var refreshColumnIds: [NodeId] = []
-        if let sourceId = outcome.refreshSourceColumnId {
-            refreshColumnIds.append(sourceId)
-        }
-        if let targetId = outcome.refreshTargetColumnId, !refreshColumnIds.contains(targetId) {
-            refreshColumnIds.append(targetId)
-        }
-
-        for columnId in refreshColumnIds {
+        for columnId in navigationRefreshColumnIds(
+            sourceColumnId: outcome.refreshSourceColumnId,
+            targetColumnId: outcome.refreshTargetColumnId
+        ) {
             guard let column = column(for: columnId, snapshot: snapshot) else { continue }
             updateTabbedColumnVisibility(column: column)
         }
@@ -112,23 +107,12 @@ extension NiriLayoutEngine {
             )
         }
 
-        guard let context = ensureLayoutContext(for: workspaceId) else {
-            return nil
-        }
-
-        let seedRC = NiriStateZigKernel.seedRuntimeState(
-            context: context,
+        guard let context = prepareSeededRuntimeContext(
+            for: workspaceId,
             snapshot: snapshot
-        )
-        guard seedRC == 0 else {
+        ) else {
             return nil
         }
-
-        runtimeMirrorStates[workspaceId] = RuntimeMirrorState(
-            isSeeded: true,
-            columnCount: snapshot.columns.count,
-            windowCount: snapshot.windows.count
-        )
 
         let outcome = NiriStateZigKernel.applyNavigation(
             context: context,
@@ -138,38 +122,16 @@ extension NiriLayoutEngine {
             return nil
         }
 
-        let exported = NiriStateZigKernel.exportRuntimeState(context: context)
-        guard exported.rc == OMNI_OK else {
-            return nil
-        }
-
-        var refreshColumnIds: [NodeId] = []
-        if let sourceId = outcome.refreshSourceColumnId {
-            refreshColumnIds.append(sourceId)
-        }
-        if let targetId = outcome.refreshTargetColumnId, !refreshColumnIds.contains(targetId) {
-            refreshColumnIds.append(targetId)
-        }
-
-        let projection = NiriStateZigRuntimeProjector.project(
-            export: exported.export,
-            hints: .init(
-                refreshTabbedVisibilityColumnIds: refreshColumnIds,
-                resetAllColumnCachedWidths: false,
-                delegatedMoveColumn: nil
-            ),
+        guard applyProjectedRuntimeExport(
+            context: context,
             workspaceId: workspaceId,
-            engine: self
-        )
-        guard projection.applied else {
+            hints: navigationRuntimeHints(
+                sourceColumnId: outcome.refreshSourceColumnId,
+                targetColumnId: outcome.refreshTargetColumnId
+            )
+        ) != nil else {
             return nil
         }
-
-        runtimeMirrorStates[workspaceId] = RuntimeMirrorState(
-            isSeeded: true,
-            columnCount: exported.export.columns.count,
-            windowCount: exported.export.windows.count
-        )
 
         guard let targetWindowId = outcome.targetWindowId else {
             return nil
@@ -183,6 +145,9 @@ extension NiriLayoutEngine {
         in workspaceId: WorkspaceDescriptor.ID,
         targetRowIndex: Int? = nil
     ) -> NiriNode? {
+        let latencyToken = NiriLatencyProbe.begin(.navigationStep)
+        defer { NiriLatencyProbe.end(latencyToken) }
+
         guard steps != 0 else { return currentSelection }
 
         let snapshot = NiriStateZigKernel.makeSnapshot(columns: columns(in: workspaceId))

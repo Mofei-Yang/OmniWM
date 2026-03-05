@@ -91,26 +91,26 @@ enum NiriLayoutZigKernel {
     private static func orientationCode(_ orientation: Monitor.Orientation) -> UInt8 {
         switch orientation {
         case .horizontal:
-            0
+            UInt8(truncatingIfNeeded: OMNI_NIRI_ORIENTATION_HORIZONTAL.rawValue)
         case .vertical:
-            1
+            UInt8(truncatingIfNeeded: OMNI_NIRI_ORIENTATION_VERTICAL.rawValue)
         }
     }
 
     private static func sizingModeCode(_ mode: SizingMode) -> UInt8 {
         switch mode {
         case .normal:
-            0
+            UInt8(truncatingIfNeeded: OMNI_NIRI_SIZING_NORMAL.rawValue)
         case .fullscreen:
-            1
+            UInt8(truncatingIfNeeded: OMNI_NIRI_SIZING_FULLSCREEN.rawValue)
         }
     }
 
     private static func hideSideFromCode(_ code: UInt8) -> HideSide? {
-        if code == 1 {
+        if code == UInt8(truncatingIfNeeded: OMNI_NIRI_HIDE_LEFT.rawValue) {
             return .left
         }
-        if code == 2 {
+        if code == UInt8(truncatingIfNeeded: OMNI_NIRI_HIDE_RIGHT.rawValue) {
             return .right
         }
         return nil
@@ -125,29 +125,23 @@ enum NiriLayoutZigKernel {
     }
 
     private static func insertPositionCode(_ position: InsertPosition) -> UInt8 {
-        let beforeCode: UInt8 = 0
-        let afterCode: UInt8 = 1
-        let swapCode: UInt8 = 2
         switch position {
         case .before:
-            return beforeCode
+            return UInt8(truncatingIfNeeded: OMNI_NIRI_INSERT_BEFORE.rawValue)
         case .after:
-            return afterCode
+            return UInt8(truncatingIfNeeded: OMNI_NIRI_INSERT_AFTER.rawValue)
         case .swap:
-            return swapCode
+            return UInt8(truncatingIfNeeded: OMNI_NIRI_INSERT_SWAP.rawValue)
         }
     }
 
     private static func insertPositionFromCode(_ code: UInt8) -> InsertPosition? {
-        let beforeCode: UInt8 = 0
-        let afterCode: UInt8 = 1
-        let swapCode: UInt8 = 2
         switch code {
-        case beforeCode:
+        case UInt8(truncatingIfNeeded: OMNI_NIRI_INSERT_BEFORE.rawValue):
             return .before
-        case afterCode:
+        case UInt8(truncatingIfNeeded: OMNI_NIRI_INSERT_AFTER.rawValue):
             return .after
-        case swapCode:
+        case UInt8(truncatingIfNeeded: OMNI_NIRI_INSERT_SWAP.rawValue):
             return .swap
         default:
             return nil

@@ -175,3 +175,18 @@ pub fn omni_niri_validate_state_snapshot_impl(
 
     return abi.OMNI_OK;
 }
+
+test "state validation rejects nonzero count with null pointer" {
+    const testing = std.testing;
+
+    var result: abi.OmniNiriStateValidationResult = undefined;
+    const rc = omni_niri_validate_state_snapshot_impl(
+        null,
+        1,
+        null,
+        0,
+        &result,
+    );
+
+    try testing.expectEqual(@as(i32, abi.OMNI_ERR_INVALID_ARGS), rc);
+}

@@ -1813,3 +1813,68 @@ pub fn omni_niri_ctx_apply_navigation_impl(
 
     return abi.OMNI_OK;
 }
+
+test "layout pass v3 handles columns with zero windows and keeps empty interaction cache" {
+    const testing = std.testing;
+
+    const context = omni_niri_layout_context_create_impl();
+    defer omni_niri_layout_context_destroy_impl(context);
+    try testing.expect(context != null);
+
+    var columns = [_]abi.OmniNiriColumnInput{
+        .{
+            .span = 120.0,
+            .render_offset_x = 0.0,
+            .render_offset_y = 0.0,
+            .is_tabbed = 0,
+            .tab_indicator_width = 0.0,
+            .window_start = 0,
+            .window_count = 0,
+        },
+    };
+    var out_columns = [_]abi.OmniNiriColumnOutput{
+        .{
+            .frame_x = 0.0,
+            .frame_y = 0.0,
+            .frame_width = 0.0,
+            .frame_height = 0.0,
+            .hide_side = abi.OMNI_NIRI_HIDE_NONE,
+            .is_visible = 0,
+        },
+    };
+
+    const rc = omni_niri_layout_pass_v3_impl(
+        context,
+        &columns,
+        columns.len,
+        null,
+        0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        0.0,
+        0.0,
+        1920.0,
+        1080.0,
+        8.0,
+        8.0,
+        0.0,
+        1920.0,
+        0.0,
+        1.0,
+        abi.OMNI_NIRI_ORIENTATION_HORIZONTAL,
+        null,
+        0,
+        &out_columns,
+        out_columns.len,
+    );
+    try testing.expectEqual(@as(i32, abi.OMNI_OK), rc);
+
+    const resolved_ctx = asConstContext(context).?;
+    try testing.expectEqual(@as(usize, 0), resolved_ctx.interaction_window_count);
+}

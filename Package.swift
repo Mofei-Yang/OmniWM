@@ -58,6 +58,14 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
+        ),
+        .testTarget(
+            name: "OmniWMBenchmarkTests",
+            dependencies: ["OmniWM"],
+            path: "Tests/OmniWMBenchmarkTests",
+            resources: [
+                .process("Fixtures")
+            ]
         )
     ]
 )

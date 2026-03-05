@@ -257,6 +257,31 @@ Requirements:
 - SwiftPM with Swift 6.2+
 - macOS 15.0+
 
+## Niri Phase 0 Benchmark
+
+Run the Phase 0 Niri latency benchmark:
+
+```bash
+Scripts/niri-phase0-benchmark.sh
+```
+
+Update the tracked baseline file with the latest run:
+
+```bash
+Scripts/niri-phase0-benchmark.sh --update-baseline
+```
+
+Benchmark outputs:
+- Latest report: `dist/benchmarks/niri-phase0-latest.json`
+- Tracked baseline: `benchmarks/niri/phase0-baseline.json`
+
+Each hot path reports:
+- `p50Ms`: median latency
+- `p95Ms`: 95th percentile latency
+- `p99Ms`: 99th percentile latency
+
+Latency instrumentation is opt-in and only records when `OMNI_NIRI_PHASE0_BENCH=1`.
+
 ## Support
 
 If you find OmniWM useful, consider supporting development:

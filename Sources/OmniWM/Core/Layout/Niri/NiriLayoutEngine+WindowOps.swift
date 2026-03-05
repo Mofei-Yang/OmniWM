@@ -60,22 +60,12 @@ extension NiriLayoutEngine {
         _ prepared: WindowMutationPreparedRequest,
         in workspaceId: WorkspaceDescriptor.ID
     ) -> WindowMutationApplyOutcome? {
-        guard let context = ensureLayoutContext(for: workspaceId) else {
-            return nil
-        }
-
-        let seedRC = NiriStateZigKernel.seedRuntimeState(
-            context: context,
+        guard let context = prepareSeededRuntimeContext(
+            for: workspaceId,
             snapshot: prepared.snapshot
-        )
-        guard seedRC == 0 else {
+        ) else {
             return nil
         }
-        runtimeMirrorStates[workspaceId] = RuntimeMirrorState(
-            isSeeded: true,
-            columnCount: prepared.snapshot.columns.count,
-            windowCount: prepared.snapshot.windows.count
-        )
 
         let applyOutcome = NiriStateZigKernel.applyMutation(
             context: context,
@@ -92,18 +82,11 @@ extension NiriLayoutEngine {
             )
         }
 
-        let exported = NiriStateZigKernel.exportRuntimeState(context: context)
-        guard exported.rc == 0 else {
-            return nil
-        }
-
-        let projection = NiriStateZigRuntimeProjector.project(
-            export: exported.export,
-            hints: applyOutcome.hints,
+        guard applyProjectedRuntimeExport(
+            context: context,
             workspaceId: workspaceId,
-            engine: self
-        )
-        guard projection.applied else {
+            hints: applyOutcome.hints
+        ) != nil else {
             return nil
         }
 
@@ -132,12 +115,6 @@ extension NiriLayoutEngine {
                 delegatedMoveColumn: (resolvedColumn, delegated.direction)
             )
         }
-
-        runtimeMirrorStates[workspaceId] = RuntimeMirrorState(
-            isSeeded: true,
-            columnCount: exported.export.columns.count,
-            windowCount: exported.export.windows.count
-        )
 
         return runtimeOutcome
     }
@@ -283,7 +260,10 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> Bool {
-        switch direction {
+        let latencyToken = NiriLatencyProbe.begin(.windowMove)
+        defer { NiriLatencyProbe.end(latencyToken) }
+
+        return switch direction {
         case .down, .up:
             moveWindowVertical(node, direction: direction, in: workspaceId)
         case .left, .right:

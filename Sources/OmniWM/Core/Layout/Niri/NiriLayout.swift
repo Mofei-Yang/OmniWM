@@ -153,6 +153,9 @@ extension NiriLayoutEngine {
         orientation: Monitor.Orientation = .horizontal,
         animationTime: TimeInterval? = nil
     ) {
+        let latencyToken = NiriLatencyProbe.begin(.layoutPass)
+        defer { NiriLatencyProbe.end(latencyToken) }
+
         let containers = columns(in: workspaceId)
         guard !containers.isEmpty else {
             interactionIndexes.removeValue(forKey: workspaceId)

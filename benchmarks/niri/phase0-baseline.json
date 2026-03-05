@@ -1,0 +1,68 @@
+{
+  "expectedSamplesByPath" : {
+    "layoutPass" : 400,
+    "navigationStep" : 400,
+    "resizeDragUpdate" : 400,
+    "windowMove" : 400,
+    "workspaceMove" : 400
+  },
+  "generatedAt" : "2026-03-05T07:40:01.676Z",
+  "measuredIterations" : 400,
+  "metrics" : {
+    "layoutPass" : {
+      "count" : 400,
+      "maxMs" : 0.019917,
+      "meanMs" : 0.00557646,
+      "minMs" : 0.003916,
+      "p50Ms" : 0.004875,
+      "p95Ms" : 0.010417,
+      "p99Ms" : 0.015167
+    },
+    "navigationStep" : {
+      "count" : 400,
+      "maxMs" : 0.10875,
+      "meanMs" : 0.03410616,
+      "minMs" : 0.02625,
+      "p50Ms" : 0.032583,
+      "p95Ms" : 0.044125,
+      "p99Ms" : 0.074917
+    },
+    "resizeDragUpdate" : {
+      "count" : 400,
+      "maxMs" : 0.01875,
+      "meanMs" : 0.0091679225,
+      "minMs" : 0.007375,
+      "p50Ms" : 0.008708,
+      "p95Ms" : 0.012208,
+      "p99Ms" : 0.014792
+    },
+    "windowMove" : {
+      "count" : 400,
+      "maxMs" : 0.022875,
+      "meanMs" : 0.010969155000000001,
+      "minMs" : 0.008583,
+      "p50Ms" : 0.010208,
+      "p95Ms" : 0.015375,
+      "p99Ms" : 0.021375
+    },
+    "workspaceMove" : {
+      "count" : 400,
+      "maxMs" : 0.168958,
+      "meanMs" : 0.0676531375,
+      "minMs" : 0.054042,
+      "p50Ms" : 0.066708,
+      "p95Ms" : 0.084708,
+      "p99Ms" : 0.095083
+    }
+  },
+  "sampleCounts" : {
+    "layoutPass" : 400,
+    "navigationStep" : 400,
+    "resizeDragUpdate" : 400,
+    "windowMove" : 400,
+    "workspaceMove" : 400
+  },
+  "scenarioName" : "phase0-default",
+  "schemaVersion" : 1,
+  "warmupIterations" : 100
+}

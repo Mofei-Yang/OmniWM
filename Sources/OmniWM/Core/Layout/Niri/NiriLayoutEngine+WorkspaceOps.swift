@@ -30,37 +30,17 @@ extension NiriLayoutEngine {
         targetCreatedColumnId: UUID?,
         sourcePlaceholderColumnId: UUID?
     ) -> WorkspaceApplyOutcome? {
-        guard let sourceContext = ensureLayoutContext(for: prepared.sourceWorkspaceId),
-              let targetContext = ensureLayoutContext(for: prepared.targetWorkspaceId)
+        guard let sourceContext = prepareSeededRuntimeContext(
+            for: prepared.sourceWorkspaceId,
+            snapshot: prepared.sourceSnapshot
+        ),
+            let targetContext = prepareSeededRuntimeContext(
+                for: prepared.targetWorkspaceId,
+                snapshot: prepared.targetSnapshot
+            )
         else {
             return nil
         }
-
-        let sourceSeedRC = NiriStateZigKernel.seedRuntimeState(
-            context: sourceContext,
-            snapshot: prepared.sourceSnapshot
-        )
-        guard sourceSeedRC == 0 else {
-            return nil
-        }
-        runtimeMirrorStates[prepared.sourceWorkspaceId] = RuntimeMirrorState(
-            isSeeded: true,
-            columnCount: prepared.sourceSnapshot.columns.count,
-            windowCount: prepared.sourceSnapshot.windows.count
-        )
-
-        let targetSeedRC = NiriStateZigKernel.seedRuntimeState(
-            context: targetContext,
-            snapshot: prepared.targetSnapshot
-        )
-        guard targetSeedRC == 0 else {
-            return nil
-        }
-        runtimeMirrorStates[prepared.targetWorkspaceId] = RuntimeMirrorState(
-            isSeeded: true,
-            columnCount: prepared.targetSnapshot.columns.count,
-            windowCount: prepared.targetSnapshot.windows.count
-        )
 
         let applyOutcome = NiriStateZigKernel.applyWorkspace(
             sourceContext: sourceContext,
@@ -83,31 +63,19 @@ extension NiriLayoutEngine {
             )
         }
 
-        let sourceExport = NiriStateZigKernel.exportRuntimeState(context: sourceContext)
-        guard sourceExport.rc == 0 else {
-            return nil
-        }
-
-        let targetExport = NiriStateZigKernel.exportRuntimeState(context: targetContext)
-        guard targetExport.rc == 0 else {
-            return nil
-        }
-
-        let targetProjection = NiriStateZigRuntimeProjector.project(
-            export: targetExport.export,
+        guard applyProjectedRuntimeExport(
+            context: targetContext,
             workspaceId: prepared.targetWorkspaceId,
-            engine: self
-        )
-        guard targetProjection.applied else {
+            refreshMirrorStateFromExport: false
+        ) != nil else {
             return nil
         }
 
-        let sourceProjection = NiriStateZigRuntimeProjector.project(
-            export: sourceExport.export,
+        guard applyProjectedRuntimeExport(
+            context: sourceContext,
             workspaceId: prepared.sourceWorkspaceId,
-            engine: self
-        )
-        guard sourceProjection.applied else {
+            refreshMirrorStateFromExport: false
+        ) != nil else {
             return nil
         }
 
@@ -130,13 +98,13 @@ extension NiriLayoutEngine {
             columns: columns(in: prepared.targetWorkspaceId)
         )
 
-        runtimeMirrorStates[prepared.sourceWorkspaceId] = RuntimeMirrorState(
-            isSeeded: true,
+        setRuntimeMirrorState(
+            for: prepared.sourceWorkspaceId,
             columnCount: sourceProjectedSnapshot.columns.count,
             windowCount: sourceProjectedSnapshot.windows.count
         )
-        runtimeMirrorStates[prepared.targetWorkspaceId] = RuntimeMirrorState(
-            isSeeded: true,
+        setRuntimeMirrorState(
+            for: prepared.targetWorkspaceId,
             columnCount: targetProjectedSnapshot.columns.count,
             windowCount: targetProjectedSnapshot.windows.count
         )
@@ -237,6 +205,9 @@ extension NiriLayoutEngine {
         sourceState: inout ViewportState,
         targetState: inout ViewportState
     ) -> WorkspaceMoveResult? {
+        let latencyToken = NiriLatencyProbe.begin(.workspaceMove)
+        defer { NiriLatencyProbe.end(latencyToken) }
+
         guard let prepared = prepareMoveWindowToWorkspaceRequest(
             window,
             from: sourceWorkspaceId,

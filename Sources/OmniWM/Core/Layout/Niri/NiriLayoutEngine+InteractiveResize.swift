@@ -82,6 +82,9 @@ extension NiriLayoutEngine {
         gaps: LayoutGaps,
         viewportState: ((inout ViewportState) -> Void) -> Void = { _ in }
     ) -> Bool {
+        let latencyToken = NiriLatencyProbe.begin(.resizeDragUpdate)
+        defer { NiriLatencyProbe.end(latencyToken) }
+
         guard let resize = interactiveResize else { return false }
 
         guard let windowNode = findNode(by: resize.windowId) as? NiriWindow else {
