@@ -462,8 +462,7 @@ final class WMController {
                 nodeId: node.id,
                 focusedHandle: node.handle,
                 in: workspaceId,
-                onMonitor: monitorId,
-                promoteToManagedFocus: true
+                onMonitor: monitorId
             )
             return
         }
@@ -482,8 +481,7 @@ final class WMController {
                     nodeId: node.id,
                     focusedHandle: focused,
                     in: workspaceId,
-                    onMonitor: workspaceManager.monitorId(for: workspaceId),
-                    promoteToManagedFocus: true
+                    onMonitor: workspaceManager.monitorId(for: workspaceId)
                 )
             } else {
                 _ = workspaceManager.rememberFocus(focused, in: workspaceId)
@@ -551,7 +549,9 @@ extension WMController {
 
     func focusWindow(_ handle: WindowHandle) {
         guard let entry = workspaceManager.entry(for: handle) else { return }
-        _ = workspaceManager.setManagedFocus(
+        guard !(isFrontmostAppLockScreen() || isLockScreenActive) else { return }
+
+        _ = workspaceManager.beginManagedFocusRequest(
             handle,
             in: entry.workspaceId,
             onMonitor: workspaceManager.monitorId(for: entry.workspaceId)
@@ -561,7 +561,6 @@ extension WMController {
         let pid = handle.pid
         let windowId = entry.windowId
         let moveMouseEnabled = moveMouseToFocusedWindowEnabled
-        _ = workspaceManager.setManagedAppFullscreen(AXWindowService.isFullscreen(entry.axRef))
 
         focusCoordinator.focusWindow(
             handle,

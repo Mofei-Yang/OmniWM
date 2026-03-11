@@ -4,6 +4,13 @@ import Foundation
 @MainActor
 final class AXEventHandler: CGSEventDelegate {
     weak var controller: WMController?
+    private var deferredCreatedWindowIds: Set<UInt32> = []
+    private var deferredCreatedWindowOrder: [UInt32] = []
+    var windowInfoProvider: ((UInt32) -> WindowServerInfo?)?
+    var axWindowRefProvider: ((UInt32, pid_t) -> AXWindowRef?)?
+    var windowSubscriptionHandler: (([UInt32]) -> Void)?
+    var focusedWindowValueProvider: ((pid_t) -> CFTypeRef?)?
+    var windowTypeProvider: ((AXWindowRef, pid_t) -> AXWindowType)?
 
     init(controller: WMController) {
         self.controller = controller
@@ -64,6 +71,7 @@ final class AXEventHandler: CGSEventDelegate {
         guard let controller else { return }
 
         if controller.isDiscoveryInProgress {
+            deferCreatedWindow(windowId)
             return
         }
 
@@ -71,14 +79,14 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        guard let windowInfo = SkyLight.shared.queryWindowInfo(windowId) else {
+        guard let windowInfo = resolveWindowInfo(windowId) else {
             return
         }
 
         let pid = windowInfo.pid
-        CGSEventObserver.shared.subscribeToWindows([windowId])
+        subscribeToWindows([windowId])
 
-        if let axRef = AXWindowService.axWindowRef(for: windowId, pid: pid) {
+        if let axRef = resolveAXWindowRef(windowId: windowId, pid: pid) {
             handleCreated(ref: axRef, pid: pid, winId: Int(windowId))
         }
     }
@@ -97,6 +105,7 @@ final class AXEventHandler: CGSEventDelegate {
 
     private func handleCGSWindowDestroyed(windowId: UInt32) {
         guard let controller else { return }
+        removeDeferredCreatedWindow(windowId)
         guard let entry = controller.workspaceManager.entry(
             forWindowId: Int(windowId),
             inVisibleWorkspaces: true
@@ -112,7 +121,30 @@ final class AXEventHandler: CGSEventDelegate {
         let windowIds = controller.workspaceManager.allEntries().compactMap { entry -> UInt32? in
             UInt32(entry.windowId)
         }
-        CGSEventObserver.shared.subscribeToWindows(windowIds)
+        subscribeToWindows(windowIds)
+    }
+
+    func drainDeferredCreatedWindows() async {
+        guard !deferredCreatedWindowOrder.isEmpty else { return }
+
+        let deferredWindowIds = deferredCreatedWindowOrder
+        deferredCreatedWindowOrder.removeAll()
+        deferredCreatedWindowIds.removeAll()
+
+        for windowId in deferredWindowIds {
+            guard let controller else { return }
+            if controller.workspaceManager.entry(forWindowId: Int(windowId)) != nil {
+                continue
+            }
+            guard let windowInfo = resolveWindowInfo(windowId) else {
+                continue
+            }
+            let pid = windowInfo.pid
+            guard let axRef = resolveAXWindowRef(windowId: windowId, pid: pid) else {
+                continue
+            }
+            handleCreated(ref: axRef, pid: pid, winId: Int(windowId))
+        }
     }
 
     private func handleCreated(ref: AXWindowRef, pid: pid_t, winId: Int) {
@@ -120,7 +152,8 @@ final class AXEventHandler: CGSEventDelegate {
         let app = NSRunningApplication(processIdentifier: pid)
         let bundleId = app?.bundleIdentifier
         let appPolicy = app?.activationPolicy
-        let windowType = AXWindowService.windowType(ref, appPolicy: appPolicy, bundleId: bundleId)
+        let windowType = windowTypeProvider?(ref, pid)
+            ?? AXWindowService.windowType(ref, appPolicy: appPolicy, bundleId: bundleId)
         guard windowType == .tiling else { return }
 
         if let bundleId, controller.appRulesByBundleId[bundleId]?.alwaysFloat == true {
@@ -143,7 +176,7 @@ final class AXEventHandler: CGSEventDelegate {
         }
 
         _ = controller.workspaceManager.addWindow(ref, pid: pid, windowId: winId, to: workspaceId)
-        CGSEventObserver.shared.subscribeToWindows([UInt32(winId)])
+        subscribeToWindows([UInt32(winId)])
         controller.updateWorkspaceBar()
 
         Task { @MainActor [weak self] in
@@ -161,13 +194,16 @@ final class AXEventHandler: CGSEventDelegate {
         let entry = controller.workspaceManager.entry(forPid: pid, windowId: winId)
         let affectedWorkspaceId = entry?.workspaceId
         let removedHandle = entry?.handle
+        let shouldRecoverFocus = removedHandle?.id == controller.workspaceManager.focusedHandle?.id
+        let layoutType = affectedWorkspaceId
+            .flatMap { controller.workspaceManager.descriptor(for: $0)?.name }
+            .map { controller.settings.layoutType(for: $0) } ?? .defaultLayout
 
         if let entry,
            let wsId = affectedWorkspaceId,
            let monitor = controller.workspaceManager.monitor(for: wsId),
            controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId,
-           let workspaceName = controller.workspaceManager.descriptor(for: wsId)?.name,
-           controller.settings.layoutType(for: workspaceName) != .dwindle
+           layoutType != .dwindle
         {
             let shouldAnimate = if let engine = controller.niriEngine,
                                     let windowNode = engine.findNode(for: entry.handle)
@@ -184,15 +220,13 @@ final class AXEventHandler: CGSEventDelegate {
             }
         }
 
-        let needsFocusRecovery = removedHandle?.id == controller.workspaceManager.focusedHandle?.id
-
         if let removed = removedHandle {
             controller.focusCoordinator.discardPendingFocus(removed)
         }
 
         var oldFrames: [WindowHandle: CGRect] = [:]
         var removedNodeId: NodeId?
-        if let wsId = affectedWorkspaceId, let engine = controller.niriEngine {
+        if let wsId = affectedWorkspaceId, layoutType != .dwindle, let engine = controller.niriEngine {
             oldFrames = engine.captureWindowFrames(in: wsId)
             if let handle = removedHandle {
                 removedNodeId = engine.findNode(for: handle)?.id
@@ -201,61 +235,36 @@ final class AXEventHandler: CGSEventDelegate {
 
         _ = controller.workspaceManager.removeWindow(pid: pid, windowId: winId)
 
-        if needsFocusRecovery, let wsId = affectedWorkspaceId {
-            controller.ensureFocusedHandleValid(in: wsId)
-        }
-
         if let wsId = affectedWorkspaceId {
-            Task { @MainActor [weak controller] in
-                guard let controller else { return }
-
-                await controller.layoutRefreshController.layoutWithNiriEngine(
-                    activeWorkspaces: [wsId],
-                    useScrollAnimationPath: true,
-                    removedNodeId: removedNodeId
-                )
-
-                if let engine = controller.niriEngine {
-                    let newFrames = engine.captureWindowFrames(in: wsId)
-                    let animationsTriggered = engine.triggerMoveAnimations(
-                        in: wsId,
-                        oldFrames: oldFrames,
-                        newFrames: newFrames
-                    )
-                    let hasWindowAnimations = engine.hasAnyWindowAnimationsRunning(in: wsId)
-                    let hasColumnAnimations = engine.hasAnyColumnAnimationsRunning(in: wsId)
-
-                    if animationsTriggered || hasWindowAnimations || hasColumnAnimations {
-                        controller.layoutRefreshController.startScrollAnimation(for: wsId)
-                    }
-                }
-            }
-        }
-
-        if let focused = controller.workspaceManager.focusedHandle,
-           let entry = controller.workspaceManager.entry(for: focused),
-           let frame = try? AXWindowService.frame(entry.axRef)
-        {
-            controller.borderCoordinator.updateBorderIfAllowed(handle: focused, frame: frame, windowId: entry.windowId)
-        } else {
-            controller.borderManager.hideBorder()
+            controller.layoutRefreshController.requestWindowRemoval(
+                workspaceId: wsId,
+                layoutType: layoutType,
+                removedNodeId: removedNodeId,
+                niriOldFrames: oldFrames,
+                shouldRecoverFocus: shouldRecoverFocus
+            )
         }
     }
 
     func handleAppActivation(pid: pid_t) {
         guard let controller else { return }
         guard controller.hasStartedServices else { return }
-        let appElement = AXUIElementCreateApplication(pid)
-        var focusedWindow: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
+        let focusedWindow = resolveFocusedWindowValue(pid: pid)
 
-        guard result == .success, let windowElement = focusedWindow else {
+        guard let windowElement = focusedWindow else {
             _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
             controller.borderManager.hideBorder()
             return
         }
 
-        guard let axRef = try? AXWindowRef(element: windowElement as! AXUIElement) else {
+        guard CFGetTypeID(windowElement) == AXUIElementGetTypeID() else {
+            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
+            controller.borderManager.hideBorder()
+            return
+        }
+
+        let axElement = unsafeDowncast(windowElement, to: AXUIElement.self)
+        guard let axRef = try? AXWindowRef(element: axElement) else {
             _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
             controller.borderManager.hideBorder()
             return
@@ -271,13 +280,6 @@ final class AXEventHandler: CGSEventDelegate {
             let isWorkspaceActive = targetMonitor.map { monitor in
                 controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
             } ?? false
-
-            if !isWorkspaceActive && !controller.isTransferringWindow {
-                let wsName = controller.workspaceManager.descriptor(for: wsId)?.name ?? ""
-                if controller.workspaceManager.focusWorkspace(named: wsName) != nil {
-                    controller.syncMonitorsToNiriEngine()
-                }
-            }
 
             handleManagedAppActivation(
                 entry: entry,
@@ -299,9 +301,15 @@ final class AXEventHandler: CGSEventDelegate {
         guard let controller else { return }
         let wsId = entry.workspaceId
         let monitorId = controller.workspaceManager.monitorId(for: wsId)
+        let shouldActivateWorkspace = !isWorkspaceActive && !controller.isTransferringWindow
 
-        _ = controller.workspaceManager.setManagedFocus(entry.handle, in: wsId, onMonitor: monitorId)
-        _ = controller.workspaceManager.setManagedAppFullscreen(appFullscreen)
+        _ = controller.workspaceManager.confirmManagedFocus(
+            entry.handle,
+            in: wsId,
+            onMonitor: monitorId,
+            appFullscreen: appFullscreen,
+            activateWorkspaceOnMonitor: shouldActivateWorkspace
+        )
 
         if let engine = controller.niriEngine,
            let node = engine.findNode(for: entry.handle),
@@ -323,12 +331,11 @@ final class AXEventHandler: CGSEventDelegate {
             controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
         }
         controller.niriLayoutHandler.updateTabbedColumnOverlays()
-        if !isWorkspaceActive {
+        if shouldActivateWorkspace {
+            controller.syncMonitorsToNiriEngine()
             controller.layoutRefreshController.commitWorkspaceTransition(
                 reason: .appActivationTransition
-            ) { [weak controller] in
-                controller?.focusWindow(entry.handle)
-            }
+            )
         }
     }
 
@@ -339,7 +346,7 @@ final class AXEventHandler: CGSEventDelegate {
         for entry in controller.workspaceManager.entries(forPid: pid) {
             controller.workspaceManager.setLayoutReason(.macosHiddenApp, for: entry.handle)
         }
-        controller.layoutRefreshController.requestRelayout(reason: .appHidden)
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appHidden)
     }
 
     func handleAppUnhidden(pid: pid_t) {
@@ -351,6 +358,44 @@ final class AXEventHandler: CGSEventDelegate {
                 _ = controller.workspaceManager.restoreFromNativeState(for: entry.handle)
             }
         }
-        controller.layoutRefreshController.requestRelayout(reason: .appUnhidden)
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appUnhidden)
+    }
+
+    private func deferCreatedWindow(_ windowId: UInt32) {
+        guard deferredCreatedWindowIds.insert(windowId).inserted else { return }
+        deferredCreatedWindowOrder.append(windowId)
+    }
+
+    private func removeDeferredCreatedWindow(_ windowId: UInt32) {
+        guard deferredCreatedWindowIds.remove(windowId) != nil else { return }
+        deferredCreatedWindowOrder.removeAll { $0 == windowId }
+    }
+
+    private func resolveWindowInfo(_ windowId: UInt32) -> WindowServerInfo? {
+        windowInfoProvider?(windowId) ?? SkyLight.shared.queryWindowInfo(windowId)
+    }
+
+    private func resolveAXWindowRef(windowId: UInt32, pid: pid_t) -> AXWindowRef? {
+        axWindowRefProvider?(windowId, pid) ?? AXWindowService.axWindowRef(for: windowId, pid: pid)
+    }
+
+    private func subscribeToWindows(_ windowIds: [UInt32]) {
+        if let windowSubscriptionHandler {
+            windowSubscriptionHandler(windowIds)
+            return
+        }
+        CGSEventObserver.shared.subscribeToWindows(windowIds)
+    }
+
+    private func resolveFocusedWindowValue(pid: pid_t) -> CFTypeRef? {
+        if let focusedWindowValueProvider {
+            return focusedWindowValueProvider(pid)
+        }
+
+        let appElement = AXUIElementCreateApplication(pid)
+        var focusedWindow: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
+        guard result == .success else { return nil }
+        return focusedWindow
     }
 }

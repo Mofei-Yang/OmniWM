@@ -124,7 +124,7 @@ private func waitForFocusRefresh(on controller: WMController) async {
         ])
     }
 
-    @Test @MainActor func focusWindowClearsNonManagedFocusAndRecordsWorkspaceMemory() {
+    @Test @MainActor func focusWindowStartsPendingFocusButDoesNotConfirmDurableFocus() {
         let operations = WindowFocusOperations(
             activateApp: { _ in },
             focusSpecificWindow: { _, _, _ in },
@@ -135,11 +135,14 @@ private func waitForFocusRefresh(on controller: WMController) async {
 
         controller.focusWindow(handle)
 
-        #expect(controller.workspaceManager.isNonManagedFocusActive == false)
+        #expect(controller.workspaceManager.pendingFocusedHandle == handle)
+        #expect(controller.workspaceManager.pendingFocusedWorkspaceId == workspaceId)
+        #expect(controller.workspaceManager.focusedHandle == nil)
+        #expect(controller.workspaceManager.isNonManagedFocusActive == true)
         #expect(controller.workspaceManager.lastFocusedHandle(in: workspaceId) == handle)
     }
 
-    @Test @MainActor func focusWindowClearsFullscreenSessionWithoutBorderRefresh() {
+    @Test @MainActor func focusWindowLeavesConfirmedSessionStateUntouchedUntilActivation() {
         let operations = WindowFocusOperations(
             activateApp: { _ in },
             focusSpecificWindow: { _, _, _ in },
@@ -150,8 +153,9 @@ private func waitForFocusRefresh(on controller: WMController) async {
 
         controller.focusWindow(handle)
 
-        #expect(controller.workspaceManager.isAppFullscreenActive == false)
-        #expect(controller.workspaceManager.isNonManagedFocusActive == false)
+        #expect(controller.workspaceManager.pendingFocusedHandle == handle)
+        #expect(controller.workspaceManager.isAppFullscreenActive == true)
+        #expect(controller.workspaceManager.isNonManagedFocusActive == true)
     }
 
     @Test @MainActor func workspaceManagerOwnsDurableControllerFocusState() {
@@ -308,7 +312,95 @@ private func waitForFocusRefresh(on controller: WMController) async {
 
         #expect(fixture.controller.workspaceManager.interactionMonitorId == fixture.primaryMonitor.id)
         #expect(fixture.controller.workspaceManager.previousInteractionMonitorId == fixture.secondaryMonitor.id)
+        #expect(fixture.controller.workspaceManager.focusedHandle == secondaryHandle)
+        #expect(fixture.controller.workspaceManager.pendingFocusedHandle == primaryHandle)
+    }
+
+    @Test @MainActor func managedActivationConfirmsPendingFocusAtomically() {
+        let operations = WindowFocusOperations(
+            activateApp: { _ in },
+            focusSpecificWindow: { _, _, _ in },
+            raiseWindow: { _ in }
+        )
+        let fixture = makeTwoMonitorFocusController(windowFocusOperations: operations)
+        let primaryHandle = fixture.controller.workspaceManager.addWindow(
+            makeFocusTestWindow(windowId: 351),
+            pid: getpid(),
+            windowId: 351,
+            to: fixture.primaryWorkspaceId
+        )
+        let secondaryHandle = fixture.controller.workspaceManager.addWindow(
+            makeFocusTestWindow(windowId: 352),
+            pid: getpid(),
+            windowId: 352,
+            to: fixture.secondaryWorkspaceId
+        )
+
+        _ = fixture.controller.workspaceManager.setManagedFocus(
+            primaryHandle,
+            in: fixture.primaryWorkspaceId,
+            onMonitor: fixture.primaryMonitor.id
+        )
+
+        fixture.controller.focusWindow(secondaryHandle)
+        #expect(fixture.controller.workspaceManager.pendingFocusedHandle == secondaryHandle)
         #expect(fixture.controller.workspaceManager.focusedHandle == primaryHandle)
+
+        guard let entry = fixture.controller.workspaceManager.entry(for: secondaryHandle) else {
+            Issue.record("Missing secondary entry")
+            return
+        }
+
+        fixture.controller.axEventHandler.handleManagedAppActivation(
+            entry: entry,
+            isWorkspaceActive: true,
+            appFullscreen: false
+        )
+
+        #expect(fixture.controller.workspaceManager.pendingFocusedHandle == nil)
+        #expect(fixture.controller.workspaceManager.focusedHandle == secondaryHandle)
+        #expect(fixture.controller.workspaceManager.interactionMonitorId == fixture.secondaryMonitor.id)
+        #expect(fixture.controller.workspaceManager.lastFocusedHandle(in: fixture.secondaryWorkspaceId) == secondaryHandle)
+    }
+
+    @Test @MainActor func managedActivationClearsStalePendingRequestWhenConfirmationDiffers() {
+        let operations = WindowFocusOperations(
+            activateApp: { _ in },
+            focusSpecificWindow: { _, _, _ in },
+            raiseWindow: { _ in }
+        )
+        let (controller, workspaceId, confirmedHandle) = makeFocusTestController(windowFocusOperations: operations)
+        let pendingHandle = controller.workspaceManager.addWindow(
+            makeFocusTestWindow(windowId: 353),
+            pid: getpid(),
+            windowId: 353,
+            to: workspaceId
+        )
+
+        _ = controller.workspaceManager.setManagedFocus(
+            confirmedHandle,
+            in: workspaceId,
+            onMonitor: controller.workspaceManager.monitorId(for: workspaceId)
+        )
+
+        controller.focusWindow(pendingHandle)
+        #expect(controller.workspaceManager.pendingFocusedHandle == pendingHandle)
+
+        guard let entry = controller.workspaceManager.entry(for: confirmedHandle) else {
+            Issue.record("Missing confirmed entry")
+            return
+        }
+
+        controller.axEventHandler.handleManagedAppActivation(
+            entry: entry,
+            isWorkspaceActive: true,
+            appFullscreen: false
+        )
+
+        #expect(controller.workspaceManager.pendingFocusedHandle == nil)
+        #expect(controller.workspaceManager.focusedHandle == confirmedHandle)
+        #expect(controller.workspaceManager.lastFocusedHandle(in: workspaceId) == confirmedHandle)
+        #expect(controller.workspaceManager.preferredFocusHandle(in: workspaceId) == confirmedHandle)
     }
 
     @Test @MainActor func managedActivationPublishesCoherentCrossMonitorNotifications() {
@@ -389,7 +481,7 @@ private func waitForFocusRefresh(on controller: WMController) async {
         #expect(monitorInfo.value?[OmniWMFocusNotificationKey.newMonitorIndex] as? CGDirectDisplayID == fixture.secondaryMonitor.displayId)
     }
 
-    @Test @MainActor func removingFocusedWindowRecoversFocusToRemainingWindow() {
+    @Test @MainActor func removingFocusedWindowRecoversPendingFocusToRemainingWindow() async {
         let operations = WindowFocusOperations(
             activateApp: { _ in },
             focusSpecificWindow: { _, _, _ in },
@@ -411,9 +503,34 @@ private func waitForFocusRefresh(on controller: WMController) async {
         )
 
         controller.axEventHandler.handleRemoved(pid: getpid(), winId: removedWindow.windowId)
+        await waitForFocusRefresh(on: controller)
 
         #expect(controller.workspaceManager.entry(for: removedHandle) == nil)
-        #expect(controller.workspaceManager.focusedHandle == survivor)
+        #expect(controller.workspaceManager.focusedHandle == nil)
+        #expect(controller.workspaceManager.pendingFocusedHandle == survivor)
         #expect(controller.workspaceManager.lastFocusedHandle(in: workspaceId) == survivor)
+    }
+
+    @Test @MainActor func focusWindowIsNoOpWhileLocked() {
+        var events: [FocusOperationEvent] = []
+        let operations = WindowFocusOperations(
+            activateApp: { pid in
+                events.append(.activate(pid))
+            },
+            focusSpecificWindow: { pid, windowId, _ in
+                events.append(.focus(pid, windowId))
+            },
+            raiseWindow: { _ in
+                events.append(.raise)
+            }
+        )
+        let (controller, _, handle) = makeFocusTestController(windowFocusOperations: operations)
+        controller.isLockScreenActive = true
+
+        controller.focusWindow(handle)
+
+        #expect(events.isEmpty)
+        #expect(controller.workspaceManager.pendingFocusedHandle == nil)
+        #expect(controller.workspaceManager.focusedHandle == nil)
     }
 }

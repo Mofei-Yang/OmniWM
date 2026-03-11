@@ -43,6 +43,7 @@ enum RefreshReason: String, Sendable {
     case interactiveGesture
     case axWindowCreated
     case axWindowChanged
+    case windowDestroyed
     case appHidden
     case appUnhidden
     case overviewMutation
@@ -74,6 +75,8 @@ enum RefreshReason: String, Sendable {
             .debounced(nanoseconds: 4_000_000, dropWhileBusy: false)
         case .axWindowChanged:
             .debounced(nanoseconds: 8_000_000, dropWhileBusy: true)
+        case .windowDestroyed:
+            .plain
         }
     }
 }

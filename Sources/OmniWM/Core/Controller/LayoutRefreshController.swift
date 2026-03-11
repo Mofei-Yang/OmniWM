@@ -8,24 +8,51 @@ import QuartzCore
     enum RefreshRoute: Equatable {
         case relayout
         case immediateRelayout
+        case visibilityRefresh
+        case windowRemoval
     }
 
     enum ScheduledRefreshKind: Int {
         case relayout
         case immediateRelayout
+        case visibilityRefresh
+        case windowRemoval
         case fullRescan
+    }
+
+    struct WindowRemovalPayload {
+        let workspaceId: WorkspaceDescriptor.ID
+        let layoutType: LayoutType
+        let removedNodeId: NodeId?
+        let niriOldFrames: [WindowHandle: CGRect]
+        let shouldRecoverFocus: Bool
+    }
+
+    struct FollowUpRefresh {
+        var kind: ScheduledRefreshKind
+        var reason: RefreshReason
     }
 
     struct ScheduledRefresh {
         var kind: ScheduledRefreshKind
         var reason: RefreshReason
         var postLayoutActions: [PostLayoutAction] = []
+        var windowRemovalPayloads: [WindowRemovalPayload] = []
+        var followUpRefresh: FollowUpRefresh?
 
-        init(kind: ScheduledRefreshKind, reason: RefreshReason, postLayout: PostLayoutAction? = nil) {
+        init(
+            kind: ScheduledRefreshKind,
+            reason: RefreshReason,
+            postLayout: PostLayoutAction? = nil,
+            windowRemovalPayload: WindowRemovalPayload? = nil
+        ) {
             self.kind = kind
             self.reason = reason
             if let postLayout {
                 postLayoutActions = [postLayout]
+            }
+            if let windowRemovalPayload {
+                windowRemovalPayloads = [windowRemovalPayload]
             }
         }
     }
@@ -34,11 +61,17 @@ import QuartzCore
         var fullRescanExecutions: Int = 0
         var relayoutExecutions: Int = 0
         var immediateRelayoutExecutions: Int = 0
+        var visibilityExecutions: Int = 0
+        var windowRemovalExecutions: Int = 0
+        var requestedByReason: [RefreshReason: Int] = [:]
+        var executedByReason: [RefreshReason: Int] = [:]
     }
 
     struct RefreshDebugHooks {
         var onFullRescan: ((RefreshReason) async throws -> Bool)?
         var onRelayout: ((RefreshReason, RefreshRoute) async -> Bool)?
+        var onVisibilityRefresh: ((RefreshReason) async -> Bool)?
+        var onWindowRemoval: ((RefreshReason, [WindowRemovalPayload]) -> Bool)?
     }
 
     weak var controller: WMController?
@@ -358,6 +391,10 @@ import QuartzCore
         debugHooks = RefreshDebugHooks()
     }
 
+    func refreshDebugSnapshot() -> RefreshDebugCounters {
+        debugCounters
+    }
+
     func requestFullRescan(reason: RefreshReason) {
         scheduleFullRescan(reason: reason)
     }
@@ -372,6 +409,39 @@ import QuartzCore
     ) {
         guard !layoutState.isInLightSession else { return }
         enqueueRefresh(.init(kind: .immediateRelayout, reason: reason, postLayout: postLayout))
+    }
+
+    func requestVisibilityRefresh(
+        reason: RefreshReason,
+        postLayout: PostLayoutAction? = nil
+    ) {
+        guard !layoutState.isInLightSession else { return }
+        enqueueRefresh(.init(kind: .visibilityRefresh, reason: reason, postLayout: postLayout))
+    }
+
+    func requestWindowRemoval(
+        workspaceId: WorkspaceDescriptor.ID,
+        layoutType: LayoutType,
+        removedNodeId: NodeId?,
+        niriOldFrames: [WindowHandle: CGRect],
+        shouldRecoverFocus: Bool,
+        postLayout: PostLayoutAction? = nil
+    ) {
+        guard !layoutState.isInLightSession else { return }
+        enqueueRefresh(
+            .init(
+                kind: .windowRemoval,
+                reason: .windowDestroyed,
+                postLayout: postLayout,
+                windowRemovalPayload: .init(
+                    workspaceId: workspaceId,
+                    layoutType: layoutType,
+                    removedNodeId: removedNodeId,
+                    niriOldFrames: niriOldFrames,
+                    shouldRecoverFocus: shouldRecoverFocus
+                )
+            )
+        )
     }
 
     func commitWorkspaceTransition(
@@ -424,7 +494,7 @@ import QuartzCore
         useScrollAnimationPath: Bool,
         recoverFocus: Bool
     ) async -> Bool {
-        recordRefreshExecution(route)
+        recordRefreshExecution(route, reason: reason)
         if await debugHooks.onRelayout?(reason, route) == true {
             return true
         }
@@ -461,6 +531,25 @@ import QuartzCore
         return true
     }
 
+    private func executeVisibilityRefresh(reason: RefreshReason) async -> Bool {
+        recordRefreshExecution(.visibilityRefresh, reason: reason)
+        if await debugHooks.onVisibilityRefresh?(reason) == true {
+            return true
+        }
+
+        guard let controller else { return false }
+
+        if controller.isFrontmostAppLockScreen() || controller.isLockScreenActive {
+            return false
+        }
+
+        controller.updateWorkspaceBar()
+        controller.niriLayoutHandler.updateTabbedColumnOverlays()
+        refreshFocusedBorderForVisibilityState(on: controller)
+
+        return true
+    }
+
     func runLightSession(_ body: () -> Void) {
         layoutState.activeRefreshTask?.cancel()
         layoutState.activeRefreshTask = nil
@@ -469,11 +558,11 @@ import QuartzCore
         layoutState.isInLightSession = true
 
         if let controller {
-            let focused = controller.workspaceManager.focusedHandle
             for monitor in controller.workspaceManager.monitors {
                 if let ws = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id) {
                     let handles = controller.workspaceManager.entries(in: ws.id).map(\.handle)
                     let layoutType = controller.settings.layoutType(for: ws.name)
+                    let focused = controller.workspaceManager.preferredFocusHandle(in: ws.id)
 
                     switch layoutType {
                     case .dwindle:
@@ -518,6 +607,113 @@ import QuartzCore
         )
     }
 
+    private func executeWindowRemoval(
+        reason: RefreshReason,
+        payloads: [WindowRemovalPayload]
+    ) async -> Bool {
+        recordRefreshExecution(.windowRemoval, reason: reason)
+        if debugHooks.onWindowRemoval?(reason, payloads) == true {
+            return true
+        }
+
+        guard let controller else { return false }
+        if controller.isFrontmostAppLockScreen() || controller.isLockScreenActive {
+            return false
+        }
+
+        var dwindleWorkspaces: Set<WorkspaceDescriptor.ID> = []
+        var focusedWorkspacesToRecover: Set<WorkspaceDescriptor.ID> = []
+
+        for payload in payloads {
+            switch payload.layoutType {
+            case .dwindle:
+                dwindleWorkspaces.insert(payload.workspaceId)
+            case .niri, .defaultLayout:
+                await niriHandler.layoutWithNiriEngine(
+                    activeWorkspaces: [payload.workspaceId],
+                    useScrollAnimationPath: true,
+                    removedNodeId: payload.removedNodeId
+                )
+                guard !Task.isCancelled else { return false }
+
+                if let engine = controller.niriEngine {
+                    let newFrames = engine.captureWindowFrames(in: payload.workspaceId)
+                    let animationsTriggered = engine.triggerMoveAnimations(
+                        in: payload.workspaceId,
+                        oldFrames: payload.niriOldFrames,
+                        newFrames: newFrames
+                    )
+                    let hasWindowAnimations = engine.hasAnyWindowAnimationsRunning(in: payload.workspaceId)
+                    let hasColumnAnimations = engine.hasAnyColumnAnimationsRunning(in: payload.workspaceId)
+
+                    if animationsTriggered || hasWindowAnimations || hasColumnAnimations {
+                        startScrollAnimation(for: payload.workspaceId)
+                    }
+                }
+            }
+
+            if payload.shouldRecoverFocus {
+                focusedWorkspacesToRecover.insert(payload.workspaceId)
+            }
+        }
+
+        if !dwindleWorkspaces.isEmpty {
+            await dwindleHandler.layoutWithDwindleEngine(activeWorkspaces: dwindleWorkspaces)
+            guard !Task.isCancelled else { return false }
+        }
+
+        let activeWorkspaceIds = currentActiveWorkspaceIds()
+        hideInactiveWorkspaces(activeWorkspaceIds: activeWorkspaceIds)
+        guard !Task.isCancelled else { return false }
+
+        for workspaceId in focusedWorkspacesToRecover where activeWorkspaceIds.contains(workspaceId) {
+            controller.ensureFocusedHandleValid(in: workspaceId)
+        }
+
+        if let focusedHandle = controller.workspaceManager.focusedHandle,
+           let entry = controller.workspaceManager.entry(for: focusedHandle),
+           let frame = try? AXWindowService.frame(entry.axRef)
+        {
+            controller.borderCoordinator.updateBorderIfAllowed(
+                handle: focusedHandle,
+                frame: frame,
+                windowId: entry.windowId
+            )
+        } else {
+            controller.borderManager.hideBorder()
+        }
+
+        return true
+    }
+
+    private func refreshFocusedBorderForVisibilityState(on controller: WMController) {
+        guard let focusedHandle = controller.workspaceManager.focusedHandle,
+              let entry = controller.workspaceManager.entry(for: focusedHandle)
+        else {
+            controller.borderManager.hideBorder()
+            return
+        }
+
+        if controller.hiddenAppPIDs.contains(entry.handle.pid)
+            || controller.workspaceManager.layoutReason(for: entry.handle) != .standard
+            || controller.workspaceManager.isHiddenInCorner(entry.handle)
+        {
+            controller.borderManager.hideBorder()
+            return
+        }
+
+        guard let frame = try? AXWindowService.frame(entry.axRef) else {
+            controller.borderManager.hideBorder()
+            return
+        }
+
+        controller.borderCoordinator.updateBorderIfAllowed(
+            handle: focusedHandle,
+            frame: frame,
+            windowId: entry.windowId
+        )
+    }
+
     func waitForRefreshWorkForTests() async {
         while let task = layoutState.activeRefreshTask {
             await task.value
@@ -549,6 +745,7 @@ import QuartzCore
 
     private func executeFullRefresh(reason: RefreshReason) async throws -> Bool {
         debugCounters.fullRescanExecutions += 1
+        debugCounters.executedByReason[reason, default: 0] += 1
         if try await debugHooks.onFullRescan?(reason) == true {
             return true
         }
@@ -637,12 +834,10 @@ import QuartzCore
         }
 
         layoutState.hasCompletedInitialRefresh = true
+        await controller.axEventHandler.drainDeferredCreatedWindows()
+        try Task.checkCancellation()
         controller.axEventHandler.subscribeToManagedWindows()
         return true
-    }
-
-    func layoutWithNiriEngine(activeWorkspaces: Set<WorkspaceDescriptor.ID>, useScrollAnimationPath: Bool = false, removedNodeId: NodeId? = nil) async {
-        await niriHandler.layoutWithNiriEngine(activeWorkspaces: activeWorkspaces, useScrollAnimationPath: useScrollAnimationPath, removedNodeId: removedNodeId)
     }
 
     func updateTabbedColumnOverlays() {
@@ -691,6 +886,7 @@ import QuartzCore
     }
 
     private func enqueueRefresh(_ refresh: ScheduledRefresh) {
+        recordRefreshRequest(refresh.reason)
         if let activeRefresh = layoutState.activeRefresh {
             handleRefresh(refresh, whileActive: activeRefresh)
             return
@@ -706,6 +902,18 @@ import QuartzCore
             mergePendingRefresh(refresh)
         case (.fullRescan, _):
             absorbIntoActiveFullRescan(refresh)
+        case (.visibilityRefresh, .visibilityRefresh):
+            mergePendingRefresh(refresh)
+        case (.visibilityRefresh, .fullRescan),
+             (.visibilityRefresh, .windowRemoval),
+             (.visibilityRefresh, .immediateRelayout),
+             (.visibilityRefresh, .relayout):
+            mergePendingRefresh(refresh)
+            layoutState.activeRefreshTask?.cancel()
+        case (.windowRemoval, .fullRescan):
+            mergePendingRefresh(refresh)
+        case (.windowRemoval, _):
+            mergePendingRefresh(refresh)
         case (.immediateRelayout, .fullRescan):
             mergePendingRefresh(refresh)
             layoutState.activeRefreshTask?.cancel()
@@ -713,12 +921,20 @@ import QuartzCore
             mergePendingRefresh(refresh)
             layoutState.activeRefreshTask?.cancel()
         case (.immediateRelayout, .relayout):
-            break
-        case (.relayout, .fullRescan),
-             (.relayout, .immediateRelayout),
-             (.relayout, .relayout):
+            mergePendingRefresh(refresh)
+        case (.immediateRelayout, .visibilityRefresh):
+            mergePendingRefresh(refresh)
+        case (.immediateRelayout, .windowRemoval):
             mergePendingRefresh(refresh)
             layoutState.activeRefreshTask?.cancel()
+        case (.relayout, .fullRescan),
+             (.relayout, .immediateRelayout),
+             (.relayout, .relayout),
+             (.relayout, .windowRemoval):
+            mergePendingRefresh(refresh)
+            layoutState.activeRefreshTask?.cancel()
+        case (.relayout, .visibilityRefresh):
+            mergePendingRefresh(refresh)
         }
     }
 
@@ -741,20 +957,70 @@ import QuartzCore
             pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
         case (.fullRescan, _):
             pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
-        case (.immediateRelayout, .fullRescan),
+        case (.visibilityRefresh, .fullRescan),
+             (.visibilityRefresh, .windowRemoval),
+             (.visibilityRefresh, .immediateRelayout),
+             (.visibilityRefresh, .relayout):
+            var upgradedRefresh = refresh
+            upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
+            pendingRefresh = upgradedRefresh
+        case (.visibilityRefresh, .visibilityRefresh):
+            pendingRefresh.reason = refresh.reason
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        case (.windowRemoval, .fullRescan),
+             (.immediateRelayout, .fullRescan),
              (.relayout, .fullRescan):
             var upgradedRefresh = refresh
             upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
             pendingRefresh = upgradedRefresh
+        case (.windowRemoval, .windowRemoval):
+            pendingRefresh.reason = refresh.reason
+            pendingRefresh.windowRemovalPayloads = mergeWindowRemovalPayloads(
+                pendingRefresh.windowRemovalPayloads,
+                with: refresh.windowRemovalPayloads
+            )
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        case (.windowRemoval, .immediateRelayout):
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+            mergeFollowUp(into: &pendingRefresh, kind: .immediateRelayout, reason: refresh.reason)
+        case (.windowRemoval, .relayout):
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+            mergeFollowUp(into: &pendingRefresh, kind: .relayout, reason: refresh.reason)
+        case (.windowRemoval, .visibilityRefresh):
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        case (.immediateRelayout, .windowRemoval):
+            var upgradedRefresh = refresh
+            upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
+            upgradedRefresh.followUpRefresh = pendingRefresh.followUpRefresh
+            mergeFollowUp(into: &upgradedRefresh, kind: .immediateRelayout, reason: pendingRefresh.reason)
+            pendingRefresh = upgradedRefresh
+        case (.relayout, .windowRemoval):
+            var upgradedRefresh = refresh
+            upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
+            mergeFollowUp(into: &upgradedRefresh, kind: .relayout, reason: pendingRefresh.reason)
+            pendingRefresh = upgradedRefresh
+        case (.immediateRelayout, .visibilityRefresh),
+             (.relayout, .visibilityRefresh):
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
         case (.immediateRelayout, .immediateRelayout),
              (.relayout, .relayout):
             pendingRefresh.reason = refresh.reason
             pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+            pendingRefresh.followUpRefresh = mergeFollowUpRefresh(
+                pendingRefresh.followUpRefresh,
+                with: refresh.followUpRefresh
+            )
         case (.immediateRelayout, .relayout):
-            break
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+            mergeFollowUp(into: &pendingRefresh, kind: .relayout, reason: refresh.reason)
         case (.relayout, .immediateRelayout):
             var upgradedRefresh = refresh
             upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
+            upgradedRefresh.followUpRefresh = mergeFollowUpRefresh(
+                pendingRefresh.followUpRefresh,
+                with: refresh.followUpRefresh
+            )
+            mergeFollowUp(into: &upgradedRefresh, kind: .relayout, reason: pendingRefresh.reason)
             pendingRefresh = upgradedRefresh
         }
 
@@ -787,6 +1053,13 @@ import QuartzCore
                 return await executeScheduledRelayout(reason: refresh.reason)
             case .immediateRelayout:
                 return await executeImmediateRelayout(reason: refresh.reason)
+            case .visibilityRefresh:
+                return await executeVisibilityRefresh(reason: refresh.reason)
+            case .windowRemoval:
+                return await executeWindowRemoval(
+                    reason: refresh.reason,
+                    payloads: refresh.windowRemovalPayloads
+                )
             }
         } catch {
             return false
@@ -796,14 +1069,8 @@ import QuartzCore
     private func finishRefresh(_ refresh: ScheduledRefresh, didComplete: Bool) {
         let completedRefresh = layoutState.activeRefresh ?? refresh
 
-        if !didComplete,
-           completedRefresh.kind == .fullRescan,
-           var pendingRefresh = layoutState.pendingRefresh,
-           pendingRefresh.kind == .fullRescan,
-           !completedRefresh.postLayoutActions.isEmpty
-        {
-            pendingRefresh.postLayoutActions.insert(contentsOf: completedRefresh.postLayoutActions, at: 0)
-            layoutState.pendingRefresh = pendingRefresh
+        if !didComplete {
+            preserveCancelledRefreshState(completedRefresh)
         }
 
         layoutState.activeRefreshTask = nil
@@ -813,18 +1080,113 @@ import QuartzCore
             for postLayoutAction in completedRefresh.postLayoutActions {
                 postLayoutAction()
             }
+
+            if let followUpRefresh = completedRefresh.followUpRefresh {
+                enqueueRefresh(
+                    .init(kind: followUpRefresh.kind, reason: followUpRefresh.reason)
+                )
+            }
         }
 
         startNextRefreshIfNeeded()
     }
 
-    private func recordRefreshExecution(_ route: RefreshRoute) {
+    private func recordRefreshExecution(_ route: RefreshRoute, reason: RefreshReason) {
+        debugCounters.executedByReason[reason, default: 0] += 1
         switch route {
         case .relayout:
             debugCounters.relayoutExecutions += 1
         case .immediateRelayout:
             debugCounters.immediateRelayoutExecutions += 1
+        case .visibilityRefresh:
+            debugCounters.visibilityExecutions += 1
+        case .windowRemoval:
+            debugCounters.windowRemovalExecutions += 1
         }
+    }
+
+    private func recordRefreshRequest(_ reason: RefreshReason) {
+        debugCounters.requestedByReason[reason, default: 0] += 1
+    }
+
+    private func mergeWindowRemovalPayloads(
+        _ existingPayloads: [WindowRemovalPayload],
+        with incomingPayloads: [WindowRemovalPayload]
+    ) -> [WindowRemovalPayload] {
+        var mergedByWorkspace: [WorkspaceDescriptor.ID: WindowRemovalPayload] = [:]
+        var order: [WorkspaceDescriptor.ID] = []
+
+        for payload in existingPayloads + incomingPayloads {
+            if var existing = mergedByWorkspace[payload.workspaceId] {
+                let oldFrames = existing.niriOldFrames.isEmpty ? payload.niriOldFrames : existing.niriOldFrames
+                existing = WindowRemovalPayload(
+                    workspaceId: payload.workspaceId,
+                    layoutType: payload.layoutType,
+                    removedNodeId: payload.removedNodeId ?? existing.removedNodeId,
+                    niriOldFrames: oldFrames,
+                    shouldRecoverFocus: existing.shouldRecoverFocus || payload.shouldRecoverFocus
+                )
+                mergedByWorkspace[payload.workspaceId] = existing
+            } else {
+                mergedByWorkspace[payload.workspaceId] = payload
+                order.append(payload.workspaceId)
+            }
+        }
+
+        return order.compactMap { mergedByWorkspace[$0] }
+    }
+
+    private func mergeFollowUp(into refresh: inout ScheduledRefresh, kind: ScheduledRefreshKind, reason: RefreshReason) {
+        refresh.followUpRefresh = mergeFollowUpRefresh(
+            refresh.followUpRefresh,
+            with: .init(kind: kind, reason: reason)
+        )
+    }
+
+    private func mergeFollowUpRefresh(
+        _ existing: FollowUpRefresh?,
+        with incoming: FollowUpRefresh?
+    ) -> FollowUpRefresh? {
+        switch (existing, incoming) {
+        case (nil, nil):
+            return nil
+        case let (value?, nil), let (nil, value?):
+            return value
+        case let (existing?, incoming?):
+            if existing.kind == .immediateRelayout || incoming.kind == .immediateRelayout {
+                return incoming.kind == .immediateRelayout ? incoming : existing
+            }
+            return incoming
+        }
+    }
+
+    private func preserveCancelledRefreshState(_ refresh: ScheduledRefresh) {
+        guard var pendingRefresh = layoutState.pendingRefresh else {
+            layoutState.pendingRefresh = refresh
+            return
+        }
+
+        if !refresh.postLayoutActions.isEmpty {
+            pendingRefresh.postLayoutActions.insert(contentsOf: refresh.postLayoutActions, at: 0)
+        }
+
+        if refresh.kind == .windowRemoval, !refresh.windowRemovalPayloads.isEmpty {
+            pendingRefresh.windowRemovalPayloads = mergeWindowRemovalPayloads(
+                refresh.windowRemovalPayloads,
+                with: pendingRefresh.windowRemovalPayloads
+            )
+            if pendingRefresh.kind != .fullRescan, pendingRefresh.kind != .windowRemoval {
+                pendingRefresh.kind = .windowRemoval
+                pendingRefresh.reason = refresh.reason
+            }
+        }
+
+        pendingRefresh.followUpRefresh = mergeFollowUpRefresh(
+            refresh.followUpRefresh,
+            with: pendingRefresh.followUpRefresh
+        )
+
+        layoutState.pendingRefresh = pendingRefresh
     }
 
     func backingScale(for monitor: Monitor) -> CGFloat {

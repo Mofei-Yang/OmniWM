@@ -233,11 +233,7 @@ final class WindowActionHandler {
             }
         }
 
-        _ = controller.workspaceManager.setManagedFocus(
-            handle,
-            in: workspaceId,
-            onMonitor: controller.workspaceManager.monitorId(for: workspaceId)
-        )
+        _ = controller.workspaceManager.rememberFocus(handle, in: workspaceId)
         controller.layoutRefreshController.commitWorkspaceTransition(reason: .workspaceTransition) { [weak controller] in
             controller?.focusWindow(handle)
         }

@@ -69,25 +69,20 @@ final class MouseEventHandler {
             switch type {
             case .mouseMoved:
                 Task { @MainActor in
-                    MouseEventHandler._instance?.handleMouseMovedFromTap(at: screenLocation)
+                    MouseEventHandler._instance?.dispatchMouseMoved(at: screenLocation)
                 }
             case .leftMouseDown:
                 let modifiers = event.flags
                 Task { @MainActor in
-                    guard let instance = MouseEventHandler._instance else { return }
-                    guard let controller = instance.controller else { return }
-                    if controller.isPointInOwnWindow(screenLocation) {
-                        return
-                    }
-                    instance.handleMouseDownFromTap(at: screenLocation, modifiers: modifiers)
+                    MouseEventHandler._instance?.dispatchMouseDown(at: screenLocation, modifiers: modifiers)
                 }
             case .leftMouseDragged:
                 Task { @MainActor in
-                    MouseEventHandler._instance?.handleMouseDraggedFromTap(at: screenLocation)
+                    MouseEventHandler._instance?.dispatchMouseDragged(at: screenLocation)
                 }
             case .leftMouseUp:
                 Task { @MainActor in
-                    MouseEventHandler._instance?.handleMouseUpFromTap(at: screenLocation)
+                    MouseEventHandler._instance?.dispatchMouseUp(at: screenLocation)
                 }
             case .scrollWheel:
                 let deltaX = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
@@ -96,7 +91,7 @@ final class MouseEventHandler {
                 let phase = UInt32(event.getIntegerValueField(.scrollWheelEventScrollPhase))
                 let modifiers = event.flags
                 Task { @MainActor in
-                    MouseEventHandler._instance?.handleScrollWheelFromTap(
+                    MouseEventHandler._instance?.dispatchScrollWheel(
                         at: screenLocation,
                         deltaX: CGFloat(deltaX),
                         deltaY: CGFloat(deltaY),
@@ -141,7 +136,7 @@ final class MouseEventHandler {
 
             if type.rawValue == NSEvent.EventType.gesture.rawValue {
                 Task { @MainActor in
-                    MouseEventHandler._instance?.handleGestureEventFromTap(event)
+                    MouseEventHandler._instance?.dispatchGestureEvent(from: event)
                 }
             }
 
@@ -189,22 +184,84 @@ final class MouseEventHandler {
         resetGestureState()
     }
 
+    func dispatchMouseMoved(at location: CGPoint) {
+        guard !isInputSuppressed else {
+            resetHoveredEdgesIfNeeded()
+            return
+        }
+        handleMouseMovedFromTap(at: location)
+    }
+
+    func dispatchMouseDown(at location: CGPoint, modifiers: CGEventFlags) {
+        guard !isInputSuppressed else { return }
+        guard let controller else { return }
+        if controller.isPointInOwnWindow(location) {
+            return
+        }
+        handleMouseDownFromTap(at: location, modifiers: modifiers)
+    }
+
+    func dispatchMouseDragged(at location: CGPoint) {
+        guard !isInputSuppressed else { return }
+        handleMouseDraggedFromTap(at: location)
+    }
+
+    func dispatchMouseUp(at location: CGPoint) {
+        guard !isInputSuppressed else { return }
+        handleMouseUpFromTap(at: location)
+    }
+
+    func dispatchScrollWheel(
+        at location: CGPoint,
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        momentumPhase: UInt32,
+        phase: UInt32,
+        modifiers: CGEventFlags
+    ) {
+        guard !isInputSuppressed else { return }
+        handleScrollWheelFromTap(
+            at: location,
+            deltaX: deltaX,
+            deltaY: deltaY,
+            momentumPhase: momentumPhase,
+            phase: phase,
+            modifiers: modifiers
+        )
+    }
+
+    func dispatchGestureEvent(from cgEvent: CGEvent) {
+        guard !isInputSuppressed else { return }
+        handleGestureEventFromTap(cgEvent)
+    }
+
+    func dispatchGestureEvent(_ event: NSEvent, at location: CGPoint) {
+        guard !isInputSuppressed else { return }
+        handleGestureEvent(event, at: location)
+    }
+
+    private var isInputSuppressed: Bool {
+        guard let controller else { return true }
+        return controller.isLockScreenActive || controller.isFrontmostAppLockScreen()
+    }
+
+    private func resetHoveredEdgesIfNeeded() {
+        if !state.currentHoveredEdges.isEmpty {
+            NSCursor.arrow.set()
+            state.currentHoveredEdges = []
+        }
+    }
+
     private func handleMouseMovedFromTap(at location: CGPoint) {
         guard let controller else { return }
         guard controller.isEnabled else {
-            if !state.currentHoveredEdges.isEmpty {
-                NSCursor.arrow.set()
-                state.currentHoveredEdges = []
-            }
+            resetHoveredEdgesIfNeeded()
             return
         }
         if controller.isOverviewOpen() { return }
 
         if controller.isPointInOwnWindow(location) {
-            if !state.currentHoveredEdges.isEmpty {
-                NSCursor.arrow.set()
-                state.currentHoveredEdges = []
-            }
+            resetHoveredEdgesIfNeeded()
             return
         }
 
@@ -217,10 +274,7 @@ final class MouseEventHandler {
         guard let engine = controller.niriEngine,
               let wsId = controller.activeWorkspace()?.id
         else {
-            if !state.currentHoveredEdges.isEmpty {
-                NSCursor.arrow.set()
-                state.currentHoveredEdges = []
-            }
+            resetHoveredEdgesIfNeeded()
             return
         }
 
@@ -230,10 +284,7 @@ final class MouseEventHandler {
                 state.currentHoveredEdges = hitResult.edges
             }
         } else {
-            if !state.currentHoveredEdges.isEmpty {
-                NSCursor.arrow.set()
-                state.currentHoveredEdges = []
-            }
+            resetHoveredEdgesIfNeeded()
         }
     }
 
@@ -430,6 +481,7 @@ final class MouseEventHandler {
         {
             let workingFrame = controller.insetWorkingFrame(for: monitor)
             let gaps = CGFloat(controller.workspaceManager.gaps)
+            let hadInteractiveResize = engine.interactiveResize != nil
 
             controller.workspaceManager.withNiriViewportState(for: wsId) { vstate in
                 engine.interactiveResizeEnd(
@@ -438,7 +490,9 @@ final class MouseEventHandler {
                     gaps: gaps
                 )
             }
-            controller.layoutRefreshController.startScrollAnimation(for: wsId)
+            if hadInteractiveResize {
+                controller.layoutRefreshController.requestImmediateRelayout(reason: .interactiveGesture)
+            }
         }
 
         state.isResizing = false
@@ -665,7 +719,7 @@ final class MouseEventHandler {
         }
     }
 
-    private func applyMouseViewportScrollDelta(
+    func applyMouseViewportScrollDelta(
         _ delta: CGFloat,
         isTrackpad: Bool,
         engine: NiriLayoutEngine,
@@ -707,11 +761,7 @@ final class MouseEventHandler {
                     vstate.selectedNodeId = newNode.id
 
                     if let windowNode = newNode as? NiriWindow {
-                        _ = controller.workspaceManager.setManagedFocus(
-                            windowNode.handle,
-                            in: wsId,
-                            onMonitor: controller.workspaceManager.monitorId(for: wsId)
-                        )
+                        _ = controller.workspaceManager.rememberFocus(windowNode.handle, in: wsId)
                         engine.updateFocusTimestamp(for: windowNode.id)
                         targetWindowHandle = windowNode.handle
                     }
@@ -725,7 +775,7 @@ final class MouseEventHandler {
         }
     }
 
-    private func finalizeOrCancelCommittedGesture(
+    func finalizeOrCancelCommittedGesture(
         using lockedContext: State.LockedGestureContext,
         engine: NiriLayoutEngine
     ) {

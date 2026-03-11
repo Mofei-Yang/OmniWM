@@ -27,7 +27,14 @@ final class WorkspaceManager {
         }
 
         struct FocusSession {
+            struct PendingManagedFocusRequest {
+                var handle: WindowHandle?
+                var workspaceId: WorkspaceDescriptor.ID?
+                var monitorId: Monitor.ID?
+            }
+
             var focusedHandle: WindowHandle?
+            var pendingManagedFocus = PendingManagedFocusRequest()
             var lastFocusedByWorkspace: [WorkspaceDescriptor.ID: WindowHandle] = [:]
             var isNonManagedFocusActive: Bool = false
             var isAppFullscreenActive: Bool = false
@@ -96,6 +103,18 @@ final class WorkspaceManager {
         sessionState.focus.focusedHandle
     }
 
+    var pendingFocusedHandle: WindowHandle? {
+        sessionState.focus.pendingManagedFocus.handle
+    }
+
+    var pendingFocusedWorkspaceId: WorkspaceDescriptor.ID? {
+        sessionState.focus.pendingManagedFocus.workspaceId
+    }
+
+    var pendingFocusedMonitorId: Monitor.ID? {
+        sessionState.focus.pendingManagedFocus.monitorId
+    }
+
     var isNonManagedFocusActive: Bool {
         sessionState.focus.isNonManagedFocusActive
     }
@@ -116,27 +135,89 @@ final class WorkspaceManager {
         in workspaceId: WorkspaceDescriptor.ID,
         onMonitor monitorId: Monitor.ID? = nil
     ) -> Bool {
+        let normalizedMonitorId = monitorId.flatMap { self.monitor(byId: $0)?.id }
+        var changed = false
+        if let normalizedMonitorId {
+            changed = updateInteractionMonitor(normalizedMonitorId, preservePrevious: true, notify: false) || changed
+        }
+        changed = updateFocusSession(notify: false) { focus in
+            let appFullscreen = focus.isNonManagedFocusActive ? false : focus.isAppFullscreenActive
+            var changed = self.applyConfirmedManagedFocus(
+                handle,
+                in: workspaceId,
+                appFullscreen: appFullscreen,
+                focus: &focus
+            )
+            changed = self.clearPendingManagedFocusRequest(
+                matching: handle,
+                workspaceId: workspaceId,
+                focus: &focus
+            ) || changed
+            return changed
+        } || changed
+        if changed {
+            notifySessionStateChanged()
+        }
+        return changed
+    }
+
+    @discardableResult
+    func beginManagedFocusRequest(
+        _ handle: WindowHandle,
+        in workspaceId: WorkspaceDescriptor.ID,
+        onMonitor monitorId: Monitor.ID? = nil
+    ) -> Bool {
+        let normalizedMonitorId = monitorId.flatMap { self.monitor(byId: $0)?.id }
+        var changed = rememberFocus(handle, in: workspaceId)
+        changed = updateFocusSession(notify: true) { focus in
+            self.updatePendingManagedFocusRequest(
+                handle,
+                workspaceId: workspaceId,
+                monitorId: normalizedMonitorId,
+                focus: &focus
+            )
+        } || changed
+        return changed
+    }
+
+    @discardableResult
+    func confirmManagedFocus(
+        _ handle: WindowHandle,
+        in workspaceId: WorkspaceDescriptor.ID,
+        onMonitor monitorId: Monitor.ID? = nil,
+        appFullscreen: Bool,
+        activateWorkspaceOnMonitor: Bool
+    ) -> Bool {
+        let normalizedMonitorId = monitorId.flatMap { self.monitor(byId: $0)?.id } ?? self.monitorId(for: workspaceId)
         var changed = false
 
-        if sessionState.focus.focusedHandle != handle {
-            sessionState.focus.focusedHandle = handle
-            changed = true
+        if activateWorkspaceOnMonitor,
+           let normalizedMonitorId,
+           let monitor = monitor(byId: normalizedMonitorId)
+        {
+            changed = setActiveWorkspaceInternal(
+                workspaceId,
+                on: normalizedMonitorId,
+                anchorPoint: monitor.workspaceAnchorPoint,
+                updateInteractionMonitor: false,
+                notify: false
+            ) || changed
         }
-        if sessionState.focus.lastFocusedByWorkspace[workspaceId] != handle {
-            sessionState.focus.lastFocusedByWorkspace[workspaceId] = handle
-            changed = true
+
+        if let normalizedMonitorId {
+            changed = updateInteractionMonitor(normalizedMonitorId, preservePrevious: true, notify: false) || changed
         }
-        if sessionState.focus.isNonManagedFocusActive {
-            sessionState.focus.isNonManagedFocusActive = false
-            changed = true
-            if sessionState.focus.isAppFullscreenActive {
-                sessionState.focus.isAppFullscreenActive = false
-                changed = true
-            }
-        }
-        if let monitorId {
-            changed = updateInteractionMonitor(monitorId, preservePrevious: true, notify: false) || changed
-        }
+
+        changed = updateFocusSession(notify: false) { focus in
+            var focusChanged = self.applyConfirmedManagedFocus(
+                handle,
+                in: workspaceId,
+                appFullscreen: appFullscreen,
+                focus: &focus
+            )
+            focusChanged = self.clearPendingManagedFocusRequest(focus: &focus) || focusChanged
+            return focusChanged
+        } || changed
 
         if changed {
             notifySessionStateChanged()
@@ -147,22 +228,20 @@ final class WorkspaceManager {
 
     @discardableResult
     func setManagedAppFullscreen(_ active: Bool) -> Bool {
-        var changed = false
+        updateFocusSession(notify: true) { focus in
+            var changed = false
 
-        if sessionState.focus.isNonManagedFocusActive {
-            sessionState.focus.isNonManagedFocusActive = false
-            changed = true
-        }
-        if sessionState.focus.isAppFullscreenActive != active {
-            sessionState.focus.isAppFullscreenActive = active
-            changed = true
-        }
+            if focus.isNonManagedFocusActive {
+                focus.isNonManagedFocusActive = false
+                changed = true
+            }
+            if focus.isAppFullscreenActive != active {
+                focus.isAppFullscreenActive = active
+                changed = true
+            }
 
-        if changed {
-            notifySessionStateChanged()
+            return changed
         }
-
-        return changed
     }
 
     @discardableResult
@@ -176,21 +255,9 @@ final class WorkspaceManager {
     func syncWorkspaceFocus(
         _ handle: WindowHandle,
         in workspaceId: WorkspaceDescriptor.ID,
-        onMonitor monitorId: Monitor.ID? = nil,
-        promoteToManagedFocus: Bool = false
+        onMonitor _: Monitor.ID? = nil
     ) -> Bool {
-        var changed = rememberFocus(handle, in: workspaceId)
-
-        if promoteToManagedFocus {
-            let currentWorkspace = sessionState.focus.focusedHandle.flatMap {
-                entry(for: $0)?.workspaceId
-            }
-            if currentWorkspace == workspaceId || currentWorkspace == nil {
-                changed = setManagedFocus(handle, in: workspaceId, onMonitor: monitorId) || changed
-            }
-        }
-
-        return changed
+        rememberFocus(handle, in: workspaceId)
     }
 
     @discardableResult
@@ -198,8 +265,7 @@ final class WorkspaceManager {
         nodeId: NodeId?,
         focusedHandle: WindowHandle?,
         in workspaceId: WorkspaceDescriptor.ID,
-        onMonitor monitorId: Monitor.ID? = nil,
-        promoteToManagedFocus: Bool = false
+        onMonitor monitorId: Monitor.ID? = nil
     ) -> Bool {
         var changed = false
 
@@ -215,8 +281,7 @@ final class WorkspaceManager {
             changed = syncWorkspaceFocus(
                 focusedHandle,
                 in: workspaceId,
-                onMonitor: monitorId,
-                promoteToManagedFocus: promoteToManagedFocus
+                onMonitor: monitorId
             ) || changed
         }
 
@@ -250,6 +315,29 @@ final class WorkspaceManager {
         sessionState.focus.lastFocusedByWorkspace[workspaceId]
     }
 
+    func preferredFocusHandle(in workspaceId: WorkspaceDescriptor.ID) -> WindowHandle? {
+        if let pendingHandle = sessionState.focus.pendingManagedFocus.handle,
+           sessionState.focus.pendingManagedFocus.workspaceId == workspaceId,
+           entry(for: pendingHandle)?.workspaceId == workspaceId
+        {
+            return pendingHandle
+        }
+
+        if let remembered = sessionState.focus.lastFocusedByWorkspace[workspaceId],
+           entry(for: remembered)?.workspaceId == workspaceId
+        {
+            return remembered
+        }
+
+        if let confirmed = sessionState.focus.focusedHandle,
+           entry(for: confirmed)?.workspaceId == workspaceId
+        {
+            return confirmed
+        }
+
+        return entries(in: workspaceId).first?.handle
+    }
+
     func resolveWorkspaceFocus(in workspaceId: WorkspaceDescriptor.ID) -> WindowHandle? {
         if let remembered = sessionState.focus.lastFocusedByWorkspace[workspaceId],
            entry(for: remembered)?.workspaceId == workspaceId
@@ -262,32 +350,29 @@ final class WorkspaceManager {
     @discardableResult
     func resolveAndSetWorkspaceFocus(
         in workspaceId: WorkspaceDescriptor.ID,
-        onMonitor monitorId: Monitor.ID? = nil
+        onMonitor _: Monitor.ID? = nil
     ) -> WindowHandle? {
         if let handle = resolveWorkspaceFocus(in: workspaceId) {
-            _ = setManagedFocus(handle, in: workspaceId, onMonitor: monitorId)
+            _ = rememberFocus(handle, in: workspaceId)
             return handle
         }
 
-        var changed = false
-        if sessionState.focus.focusedHandle != nil {
-            sessionState.focus.focusedHandle = nil
-            changed = true
-        }
-        if sessionState.focus.isNonManagedFocusActive {
-            sessionState.focus.isNonManagedFocusActive = false
-            changed = true
-        }
-        if sessionState.focus.isAppFullscreenActive {
-            sessionState.focus.isAppFullscreenActive = false
-            changed = true
-        }
-        if let monitorId {
-            changed = updateInteractionMonitor(monitorId, preservePrevious: true, notify: false) || changed
-        }
+        _ = updateFocusSession(notify: true) { focus in
+            var focusChanged = self.clearPendingManagedFocusRequest(
+                matching: nil,
+                workspaceId: workspaceId,
+                focus: &focus
+            )
 
-        if changed {
-            notifySessionStateChanged()
+            if let confirmed = focus.focusedHandle,
+               self.entry(for: confirmed)?.workspaceId == workspaceId
+            {
+                focus.focusedHandle = nil
+                focus.isAppFullscreenActive = false
+                focusChanged = true
+            }
+
+            return focusChanged
         }
 
         return nil
@@ -295,48 +380,142 @@ final class WorkspaceManager {
 
     @discardableResult
     func enterNonManagedFocus(appFullscreen: Bool) -> Bool {
+        updateFocusSession(notify: true) { focus in
+            var changed = false
+
+            if focus.focusedHandle != nil {
+                focus.focusedHandle = nil
+                changed = true
+            }
+            changed = self.clearPendingManagedFocusRequest(matching: nil, workspaceId: nil, focus: &focus) || changed
+            if !focus.isNonManagedFocusActive {
+                focus.isNonManagedFocusActive = true
+                changed = true
+            }
+            if focus.isAppFullscreenActive != appFullscreen {
+                focus.isAppFullscreenActive = appFullscreen
+                changed = true
+            }
+
+            return changed
+        }
+    }
+
+    func handleWindowRemoved(_ handle: WindowHandle, in workspaceId: WorkspaceDescriptor.ID?) {
+        _ = updateFocusSession(notify: true) { focus in
+            var focusChanged = false
+
+            if focus.focusedHandle?.id == handle.id {
+                focus.focusedHandle = nil
+                focus.isAppFullscreenActive = false
+                focusChanged = true
+            }
+
+            focusChanged = self.clearPendingManagedFocusRequest(
+                matching: handle,
+                workspaceId: workspaceId,
+                focus: &focus
+            ) || focusChanged
+
+            if let workspaceId,
+               focus.lastFocusedByWorkspace[workspaceId]?.id == handle.id
+            {
+                focus.lastFocusedByWorkspace[workspaceId] = nil
+            }
+
+            return focusChanged
+        }
+    }
+
+    @discardableResult
+    private func updateFocusSession(
+        notify: Bool,
+        _ mutate: (inout SessionState.FocusSession) -> Bool
+    ) -> Bool {
+        let changed = mutate(&sessionState.focus)
+        if changed, notify {
+            notifySessionStateChanged()
+        }
+        return changed
+    }
+
+    private func applyConfirmedManagedFocus(
+        _ handle: WindowHandle,
+        in workspaceId: WorkspaceDescriptor.ID,
+        appFullscreen: Bool,
+        focus: inout SessionState.FocusSession
+    ) -> Bool {
         var changed = false
 
-        if sessionState.focus.focusedHandle != nil {
-            sessionState.focus.focusedHandle = nil
+        if focus.focusedHandle != handle {
+            focus.focusedHandle = handle
             changed = true
         }
-        if !sessionState.focus.isNonManagedFocusActive {
-            sessionState.focus.isNonManagedFocusActive = true
+        if focus.lastFocusedByWorkspace[workspaceId] != handle {
+            focus.lastFocusedByWorkspace[workspaceId] = handle
             changed = true
         }
-        if sessionState.focus.isAppFullscreenActive != appFullscreen {
-            sessionState.focus.isAppFullscreenActive = appFullscreen
+        if focus.isNonManagedFocusActive {
+            focus.isNonManagedFocusActive = false
             changed = true
         }
-
-        if changed {
-            notifySessionStateChanged()
+        if focus.isAppFullscreenActive != appFullscreen {
+            focus.isAppFullscreenActive = appFullscreen
+            changed = true
         }
 
         return changed
     }
 
-    func handleWindowRemoved(_ handle: WindowHandle, in workspaceId: WorkspaceDescriptor.ID?) {
-        var focusChanged = false
+    private func updatePendingManagedFocusRequest(
+        _ handle: WindowHandle,
+        workspaceId: WorkspaceDescriptor.ID,
+        monitorId: Monitor.ID?,
+        focus: inout SessionState.FocusSession
+    ) -> Bool {
+        var changed = false
 
-        if sessionState.focus.focusedHandle?.id == handle.id {
-            sessionState.focus.focusedHandle = nil
-            focusChanged = true
-            if sessionState.focus.isAppFullscreenActive {
-                sessionState.focus.isAppFullscreenActive = false
-            }
+        if focus.pendingManagedFocus.handle != handle {
+            focus.pendingManagedFocus.handle = handle
+            changed = true
+        }
+        if focus.pendingManagedFocus.workspaceId != workspaceId {
+            focus.pendingManagedFocus.workspaceId = workspaceId
+            changed = true
+        }
+        if focus.pendingManagedFocus.monitorId != monitorId {
+            focus.pendingManagedFocus.monitorId = monitorId
+            changed = true
         }
 
-        if let workspaceId,
-           sessionState.focus.lastFocusedByWorkspace[workspaceId]?.id == handle.id
-        {
-            sessionState.focus.lastFocusedByWorkspace[workspaceId] = nil
-        }
+        return changed
+    }
 
-        if focusChanged {
-            notifySessionStateChanged()
+    private func clearPendingManagedFocusRequest(
+        focus: inout SessionState.FocusSession
+    ) -> Bool {
+        guard focus.pendingManagedFocus.handle != nil
+            || focus.pendingManagedFocus.workspaceId != nil
+            || focus.pendingManagedFocus.monitorId != nil
+        else {
+            return false
         }
+        focus.pendingManagedFocus = .init()
+        return true
+    }
+
+    private func clearPendingManagedFocusRequest(
+        matching handle: WindowHandle?,
+        workspaceId: WorkspaceDescriptor.ID?,
+        focus: inout SessionState.FocusSession
+    ) -> Bool {
+        let request = focus.pendingManagedFocus
+        let matchesHandle = handle.map { request.handle?.id == $0.id } ?? true
+        let matchesWorkspace = workspaceId.map { request.workspaceId == $0 } ?? true
+        guard matchesHandle, matchesWorkspace else { return false }
+        guard request.handle != nil || request.workspaceId != nil || request.monitorId != nil else { return false }
+        focus.pendingManagedFocus = .init()
+        return true
     }
 
     private func rebuildMonitorIndexes() {
@@ -1265,7 +1444,8 @@ final class WorkspaceManager {
         _ workspaceId: WorkspaceDescriptor.ID,
         on monitorId: Monitor.ID,
         anchorPoint: CGPoint? = nil,
-        updateInteractionMonitor: Bool = false
+        updateInteractionMonitor: Bool = false,
+        notify: Bool = true
     ) -> Bool {
         guard isValidAssignment(workspaceId: workspaceId, monitorId: monitorId) else { return false }
         let effectiveAnchorPoint = anchorPoint ?? monitor(byId: monitorId)?.workspaceAnchorPoint
@@ -1297,11 +1477,11 @@ final class WorkspaceManager {
         }
 
         if updateInteractionMonitor {
-            let interactionChanged = self.updateInteractionMonitor(monitorId, preservePrevious: true, notify: true)
-            if workspaceVisibilityChanged, !interactionChanged {
+            let interactionChanged = self.updateInteractionMonitor(monitorId, preservePrevious: true, notify: false)
+            if notify, workspaceVisibilityChanged || interactionChanged {
                 notifySessionStateChanged()
             }
-        } else if workspaceVisibilityChanged {
+        } else if workspaceVisibilityChanged, notify {
             notifySessionStateChanged()
         }
 
@@ -1389,7 +1569,12 @@ final class WorkspaceManager {
 
     private func reconcileInteractionMonitorState(notify: Bool = true) {
         let validMonitorIds = Set(monitors.map(\.id))
+        let focusedWorkspaceMonitorId = sessionState.focus.focusedHandle
+            .flatMap { entry(for: $0)?.workspaceId }
+            .flatMap { monitorId(for: $0) }
         let newInteractionMonitorId = sessionState.interactionMonitorId.flatMap {
+            validMonitorIds.contains($0) ? $0 : nil
+        } ?? focusedWorkspaceMonitorId.flatMap {
             validMonitorIds.contains($0) ? $0 : nil
         } ?? monitors.first?.id
         let newPreviousInteractionMonitorId = sessionState.previousInteractionMonitorId.flatMap {

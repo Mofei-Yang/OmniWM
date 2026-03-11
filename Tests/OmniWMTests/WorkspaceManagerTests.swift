@@ -154,7 +154,7 @@ private func makeWorkspaceManagerTestWindow(windowId: Int = 101) -> AXWindowRef 
         #expect(manager.activeWorkspace(on: left.id)?.id != ws1)
     }
 
-    @Test @MainActor func setManagedFocusAtomicallyUpdatesOwnerState() {
+    @Test @MainActor func beginManagedFocusRequestOnlyMutatesPendingState() {
         let defaults = makeWorkspaceManagerTestDefaults()
         let settings = SettingsStore(defaults: defaults)
         settings.workspaceConfigurations = [
@@ -185,13 +185,110 @@ private func makeWorkspaceManagerTestWindow(windowId: Int = 101) -> AXWindowRef 
             to: ws2
         )
 
-        #expect(manager.setManagedFocus(handle, in: ws2, onMonitor: right.id))
+        #expect(manager.beginManagedFocusRequest(handle, in: ws2, onMonitor: right.id))
+        #expect(manager.pendingFocusedHandle == handle)
+        #expect(manager.pendingFocusedWorkspaceId == ws2)
+        #expect(manager.pendingFocusedMonitorId == right.id)
+        #expect(manager.focusedHandle == nil)
+        #expect(manager.lastFocusedHandle(in: ws2) == handle)
+        #expect(manager.interactionMonitorId == left.id)
+        #expect(manager.isNonManagedFocusActive == true)
+        #expect(manager.isAppFullscreenActive == true)
+    }
+
+    @Test @MainActor func confirmManagedFocusAtomicallyCommitsOwnerState() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .any, isPersistent: true),
+            WorkspaceConfiguration(name: "2", monitorAssignment: .any, isPersistent: true)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let left = makeWorkspaceManagerTestMonitor(displayId: 10, name: "Left", x: 0, y: 0)
+        let right = makeWorkspaceManagerTestMonitor(displayId: 20, name: "Right", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, right])
+
+        guard let ws1 = manager.workspaceId(for: "1", createIfMissing: true),
+              let ws2 = manager.workspaceId(for: "2", createIfMissing: true) else {
+            Issue.record("Failed to create workspaces")
+            return
+        }
+
+        #expect(manager.setActiveWorkspace(ws1, on: left.id))
+        #expect(manager.setActiveWorkspace(ws2, on: right.id))
+        #expect(manager.setInteractionMonitor(left.id))
+        #expect(manager.enterNonManagedFocus(appFullscreen: true))
+
+        let handle = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2111),
+            pid: getpid(),
+            windowId: 2111,
+            to: ws2
+        )
+
+        #expect(manager.beginManagedFocusRequest(handle, in: ws2, onMonitor: right.id))
+        #expect(manager.confirmManagedFocus(
+            handle,
+            in: ws2,
+            onMonitor: right.id,
+            appFullscreen: false,
+            activateWorkspaceOnMonitor: true
+        ))
+
+        #expect(manager.pendingFocusedHandle == nil)
         #expect(manager.focusedHandle == handle)
         #expect(manager.lastFocusedHandle(in: ws2) == handle)
         #expect(manager.interactionMonitorId == right.id)
         #expect(manager.previousInteractionMonitorId == left.id)
         #expect(manager.isNonManagedFocusActive == false)
         #expect(manager.isAppFullscreenActive == false)
+    }
+
+    @Test @MainActor func confirmManagedFocusClearsStalePendingRequestForDifferentWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .any, isPersistent: true)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 10, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        #expect(manager.setActiveWorkspace(workspaceId, on: monitor.id))
+
+        let confirmedHandle = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2121),
+            pid: getpid(),
+            windowId: 2121,
+            to: workspaceId
+        )
+        let pendingHandle = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2122),
+            pid: getpid(),
+            windowId: 2122,
+            to: workspaceId
+        )
+
+        #expect(manager.beginManagedFocusRequest(pendingHandle, in: workspaceId, onMonitor: monitor.id))
+        #expect(manager.confirmManagedFocus(
+            confirmedHandle,
+            in: workspaceId,
+            onMonitor: monitor.id,
+            appFullscreen: false,
+            activateWorkspaceOnMonitor: true
+        ))
+
+        #expect(manager.pendingFocusedHandle == nil)
+        #expect(manager.focusedHandle == confirmedHandle)
+        #expect(manager.lastFocusedHandle(in: workspaceId) == confirmedHandle)
+        #expect(manager.preferredFocusHandle(in: workspaceId) == confirmedHandle)
     }
 
     @Test @MainActor func resolveWorkspaceFocusIgnoresDeadRememberedHandles() {
@@ -229,7 +326,8 @@ private func makeWorkspaceManagerTestWindow(windowId: Int = 101) -> AXWindowRef 
 
         #expect(manager.resolveWorkspaceFocus(in: workspaceId) == survivor)
         #expect(manager.resolveAndSetWorkspaceFocus(in: workspaceId, onMonitor: monitor.id) == survivor)
-        #expect(manager.focusedHandle == survivor)
+        #expect(manager.focusedHandle == nil)
+        #expect(manager.lastFocusedHandle(in: workspaceId) == survivor)
     }
 
     @Test @MainActor func removeMissingClearsDeadFocusMemoryAndRecoverySelectsSurvivorAfterConsecutiveMisses() {
@@ -279,8 +377,46 @@ private func makeWorkspaceManagerTestWindow(windowId: Int = 101) -> AXWindowRef 
         #expect(manager.focusedHandle == nil)
         #expect(manager.lastFocusedHandle(in: workspaceId) == nil)
         #expect(manager.resolveAndSetWorkspaceFocus(in: workspaceId, onMonitor: monitor.id) == survivor)
-        #expect(manager.focusedHandle == survivor)
+        #expect(manager.focusedHandle == nil)
         #expect(manager.lastFocusedHandle(in: workspaceId) == survivor)
+    }
+
+    @Test @MainActor func monitorReconnectPrefersFocusedWorkspaceMonitorForInteractionState() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .any, isPersistent: true),
+            WorkspaceConfiguration(name: "2", monitorAssignment: .any, isPersistent: true)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let left = makeWorkspaceManagerTestMonitor(displayId: 10, name: "Left", x: 0, y: 0)
+        let right = makeWorkspaceManagerTestMonitor(displayId: 20, name: "Right", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, right])
+
+        guard let ws1 = manager.workspaceId(for: "1", createIfMissing: true),
+              let ws2 = manager.workspaceId(for: "2", createIfMissing: true) else {
+            Issue.record("Failed to create workspaces")
+            return
+        }
+
+        #expect(manager.setActiveWorkspace(ws1, on: left.id))
+        #expect(manager.setActiveWorkspace(ws2, on: right.id))
+        #expect(manager.setInteractionMonitor(left.id))
+
+        let handle = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2401),
+            pid: getpid(),
+            windowId: 2401,
+            to: ws2
+        )
+        #expect(manager.setManagedFocus(handle, in: ws2, onMonitor: right.id))
+
+        let replacement = makeWorkspaceManagerTestMonitor(displayId: 30, name: "Replacement", x: -1920, y: 0)
+        manager.applyMonitorConfigurationChange([replacement, right])
+
+        #expect(manager.interactionMonitorId == right.id)
+        #expect(manager.focusedHandle == handle)
     }
 
     @Test @MainActor func removeWindowsForAppClearsFocusedAndRememberedHandles() {

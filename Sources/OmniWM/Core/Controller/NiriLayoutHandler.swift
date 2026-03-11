@@ -366,7 +366,7 @@ import QuartzCore
             windowHandles,
             in: pass.wsId,
             selectedNodeId: currentSelection,
-            focusedHandle: controller.workspaceManager.focusedHandle
+            focusedHandle: controller.workspaceManager.preferredFocusHandle(in: pass.wsId)
         )
         let newHandles = windowHandles.filter { !removal.existingHandleIds.contains($0.id) }
 
@@ -495,8 +495,7 @@ import QuartzCore
                 nodeId: selectedNode.id,
                 focusedHandle: selectedNode.handle,
                 in: pass.wsId,
-                onMonitor: controller.workspaceManager.monitorId(for: pass.wsId),
-                promoteToManagedFocus: true
+                onMonitor: controller.workspaceManager.monitorId(for: pass.wsId)
             )
         }
 
@@ -555,10 +554,9 @@ import QuartzCore
                     state.activatePrevColumnOnRemoval = offsetBeforeActivation
                 }
             }
-            _ = controller.workspaceManager.setManagedFocus(
+            _ = controller.workspaceManager.rememberFocus(
                 newHandle,
-                in: pass.wsId,
-                onMonitor: controller.workspaceManager.monitorId(for: pass.wsId)
+                in: pass.wsId
             )
             pass.engine.updateFocusTimestamp(for: newNode.id)
             newWindowHandle = newHandle
@@ -976,11 +974,7 @@ import QuartzCore
             if options.updateTimestamp {
                 engine.updateFocusTimestamp(for: windowNode.id)
             }
-            _ = controller.workspaceManager.setManagedFocus(
-                windowNode.handle,
-                in: workspaceId,
-                onMonitor: controller.workspaceManager.monitorId(for: workspaceId)
-            )
+            _ = controller.workspaceManager.rememberFocus(windowNode.handle, in: workspaceId)
         }
 
         if options.layoutRefresh {

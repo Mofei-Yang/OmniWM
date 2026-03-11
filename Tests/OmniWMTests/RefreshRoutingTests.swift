@@ -57,7 +57,9 @@ private func waitForRefreshWork(on controller: WMController) async {
 @MainActor
 private final class RefreshEventRecorder {
     var relayoutEvents: [(RefreshReason, LayoutRefreshController.RefreshRoute)] = []
+    var visibilityReasons: [RefreshReason] = []
     var fullRescanReasons: [RefreshReason] = []
+    var windowRemovalReasons: [RefreshReason] = []
 }
 
 @MainActor
@@ -107,8 +109,16 @@ private func installRefreshSpies(
         recorder.relayoutEvents.append((reason, route))
         return true
     }
+    controller.layoutRefreshController.debugHooks.onVisibilityRefresh = { reason in
+        recorder.visibilityReasons.append(reason)
+        return true
+    }
     controller.layoutRefreshController.debugHooks.onFullRescan = { reason in
         recorder.fullRescanReasons.append(reason)
+        return true
+    }
+    controller.layoutRefreshController.debugHooks.onWindowRemoval = { reason, _ in
+        recorder.windowRemovalReasons.append(reason)
         return true
     }
 }
@@ -126,7 +136,9 @@ private func resetRefreshSpies(
     recorder: RefreshEventRecorder
 ) {
     recorder.relayoutEvents.removeAll()
+    recorder.visibilityReasons.removeAll()
     recorder.fullRescanReasons.removeAll()
+    recorder.windowRemovalReasons.removeAll()
     installRefreshSpies(on: controller, recorder: recorder)
 }
 
@@ -266,6 +278,7 @@ private func prepareNiriState(
         #expect(RefreshReason.gapsChanged.relayoutSchedulingPolicy == .plain)
         #expect(RefreshReason.workspaceTransition.relayoutSchedulingPolicy == .plain)
         #expect(RefreshReason.appHidden.relayoutSchedulingPolicy == .plain)
+        #expect(RefreshReason.windowDestroyed.relayoutSchedulingPolicy == .plain)
     }
 
     @Test @MainActor func runLightSessionUsesImmediateRelayoutOnly() async {
@@ -570,6 +583,38 @@ private func prepareNiriState(
         #expect(recorder.relayoutEvents.map(\.0) == [.gapsChanged])
         #expect(recorder.relayoutEvents.map(\.1) == [.relayout])
         #expect(recorder.fullRescanReasons.isEmpty)
+        assertNoLegacyReasons(recorder)
+    }
+
+    @Test @MainActor func appHideAndUnhideUseVisibilityRefreshOnly() async {
+        let controller = makeRefreshTestController()
+        guard let workspaceId = controller.activeWorkspace()?.id else {
+            Issue.record("Missing active workspace")
+            return
+        }
+        _ = addWindow(on: controller, workspaceId: workspaceId, pid: getpid(), windowId: 305)
+
+        let recorder = RefreshEventRecorder()
+        installRefreshSpies(on: controller, recorder: recorder)
+
+        controller.axEventHandler.handleAppHidden(pid: getpid())
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.visibilityReasons == [.appHidden])
+        #expect(recorder.relayoutEvents.isEmpty)
+        #expect(recorder.fullRescanReasons.isEmpty)
+        #expect(recorder.windowRemovalReasons.isEmpty)
+        assertNoLegacyReasons(recorder)
+
+        resetRefreshSpies(on: controller, recorder: recorder)
+
+        controller.axEventHandler.handleAppUnhidden(pid: getpid())
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.visibilityReasons == [.appUnhidden])
+        #expect(recorder.relayoutEvents.isEmpty)
+        #expect(recorder.fullRescanReasons.isEmpty)
+        #expect(recorder.windowRemovalReasons.isEmpty)
         assertNoLegacyReasons(recorder)
     }
 
@@ -887,11 +932,201 @@ private func prepareNiriState(
         await waitUntil {
             controller.workspaceManager.entry(forPid: pid, windowId: removedWindowId) == nil
         }
+        await waitForRefreshWork(on: controller)
 
         #expect(controller.workspaceManager.entry(forPid: pid, windowId: survivorWindowId) != nil)
         #expect(controller.workspaceManager.entry(forPid: pid, windowId: removedWindowId) == nil)
         #expect(controller.workspaceManager.entries(in: workspaceId).map(\.windowId) == [survivorWindowId])
         #expect(recorder.fullRescanReasons.isEmpty)
         #expect(recorder.relayoutEvents.isEmpty)
+        #expect(recorder.windowRemovalReasons == [.windowDestroyed])
+    }
+
+    @Test @MainActor func relayoutQueuedBehindActiveImmediateRelayoutStillExecutes() async {
+        let controller = makeRefreshTestController()
+        let gate = AsyncGate()
+        var relayoutEvents: [(RefreshReason, LayoutRefreshController.RefreshRoute)] = []
+
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+            relayoutEvents.append((reason, route))
+            if route == .immediateRelayout {
+                await gate.wait()
+            }
+            return true
+        }
+
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .workspaceTransition)
+        await waitUntil { relayoutEvents.count == 1 }
+        controller.layoutRefreshController.requestRelayout(reason: .gapsChanged)
+
+        gate.open()
+        await waitForRefreshWork(on: controller)
+
+        #expect(relayoutEvents.map(\.0) == [.workspaceTransition, .gapsChanged])
+        #expect(relayoutEvents.map(\.1) == [.immediateRelayout, .relayout])
+    }
+
+    @Test @MainActor func visibilityRefreshCoalescesWhilePending() async {
+        let controller = makeRefreshTestController()
+        let gate = AsyncGate()
+        let recorder = RefreshEventRecorder()
+
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+            recorder.relayoutEvents.append((reason, route))
+            if route == .immediateRelayout {
+                await gate.wait()
+            }
+            return true
+        }
+        controller.layoutRefreshController.debugHooks.onVisibilityRefresh = { reason in
+            recorder.visibilityReasons.append(reason)
+            return true
+        }
+
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .workspaceTransition)
+        await waitUntil { recorder.relayoutEvents.count == 1 }
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appHidden)
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appUnhidden)
+
+        gate.open()
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.workspaceTransition])
+        #expect(recorder.visibilityReasons == [.appUnhidden])
+        #expect(controller.layoutRefreshController.debugCounters.immediateRelayoutExecutions == 1)
+        #expect(controller.layoutRefreshController.debugCounters.visibilityExecutions == 1)
+    }
+
+    @Test @MainActor func pendingVisibilityRefreshUpgradesToRelayout() async {
+        let controller = makeRefreshTestController()
+        let gate = AsyncGate()
+        let recorder = RefreshEventRecorder()
+
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+            recorder.relayoutEvents.append((reason, route))
+            if route == .immediateRelayout {
+                await gate.wait()
+            }
+            return true
+        }
+        controller.layoutRefreshController.debugHooks.onVisibilityRefresh = { reason in
+            recorder.visibilityReasons.append(reason)
+            return true
+        }
+
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .workspaceTransition)
+        await waitUntil { recorder.relayoutEvents.count == 1 }
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appHidden)
+        controller.layoutRefreshController.requestRelayout(reason: .gapsChanged)
+
+        gate.open()
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.workspaceTransition, .gapsChanged])
+        #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout, .relayout])
+        #expect(recorder.visibilityReasons.isEmpty)
+        #expect(controller.layoutRefreshController.debugCounters.visibilityExecutions == 0)
+    }
+
+    @Test @MainActor func pendingVisibilityRefreshUpgradesToFullRescan() async {
+        let controller = makeRefreshTestController()
+        let gate = AsyncGate()
+        let recorder = RefreshEventRecorder()
+
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+            recorder.relayoutEvents.append((reason, route))
+            if route == .immediateRelayout {
+                await gate.wait()
+            }
+            return true
+        }
+        controller.layoutRefreshController.debugHooks.onVisibilityRefresh = { reason in
+            recorder.visibilityReasons.append(reason)
+            return true
+        }
+        controller.layoutRefreshController.debugHooks.onFullRescan = { reason in
+            recorder.fullRescanReasons.append(reason)
+            return true
+        }
+
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .workspaceTransition)
+        await waitUntil { recorder.relayoutEvents.count == 1 }
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appHidden)
+        controller.layoutRefreshController.requestFullRescan(reason: .startup)
+
+        gate.open()
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.workspaceTransition])
+        #expect(recorder.fullRescanReasons == [.startup])
+        #expect(recorder.visibilityReasons.isEmpty)
+        #expect(controller.layoutRefreshController.debugCounters.visibilityExecutions == 0)
+    }
+
+    @Test @MainActor func visibilityQueuedBehindActiveImmediateRelayoutStillExecutes() async {
+        let controller = makeRefreshTestController()
+        let gate = AsyncGate()
+        let recorder = RefreshEventRecorder()
+
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+            recorder.relayoutEvents.append((reason, route))
+            if route == .immediateRelayout {
+                await gate.wait()
+            }
+            return true
+        }
+        controller.layoutRefreshController.debugHooks.onVisibilityRefresh = { reason in
+            recorder.visibilityReasons.append(reason)
+            return true
+        }
+
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .workspaceTransition)
+        await waitUntil { recorder.relayoutEvents.count == 1 }
+        controller.layoutRefreshController.requestVisibilityRefresh(reason: .appHidden)
+
+        gate.open()
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.workspaceTransition])
+        #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
+        #expect(recorder.visibilityReasons == [.appHidden])
+        #expect(controller.layoutRefreshController.debugCounters.immediateRelayoutExecutions == 1)
+        #expect(controller.layoutRefreshController.debugCounters.visibilityExecutions == 1)
+    }
+
+    @Test @MainActor func canceledImmediateRelayoutPreservesPostLayoutActionsWhenUpgradedToFullRescan() async {
+        let controller = makeRefreshTestController()
+        let gate = AsyncGate()
+        var fullRescanReasons: [RefreshReason] = []
+        var postLayoutRuns = 0
+
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { _, route in
+            if route == .immediateRelayout {
+                await gate.wait()
+            }
+            return true
+        }
+        controller.layoutRefreshController.debugHooks.onFullRescan = { reason in
+            fullRescanReasons.append(reason)
+            return true
+        }
+
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .workspaceTransition) {
+            postLayoutRuns += 1
+        }
+        await waitUntil { controller.layoutRefreshController.debugCounters.immediateRelayoutExecutions == 1 }
+        controller.layoutRefreshController.requestFullRescan(reason: .startup)
+
+        gate.open()
+        await waitForRefreshWork(on: controller)
+
+        #expect(fullRescanReasons == [.startup])
+        #expect(postLayoutRuns == 1)
     }
 }

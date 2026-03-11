@@ -77,7 +77,7 @@ import QuartzCore
             let oldFrames = engine.currentFrames(in: wsId)
 
             let windowHandles = controller.workspaceManager.entries(in: wsId).map(\.handle)
-            let currentFocusedHandle = controller.workspaceManager.focusedHandle
+            let currentFocusedHandle = controller.workspaceManager.preferredFocusHandle(in: wsId)
 
             _ = engine.syncWindows(windowHandles, in: wsId, focusedHandle: currentFocusedHandle)
 
@@ -99,8 +99,7 @@ import QuartzCore
                 _ = controller.workspaceManager.syncWorkspaceFocus(
                     handle,
                     in: wsId,
-                    onMonitor: monitor.id,
-                    promoteToManagedFocus: true
+                    onMonitor: monitor.id
                 )
             }
 
@@ -145,10 +144,9 @@ import QuartzCore
         guard let controller else { return }
         withDwindleContext { engine, wsId in
             if let handle = engine.moveFocus(direction: direction, in: wsId) {
-                _ = controller.workspaceManager.setManagedFocus(
+                _ = controller.workspaceManager.rememberFocus(
                     handle,
-                    in: wsId,
-                    onMonitor: controller.workspaceManager.monitorId(for: wsId)
+                    in: wsId
                 )
                 controller.layoutRefreshController.requestImmediateRelayout(
                     reason: .layoutCommand
@@ -172,10 +170,9 @@ import QuartzCore
         guard let controller else { return }
         withDwindleContext { engine, wsId in
             if let handle = engine.toggleFullscreen(in: wsId) {
-                _ = controller.workspaceManager.setManagedFocus(
+                _ = controller.workspaceManager.rememberFocus(
                     handle,
-                    in: wsId,
-                    onMonitor: controller.workspaceManager.monitorId(for: wsId)
+                    in: wsId
                 )
                 controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
             }
