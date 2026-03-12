@@ -40,6 +40,21 @@ enum AXFrameWriteOrder {
 }
 
 enum AXWindowService {
+    private static let browserPiPBundleIds: Set<String> = [
+        "org.mozilla.firefox",
+        "app.zen-browser.zen"
+    ]
+    private static let browserPiPTitle = "Picture-in-Picture"
+
+    private enum WindowTypeAttributeIndex: Int {
+        case subrole
+        case closeButton
+        case fullScreenButton
+        case zoomButton
+        case minimizeButton
+        case title
+    }
+
     @MainActor
     static func titlePreferFast(windowId: UInt32) -> String? {
         SkyLight.shared.getWindowTitle(windowId)
@@ -173,6 +188,30 @@ enum AXWindowService {
         return frame.approximatelyEqual(to: screen.frame, tolerance: 2.0)
     }
 
+    static func shouldForceFloatForBrowserPiP(bundleId: String?, title: String?) -> Bool {
+        guard let bundleId,
+              browserPiPBundleIds.contains(bundleId),
+              let title
+        else {
+            return false
+        }
+
+        return title == browserPiPTitle
+    }
+
+    private static func shouldFetchTitleForWindowType(bundleId: String?) -> Bool {
+        guard let bundleId else { return false }
+        return browserPiPBundleIds.contains(bundleId)
+    }
+
+    private static func builtinWindowTypeOverride(bundleId: String?, title: String?) -> AXWindowType? {
+        if shouldForceFloatForBrowserPiP(bundleId: bundleId, title: title) {
+            return .floating
+        }
+
+        return nil
+    }
+
     static func windowType(
         _ window: AXWindowRef,
         appPolicy: NSApplication.ActivationPolicy?,
@@ -182,13 +221,17 @@ enum AXWindowService {
             return .floating
         }
 
-        let attributes: [CFString] = [
+        let shouldFetchTitle = shouldFetchTitleForWindowType(bundleId: bundleId)
+        var attributes: [CFString] = [
             kAXSubroleAttribute as CFString,
             kAXCloseButtonAttribute as CFString,
             kAXFullScreenButtonAttribute as CFString,
             kAXZoomButtonAttribute as CFString,
             kAXMinimizeButtonAttribute as CFString
         ]
+        if shouldFetchTitle {
+            attributes.append(kAXTitleAttribute as CFString)
+        }
 
         var values: CFArray?
         let result = AXUIElementCopyMultipleAttributeValues(
@@ -198,16 +241,38 @@ enum AXWindowService {
             &values
         )
 
-        guard result == .success, let valuesArray = values as? [Any?] else {
+        guard result == .success,
+              let valuesArray = values as? [Any?],
+              valuesArray.count > WindowTypeAttributeIndex.minimizeButton.rawValue
+        else {
             return .floating
         }
 
-        let subroleValue = valuesArray[0] as? String
-        let hasCloseButton = valuesArray[1] != nil && !(valuesArray[1] is NSError)
-        let fullscreenButtonElement = valuesArray[2]
-        let hasFullscreenButton = fullscreenButtonElement != nil && !(fullscreenButtonElement is NSError)
-        let hasZoomButton = valuesArray[3] != nil && !(valuesArray[3] is NSError)
-        let hasMinimizeButton = valuesArray[4] != nil && !(valuesArray[4] is NSError)
+        func attributeValue(_ index: WindowTypeAttributeIndex) -> Any? {
+            guard valuesArray.indices.contains(index.rawValue) else { return nil }
+            return valuesArray[index.rawValue]
+        }
+
+        func hasResolvedAttribute(_ value: Any?) -> Bool {
+            guard let value else { return false }
+            return !(value is NSError)
+        }
+
+        let subroleValue = attributeValue(.subrole) as? String
+        let closeButtonValue = attributeValue(.closeButton)
+        let fullscreenButtonElement = attributeValue(.fullScreenButton)
+        let zoomButtonValue = attributeValue(.zoomButton)
+        let minimizeButtonValue = attributeValue(.minimizeButton)
+        let titleValue = shouldFetchTitle ? (attributeValue(.title) as? String) : nil
+
+        if let builtinOverride = builtinWindowTypeOverride(bundleId: bundleId, title: titleValue) {
+            return builtinOverride
+        }
+
+        let hasCloseButton = hasResolvedAttribute(closeButtonValue)
+        let hasFullscreenButton = hasResolvedAttribute(fullscreenButtonElement)
+        let hasZoomButton = hasResolvedAttribute(zoomButtonValue)
+        let hasMinimizeButton = hasResolvedAttribute(minimizeButtonValue)
 
         let hasAnyButton = hasCloseButton || hasFullscreenButton || hasZoomButton || hasMinimizeButton
 

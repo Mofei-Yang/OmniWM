@@ -291,6 +291,38 @@ private func lastAppliedBorderWindowId(on controller: WMController) -> Int? {
         #expect(subscriptions == [[821]])
     }
 
+    @Test @MainActor func floatingCreatedWindowIsNotInsertedIntoManagedWorkspaceModel() {
+        let controller = makeAXEventTestController()
+
+        var subscriptions: [[UInt32]] = []
+        var relayoutReasons: [RefreshReason] = []
+        controller.axEventHandler.windowInfoProvider = { windowId in
+            WindowServerInfo(id: windowId, pid: getpid(), level: 0, frame: .zero)
+        }
+        controller.axEventHandler.axWindowRefProvider = { windowId, _ in
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: Int(windowId))
+        }
+        controller.axEventHandler.windowTypeProvider = { _, _ in .floating }
+        controller.axEventHandler.windowSubscriptionHandler = { windowIds in
+            subscriptions.append(windowIds)
+        }
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, _ in
+            relayoutReasons.append(reason)
+            return true
+        }
+
+        controller.axEventHandler.cgsEventObserver(
+            CGSEventObserver.shared,
+            didReceive: .created(windowId: 822, spaceId: 0)
+        )
+
+        #expect(controller.workspaceManager.entry(forPid: getpid(), windowId: 822) == nil)
+        #expect(controller.workspaceManager.allEntries().contains { $0.windowId == 822 } == false)
+        #expect(subscriptions == [[822]])
+        #expect(relayoutReasons.isEmpty)
+    }
+
     @Test @MainActor func appHideAndUnhideUseVisibilityRouteAndPreserveModelState() async {
         let controller = makeAXEventTestController()
         guard let workspaceId = controller.activeWorkspace()?.id else {
