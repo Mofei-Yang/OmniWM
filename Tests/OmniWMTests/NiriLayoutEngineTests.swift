@@ -2778,6 +2778,147 @@ private func hasAnyVisibilityChange(
         #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 601)
     }
 
+    @Test @MainActor func focusNeighborUsesObservedGhosttyFrameForDirectBorderUpdatesFromEitherSide() async throws {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for Ghostty navigation border regression test")
+            return
+        }
+
+        controller.setBordersEnabled(true)
+        controller.enableNiriLayout(
+            maxWindowsPerColumn: 1,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        controller.updateNiriConfig(
+            maxVisibleColumns: 3,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        await waitForLayoutPlanRefreshWork(on: controller)
+        controller.layoutRefreshController.stopAllScrollAnimations()
+        controller.syncMonitorsToNiriEngine()
+
+        let firstToken = addLayoutPlanTestWindow(
+            on: controller,
+            workspaceId: workspaceId,
+            windowId: 611,
+            pid: 7_001
+        )
+        _ = addLayoutPlanTestWindow(
+            on: controller,
+            workspaceId: workspaceId,
+            windowId: 612,
+            pid: 7_002
+        )
+        _ = addLayoutPlanTestWindow(
+            on: controller,
+            workspaceId: workspaceId,
+            windowId: 613,
+            pid: 7_003
+        )
+        _ = controller.workspaceManager.setManagedFocus(firstToken, in: workspaceId, onMonitor: monitor.id)
+
+        let plans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        controller.layoutRefreshController.executeLayoutPlans(plans)
+
+        guard let engine = controller.niriEngine else {
+            Issue.record("Expected Niri window nodes for Ghostty navigation border regression test")
+            return
+        }
+
+        let columns = engine.columns(in: workspaceId)
+
+        guard columns.count == 3,
+              let leftNode = columns[0].windowNodes.first,
+              let ghosttyNode = columns[1].windowNodes.first,
+              let rightNode = columns[2].windowNodes.first,
+              let ghosttyLayoutFrame = ghosttyNode.renderedFrame ?? ghosttyNode.frame
+        else {
+            Issue.record("Expected three visible columns and a realized center frame for Ghostty navigation border regression test")
+            return
+        }
+
+        let leftWindow = (token: leftNode.token, node: leftNode)
+        let ghosttyWindow = (token: ghosttyNode.token, node: ghosttyNode)
+        let rightWindow = (token: rightNode.token, node: rightNode)
+
+        controller.appInfoCache.storeInfoForTests(
+            pid: ghosttyWindow.token.pid,
+            bundleId: "com.mitchellh.ghostty"
+        )
+
+        let observedFrame = CGRect(
+            x: ghosttyLayoutFrame.minX,
+            y: ghosttyLayoutFrame.minY - 24,
+            width: ghosttyLayoutFrame.width,
+            height: ghosttyLayoutFrame.height + 24
+        )
+        controller.borderCoordinator.observedFrameProviderForTests = { axRef in
+            axRef.windowId == ghosttyWindow.token.windowId ? observedFrame : nil
+        }
+        defer {
+            controller.borderCoordinator.observedFrameProviderForTests = nil
+        }
+
+        func primeNavigation(
+            from token: WindowToken,
+            node: NiriWindow
+        ) {
+            controller.layoutRefreshController.stopAllScrollAnimations()
+            controller.borderManager.hideBorder()
+            _ = controller.workspaceManager.setManagedFocus(token, in: workspaceId, onMonitor: monitor.id)
+            _ = controller.workspaceManager.commitWorkspaceSelection(
+                nodeId: node.id,
+                focusedToken: token,
+                in: workspaceId,
+                onMonitor: monitor.id
+            )
+            controller.workspaceManager.withNiriViewportState(for: workspaceId) { state in
+                state.selectedNodeId = node.id
+                engine.ensureSelectionVisible(
+                    node: node,
+                    in: workspaceId,
+                    state: &state,
+                    workingFrame: controller.insetWorkingFrame(for: monitor),
+                    gaps: CGFloat(controller.workspaceManager.gaps)
+                )
+                state.viewOffsetPixels = .static(state.viewOffsetPixels.target())
+            }
+            node.animateMoveFrom(
+                displacement: CGPoint(x: 18, y: 0),
+                clock: engine.animationClock,
+                config: engine.windowMovementAnimationConfig,
+                displayRefreshRate: engine.displayRefreshRate
+            )
+            #expect(engine.hasAnyWindowAnimationsRunning(in: workspaceId))
+            #expect(controller.niriLayoutHandler.registerScrollAnimation(workspaceId, on: monitor.displayId))
+        }
+
+        primeNavigation(from: leftWindow.token, node: leftWindow.node)
+        controller.niriLayoutHandler.focusNeighbor(direction: .right)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        #expect(controller.workspaceManager.preferredFocusToken(in: workspaceId) == ghosttyWindow.token)
+        #expect(controller.workspaceManager.niriViewportState(for: workspaceId).selectedNodeId == ghosttyWindow.node.id)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == ghosttyWindow.token.windowId)
+        #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == observedFrame)
+
+        primeNavigation(from: rightWindow.token, node: rightWindow.node)
+        controller.niriLayoutHandler.focusNeighbor(direction: .left)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        #expect(controller.workspaceManager.preferredFocusToken(in: workspaceId) == ghosttyWindow.token)
+        #expect(controller.workspaceManager.niriViewportState(for: workspaceId).selectedNodeId == ghosttyWindow.node.id)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == ghosttyWindow.token.windowId)
+        #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == observedFrame)
+    }
+
     @Test @MainActor func visibleSecondaryWorkspacePlanRestoresInactiveHiddenWindows() async throws {
         let fixture = makeTwoMonitorLayoutPlanTestController()
         let controller = fixture.controller

@@ -99,6 +99,86 @@ import Testing
         #expect(controller.workspaceManager.hiddenState(for: token) == nil)
     }
 
+    @Test @MainActor func coordinatedBorderUpdateUsesObservedGhosttyFrameWhenItDiffersFromLayoutFrame() {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for Ghostty border frame test")
+            return
+        }
+
+        let token = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 205)
+        _ = controller.workspaceManager.setManagedFocus(token, in: workspaceId, onMonitor: monitor.id)
+        controller.setBordersEnabled(true)
+        controller.appInfoCache.storeInfoForTests(pid: token.pid, bundleId: "com.mitchellh.ghostty")
+
+        let layoutFrame = CGRect(x: 120, y: 80, width: 900, height: 640)
+        let observedFrame = CGRect(x: 120, y: 56, width: 900, height: 664)
+        controller.borderCoordinator.observedFrameProviderForTests = { axRef in
+            axRef.windowId == 205 ? observedFrame : nil
+        }
+        defer {
+            controller.borderCoordinator.observedFrameProviderForTests = nil
+        }
+
+        var diff = WorkspaceLayoutDiff()
+        diff.focusedFrame = LayoutFocusedFrame(token: token, frame: layoutFrame)
+        diff.borderMode = .coordinated
+
+        controller.layoutRefreshController.executeLayoutPlan(
+            WorkspaceLayoutPlan(
+                workspaceId: workspaceId,
+                monitor: controller.layoutRefreshController.buildMonitorSnapshot(for: monitor),
+                sessionPatch: WorkspaceSessionPatch(workspaceId: workspaceId),
+                diff: diff
+            )
+        )
+
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 205)
+        #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == observedFrame)
+    }
+
+    @Test @MainActor func directBorderUpdateUsesObservedGhosttyFrameWhenItDiffersFromLayoutFrame() {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for direct Ghostty border frame test")
+            return
+        }
+
+        let token = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 206)
+        _ = controller.workspaceManager.setManagedFocus(token, in: workspaceId, onMonitor: monitor.id)
+        controller.setBordersEnabled(true)
+        controller.appInfoCache.storeInfoForTests(pid: token.pid, bundleId: "com.mitchellh.ghostty")
+
+        let layoutFrame = CGRect(x: 240, y: 96, width: 840, height: 600)
+        let observedFrame = CGRect(x: 240, y: 72, width: 840, height: 624)
+        controller.borderCoordinator.observedFrameProviderForTests = { axRef in
+            axRef.windowId == 206 ? observedFrame : nil
+        }
+        defer {
+            controller.borderCoordinator.observedFrameProviderForTests = nil
+        }
+
+        var diff = WorkspaceLayoutDiff()
+        diff.focusedFrame = LayoutFocusedFrame(token: token, frame: layoutFrame)
+        diff.borderMode = .direct
+
+        controller.layoutRefreshController.executeLayoutPlan(
+            WorkspaceLayoutPlan(
+                workspaceId: workspaceId,
+                monitor: controller.layoutRefreshController.buildMonitorSnapshot(for: monitor),
+                sessionPatch: WorkspaceSessionPatch(workspaceId: workspaceId),
+                diff: diff
+            )
+        )
+
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 206)
+        #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == observedFrame)
+    }
+
     @Test @MainActor func liveFrameHideOriginPreservesWindowYForTransientHide() {
         let controller = makeLayoutPlanTestController()
         guard let monitor = controller.workspaceManager.monitors.first else {

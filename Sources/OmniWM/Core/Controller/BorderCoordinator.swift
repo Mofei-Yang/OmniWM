@@ -3,12 +3,15 @@ import Foundation
 
 @MainActor
 final class BorderCoordinator {
+    private static let ghosttyBundleId = "com.mitchellh.ghostty"
+
     private enum UpdateEligibility {
         case hide
         case update(activeWorkspaceId: WorkspaceDescriptor.ID)
     }
 
     weak var controller: WMController?
+    var observedFrameProviderForTests: ((AXWindowRef) -> CGRect?)?
 
     init(controller: WMController) {
         self.controller = controller
@@ -23,7 +26,10 @@ final class BorderCoordinator {
             if shouldDeferBorderUpdates(for: activeWorkspaceId) {
                 return
             }
-            controller.borderManager.updateFocusedWindow(frame: frame, windowId: windowId)
+            controller.borderManager.updateFocusedWindow(
+                frame: resolveGhosttyObservedFrame(for: token, fallback: frame),
+                windowId: windowId
+            )
         }
     }
 
@@ -34,12 +40,40 @@ final class BorderCoordinator {
         case .hide:
             controller.borderManager.hideBorder()
         case .update:
-            controller.borderManager.updateFocusedWindow(frame: frame, windowId: windowId)
+            controller.borderManager.updateFocusedWindow(
+                frame: resolveGhosttyObservedFrame(for: token, fallback: frame),
+                windowId: windowId
+            )
         }
     }
 
     func updateBorderIfAllowed(handle: WindowHandle, frame: CGRect, windowId: Int) {
         updateBorderIfAllowed(token: handle.id, frame: frame, windowId: windowId)
+    }
+
+    private func resolveGhosttyObservedFrame(for token: WindowToken, fallback providedFrame: CGRect) -> CGRect {
+        guard let controller,
+              controller.appInfoCache.bundleId(for: token.pid) == Self.ghosttyBundleId,
+              let entry = controller.workspaceManager.entry(for: token)
+        else {
+            return providedFrame
+        }
+
+        if let observedFrameProviderForTests,
+           let frame = observedFrameProviderForTests(entry.axRef)
+        {
+            return frame
+        }
+
+        if let frame = AXWindowService.framePreferFast(entry.axRef) {
+            return frame
+        }
+
+        if let frame = try? AXWindowService.frame(entry.axRef) {
+            return frame
+        }
+
+        return providedFrame
     }
 
     private func eligibilityForBorderUpdate(token: WindowToken) -> UpdateEligibility {

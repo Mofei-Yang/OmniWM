@@ -212,6 +212,7 @@ import QuartzCore
             for: monitor,
             orientation: orientation
         )
+        let interactionWorkspaceId = controller.activeWorkspace()?.id
 
         return NiriWorkspaceSnapshot(
             workspaceId: wsId,
@@ -226,7 +227,8 @@ import QuartzCore
             gap: CGFloat(controller.workspaceManager.gaps),
             outerGaps: controller.workspaceManager.outerGaps,
             displayRefreshRate: controller.layoutRefreshController.layoutState.refreshRateByDisplay[monitor.displayId] ?? 60.0,
-            isActiveWorkspace: isActiveWorkspace
+            isActiveWorkspace: isActiveWorkspace,
+            isInteractionWorkspace: interactionWorkspaceId == wsId
         )
     }
 
@@ -262,8 +264,10 @@ import QuartzCore
             frames: frames,
             hiddenHandles: hiddenHandles,
             confirmedFocusedToken: snapshot.confirmedFocusedToken,
+            borderFocusToken: snapshot.preferredFocusToken,
             engine: engine,
             directBorderUpdate: true,
+            isInteractionWorkspace: snapshot.isInteractionWorkspace,
             canRestoreHiddenWorkspaceWindows: snapshot.isActiveWorkspace
         )
 
@@ -698,8 +702,10 @@ import QuartzCore
             frames: frames,
             hiddenHandles: hiddenHandles,
             confirmedFocusedToken: snapshot.confirmedFocusedToken,
+            borderFocusToken: rememberedFocusToken,
             engine: pass.engine,
             directBorderUpdate: snapshot.useScrollAnimationPath,
+            isInteractionWorkspace: snapshot.isInteractionWorkspace,
             canRestoreHiddenWorkspaceWindows: snapshot.isActiveWorkspace
         )
 
@@ -721,8 +727,10 @@ import QuartzCore
         frames: [WindowToken: CGRect],
         hiddenHandles: [WindowToken: HideSide],
         confirmedFocusedToken: WindowToken?,
+        borderFocusToken: WindowToken?,
         engine: NiriLayoutEngine,
         directBorderUpdate: Bool,
+        isInteractionWorkspace: Bool,
         canRestoreHiddenWorkspaceWindows: Bool
     ) -> WorkspaceLayoutDiff {
         var diff = WorkspaceLayoutDiff()
@@ -731,9 +739,15 @@ import QuartzCore
                 .filter(\.isNativeFullscreenSuspended)
                 .map(\.token)
         )
-        if let confirmedFocusedToken {
+        let effectiveBorderToken = if directBorderUpdate && isInteractionWorkspace {
+            borderFocusToken ?? confirmedFocusedToken
+        } else {
+            confirmedFocusedToken
+        }
+
+        if let effectiveBorderToken {
             let ownsFocusedToken = windows.contains {
-                $0.token == confirmedFocusedToken && !$0.isNativeFullscreenSuspended
+                $0.token == effectiveBorderToken && !$0.isNativeFullscreenSuspended
             }
             diff.borderMode = ownsFocusedToken ? (directBorderUpdate ? .direct : .coordinated) : .none
         } else {
@@ -781,13 +795,13 @@ import QuartzCore
             )
         }
 
-        if let confirmedFocusedToken,
-           !suspendedTokens.contains(confirmedFocusedToken),
-           hiddenHandles[confirmedFocusedToken] == nil,
-           let frame = frames[confirmedFocusedToken]
+        if let effectiveBorderToken,
+           !suspendedTokens.contains(effectiveBorderToken),
+           hiddenHandles[effectiveBorderToken] == nil,
+           let frame = frames[effectiveBorderToken]
         {
             diff.focusedFrame = LayoutFocusedFrame(
-                token: confirmedFocusedToken,
+                token: effectiveBorderToken,
                 frame: frame
             )
         } else {

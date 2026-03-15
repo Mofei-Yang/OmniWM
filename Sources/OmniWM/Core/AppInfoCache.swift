@@ -54,4 +54,26 @@ final class AppInfoCache {
     func hasCachedInfo(for pid: pid_t) -> Bool {
         cache[pid] != nil
     }
+
+    func storeInfoForTests(
+        pid: pid_t,
+        name: String? = nil,
+        bundleId: String?,
+        activationPolicy: NSApplication.ActivationPolicy = .regular
+    ) {
+        evict(pid: pid)
+
+        if cache.count >= maxEntries, let oldest = insertionOrder.first {
+            insertionOrder.removeFirst()
+            cache.removeValue(forKey: oldest)
+        }
+
+        cache[pid] = AppInfo(
+            name: name,
+            bundleId: bundleId,
+            icon: nil,
+            activationPolicy: activationPolicy
+        )
+        insertionOrder.append(pid)
+    }
 }

@@ -41,6 +41,7 @@ struct NiriWorkspaceSnapshot {
     let outerGaps: LayoutGaps.OuterGaps
     let displayRefreshRate: Double
     let isActiveWorkspace: Bool
+    let isInteractionWorkspace: Bool
 }
 
 struct DwindleWorkspaceSnapshot {

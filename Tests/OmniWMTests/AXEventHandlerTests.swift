@@ -56,6 +56,7 @@ private func makeAXEventTestController(trackedGhosttyBundleId: String? = nil) ->
         windowFocusOperations: operations
     )
     if let trackedGhosttyBundleId {
+        controller.appInfoCache.storeInfoForTests(pid: getpid(), bundleId: trackedGhosttyBundleId)
         controller.axEventHandler.bundleIdProvider = { _ in trackedGhosttyBundleId }
     }
     controller.workspaceManager.applyMonitorConfigurationChange([makeAXEventTestMonitor()])
@@ -69,6 +70,11 @@ private func currentTestBundleId() -> String {
 @MainActor
 private func lastAppliedBorderWindowId(on controller: WMController) -> Int? {
     controller.borderManager.lastAppliedFocusedWindowIdForTests
+}
+
+@MainActor
+private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
+    controller.borderManager.lastAppliedFocusedFrameForTests
 }
 
 @Suite(.serialized) struct AXEventHandlerTests {
@@ -571,6 +577,9 @@ private func lastAppliedBorderWindowId(on controller: WMController) -> Int? {
         }
 
         let oldNode = engine.addWindow(token: oldToken, to: workspaceId, afterSelection: nil, focusedToken: oldToken)
+        let plannedFrame = CGRect(x: 80, y: 80, width: 900, height: 640)
+        let observedFrame = CGRect(x: 80, y: 56, width: 900, height: 664)
+        oldNode.frame = plannedFrame
         controller.workspaceManager.withNiriViewportState(for: workspaceId) { state in
             state.selectedNodeId = oldNode.id
             state.activeColumnIndex = 0
@@ -587,6 +596,13 @@ private func lastAppliedBorderWindowId(on controller: WMController) -> Int? {
             in: workspaceId,
             onMonitor: controller.workspaceManager.monitorId(for: workspaceId)
         )
+        controller.setBordersEnabled(true)
+        controller.borderCoordinator.observedFrameProviderForTests = { axRef in
+            axRef.windowId == 842 ? observedFrame : nil
+        }
+        defer {
+            controller.borderCoordinator.observedFrameProviderForTests = nil
+        }
 
         var relayoutReasons: [RefreshReason] = []
         var subscriptions: [[UInt32]] = []
@@ -642,6 +658,8 @@ private func lastAppliedBorderWindowId(on controller: WMController) -> Int? {
         #expect(engine.findNode(for: replacementToken)?.id == oldNode.id)
         #expect(relayoutReasons.isEmpty)
         #expect(subscriptions == [[842], [842]])
+        #expect(lastAppliedBorderWindowId(on: controller) == 842)
+        #expect(lastAppliedBorderFrame(on: controller) == observedFrame)
     }
 
     @Test @MainActor func samePidCreateDoesNotStealAwaitingNativeFullscreenReplacementFromDifferentWorkspace() {

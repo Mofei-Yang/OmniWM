@@ -131,3 +131,8 @@ func setWorkspaceInactiveHiddenStateForLayoutPlanTests(
 func lastAppliedBorderWindowIdForLayoutPlanTests(on controller: WMController) -> Int? {
     controller.borderManager.lastAppliedFocusedWindowIdForTests
 }
+
+@MainActor
+func lastAppliedBorderFrameForLayoutPlanTests(on controller: WMController) -> CGRect? {
+    controller.borderManager.lastAppliedFocusedFrameForTests
+}
