@@ -41,6 +41,47 @@ private func frameIsWithinViewport(_ frame: CGRect, viewport: CGRect) -> Bool {
         frame.maxY <= viewport.maxY
 }
 
+private func makeNiriOverviewSnapshot(
+    workspaceId: WorkspaceDescriptor.ID,
+    columns: [[WindowHandle]],
+    preferredWidths: [CGFloat?] = [],
+    widthWeights: [CGFloat] = []
+) -> NiriOverviewWorkspaceSnapshot {
+    let resolvedWeights = widthWeights.isEmpty ? Array(repeating: 1.0, count: columns.count) : widthWeights
+    let resolvedPreferredWidths = preferredWidths.isEmpty ? Array(repeating: nil, count: columns.count) : preferredWidths
+
+    return NiriOverviewWorkspaceSnapshot(
+        workspaceId: workspaceId,
+        columns: columns.enumerated().map { index, handles in
+            NiriOverviewColumnSnapshot(
+                index: index,
+                widthWeight: resolvedWeights[index],
+                preferredWidth: resolvedPreferredWidths[index],
+                tiles: handles.map { NiriOverviewTileSnapshot(token: $0.id) }
+            )
+        }
+    )
+}
+
+@MainActor
+private func makeNiriOverviewLayout(
+    workspaces: [OverviewWorkspaceLayoutItem],
+    windows: [WindowHandle: OverviewWindowLayoutData],
+    snapshots: [WorkspaceDescriptor.ID: NiriOverviewWorkspaceSnapshot],
+    screenFrame: CGRect = CGRect(x: 0, y: 0, width: 1440, height: 900),
+    searchQuery: String = "",
+    scale: CGFloat = 1.0
+) -> OverviewLayout {
+    OverviewLayoutCalculator.calculateLayout(
+        workspaces: workspaces,
+        windows: windows,
+        niriSnapshotsByWorkspace: snapshots,
+        screenFrame: screenFrame,
+        searchQuery: searchQuery,
+        scale: scale
+    )
+}
+
 @Suite struct OverviewProjectionTests {
     @Test @MainActor func localizedFrameTranslatesOffsetMonitorIntoPanelCoordinates() {
         let monitorFrame = CGRect(x: 1728, y: 0, width: 1728, height: 1117)
@@ -239,5 +280,254 @@ private func frameIsWithinViewport(_ frame: CGRect, viewport: CGRect) -> Bool {
         #expect(interpolated.maxX <= max(sampleWindow.originalFrame.maxX, sampleWindow.overviewFrame.maxX))
         #expect(bounds.contains(clampedOffset))
         #expect(zoomedLayout.allWindows.count == baseLayout.allWindows.count)
+    }
+
+    @Test @MainActor func niriProjectionFollowsEngineTileOrderWhenFramesDisagree() {
+        let workspaceId = WorkspaceDescriptor.ID()
+        let model = WindowModel()
+        let workspaces: [OverviewWorkspaceLayoutItem] = [
+            (id: workspaceId, name: "1", isActive: true)
+        ]
+
+        let visualTop = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: workspaceId,
+            windowId: 501,
+            frame: CGRect(x: 80, y: 40, width: 700, height: 520),
+            title: "Top"
+        )
+        let visualBottom = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: workspaceId,
+            windowId: 502,
+            frame: CGRect(x: 80, y: 720, width: 700, height: 520),
+            title: "Bottom"
+        )
+
+        let engine = NiriLayoutEngine()
+        let root = NiriRoot(workspaceId: workspaceId)
+        engine.roots[workspaceId] = root
+
+        let column = NiriContainer()
+        root.appendChild(column)
+
+        let bottomNode = NiriWindow(token: visualBottom.handle.id)
+        let topNode = NiriWindow(token: visualTop.handle.id)
+        column.appendChild(bottomNode)
+        column.appendChild(topNode)
+        engine.tokenToNode[bottomNode.token] = bottomNode
+        engine.tokenToNode[topNode.token] = topNode
+
+        guard let snapshot = engine.overviewSnapshot(for: workspaceId) else {
+            Issue.record("Expected Niri overview snapshot")
+            return
+        }
+
+        let layout = makeNiriOverviewLayout(
+            workspaces: workspaces,
+            windows: [
+                visualTop.handle: visualTop.data,
+                visualBottom.handle: visualBottom.data
+            ],
+            snapshots: [workspaceId: snapshot]
+        )
+
+        let orderedHandles = layout.niriColumnsByWorkspace[workspaceId]?.first?.windowHandles ?? []
+
+        #expect(orderedHandles == [visualTop.handle, visualBottom.handle])
+        #expect(layout.window(for: visualTop.handle)?.overviewFrame.maxY ?? 0 >
+            layout.window(for: visualBottom.handle)?.overviewFrame.maxY ?? 0)
+    }
+
+    @Test @MainActor func niriGapHitTestingPrefersColumnInsertTarget() {
+        let workspaceId = WorkspaceDescriptor.ID()
+        let model = WindowModel()
+        let workspaces: [OverviewWorkspaceLayoutItem] = [
+            (id: workspaceId, name: "1", isActive: true)
+        ]
+
+        let left = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: workspaceId,
+            windowId: 601,
+            frame: CGRect(x: 100, y: 120, width: 720, height: 540),
+            title: "Left"
+        )
+        let right = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: workspaceId,
+            windowId: 602,
+            frame: CGRect(x: 980, y: 120, width: 720, height: 540),
+            title: "Right"
+        )
+
+        let layout = makeNiriOverviewLayout(
+            workspaces: workspaces,
+            windows: [
+                left.handle: left.data,
+                right.handle: right.data
+            ],
+            snapshots: [
+                workspaceId: makeNiriOverviewSnapshot(
+                    workspaceId: workspaceId,
+                    columns: [[left.handle], [right.handle]]
+                )
+            ]
+        )
+
+        guard let zone = layout.niriColumnDropZonesByWorkspace[workspaceId]?.first(where: { $0.insertIndex == 1 }) else {
+            Issue.record("Expected between-column drop zone")
+            return
+        }
+
+        let point = CGPoint(x: zone.frame.midX, y: zone.frame.midY)
+        let target = layout.resolveDragTarget(at: point, draggedHandle: nil)
+
+        #expect(target == .niriColumnInsert(workspaceId: workspaceId, insertIndex: 1))
+    }
+
+    @Test @MainActor func niriProjectionUsesActualColumnCountInsteadOfGenericFourColumnCap() {
+        let workspaceId = WorkspaceDescriptor.ID()
+        let model = WindowModel()
+        let workspaces: [OverviewWorkspaceLayoutItem] = [
+            (id: workspaceId, name: "1", isActive: true)
+        ]
+
+        var windows: [WindowHandle: OverviewWindowLayoutData] = [:]
+        var columnHandles: [[WindowHandle]] = []
+        for index in 0 ..< 5 {
+            let window = makeOverviewProjectionWindow(
+                model: model,
+                workspaceId: workspaceId,
+                windowId: 700 + index,
+                frame: CGRect(x: CGFloat(80 + index * 220), y: 120, width: 720, height: 540),
+                title: "Window \(index)"
+            )
+            windows[window.handle] = window.data
+            columnHandles.append([window.handle])
+        }
+
+        let genericLayout = OverviewLayoutCalculator.calculateLayout(
+            workspaces: workspaces,
+            windows: windows,
+            screenFrame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            searchQuery: "",
+            scale: 1.0
+        )
+        let niriLayout = makeNiriOverviewLayout(
+            workspaces: workspaces,
+            windows: windows,
+            snapshots: [
+                workspaceId: makeNiriOverviewSnapshot(
+                    workspaceId: workspaceId,
+                    columns: columnHandles
+                )
+            ]
+        )
+
+        let genericDistinctColumns = Set(genericLayout.allWindows.map { Int($0.overviewFrame.minX.rounded()) }).count
+        let niriColumns = niriLayout.niriColumnsByWorkspace[workspaceId] ?? []
+
+        #expect(genericDistinctColumns == 3)
+        #expect(niriColumns.count == 5)
+        #expect(niriColumns.count > genericDistinctColumns)
+        #expect(niriLayout.niriColumnDropZonesByWorkspace[workspaceId]?.count == 6)
+    }
+
+    @Test @MainActor func niriProjectionRebuildsFromMutatedWorkspaceAndEngineStateBeforeRelayout() {
+        let sourceWorkspaceId = WorkspaceDescriptor.ID()
+        let targetWorkspaceId = WorkspaceDescriptor.ID()
+        let model = WindowModel()
+        let workspaces: [OverviewWorkspaceLayoutItem] = [
+            (id: sourceWorkspaceId, name: "1", isActive: false),
+            (id: targetWorkspaceId, name: "2", isActive: true)
+        ]
+
+        let moved = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: sourceWorkspaceId,
+            windowId: 801,
+            frame: CGRect(x: 60, y: 80, width: 760, height: 560),
+            title: "Moved"
+        )
+        let fallback = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: sourceWorkspaceId,
+            windowId: 802,
+            frame: CGRect(x: 340, y: 720, width: 760, height: 560),
+            title: "Fallback"
+        )
+        let focused = makeOverviewProjectionWindow(
+            model: model,
+            workspaceId: targetWorkspaceId,
+            windowId: 803,
+            frame: CGRect(x: 1120, y: 120, width: 760, height: 560),
+            title: "Focused"
+        )
+
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        let movedNode = engine.addWindow(token: moved.handle.id, to: sourceWorkspaceId, afterSelection: nil)
+        let fallbackNode = engine.addWindow(
+            token: fallback.handle.id,
+            to: sourceWorkspaceId,
+            afterSelection: movedNode.id
+        )
+        let focusedNode = engine.addWindow(token: focused.handle.id, to: targetWorkspaceId, afterSelection: nil)
+
+        var sourceState = ViewportState()
+        sourceState.selectedNodeId = movedNode.id
+        var targetState = ViewportState()
+        targetState.selectedNodeId = focusedNode.id
+
+        let moveResult = engine.moveWindowToWorkspace(
+            movedNode,
+            from: sourceWorkspaceId,
+            to: targetWorkspaceId,
+            sourceState: &sourceState,
+            targetState: &targetState
+        )
+        guard let relocatedNode = engine.findNode(for: moved.handle.id) else {
+            Issue.record("Expected moved window in target workspace")
+            return
+        }
+
+        var targetInsertState = targetState
+        let inserted = engine.insertWindowInNewColumn(
+            relocatedNode,
+            insertIndex: 1,
+            in: targetWorkspaceId,
+            state: &targetInsertState,
+            workingFrame: CGRect(x: 0, y: 0, width: 1600, height: 900),
+            gaps: 8
+        )
+
+        model.updateWorkspace(for: moved.handle.id, workspace: targetWorkspaceId)
+
+        guard let targetSnapshot = engine.overviewSnapshot(for: targetWorkspaceId),
+              let sourceSnapshot = engine.overviewSnapshot(for: sourceWorkspaceId)
+        else {
+            Issue.record("Expected snapshots for both workspaces")
+            return
+        }
+
+        let layout = makeNiriOverviewLayout(
+            workspaces: workspaces,
+            windows: [
+                moved.handle: moved.data,
+                fallback.handle: fallback.data,
+                focused.handle: focused.data
+            ],
+            snapshots: [
+                sourceWorkspaceId: sourceSnapshot,
+                targetWorkspaceId: targetSnapshot
+            ]
+        )
+
+        let targetColumns = layout.niriColumnsByWorkspace[targetWorkspaceId] ?? []
+
+        #expect(moveResult?.newFocusNodeId == fallbackNode.id)
+        #expect(sourceState.selectedNodeId == fallbackNode.id)
+        #expect(inserted)
+        #expect(targetColumns.map(\.windowHandles) == [[focused.handle], [moved.handle]])
     }
 }

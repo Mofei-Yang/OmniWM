@@ -158,8 +158,12 @@ final class OverviewController {
         }
 
         layoutsByMonitor = [:]
+        let niriSnapshotsByWorkspace = buildNiriOverviewSnapshots()
         for monitor in monitors {
-            var layout = projectedLayout(for: monitor)
+            var layout = projectedLayout(
+                for: monitor,
+                niriSnapshotsByWorkspace: niriSnapshotsByWorkspace
+            )
             let viewportFrame = OverviewLayoutCalculator.viewportFrame(for: monitor.frame)
             let previousOffset = previousLayouts[monitor.id]?.scrollOffset ?? 0
             layout.scrollOffset = OverviewLayoutCalculator.clampedScrollOffset(
@@ -185,7 +189,10 @@ final class OverviewController {
         }
     }
 
-    private func projectedLayout(for monitor: Monitor) -> OverviewLayout {
+    private func projectedLayout(
+        for monitor: Monitor,
+        niriSnapshotsByWorkspace: [WorkspaceDescriptor.ID: NiriOverviewWorkspaceSnapshot]
+    ) -> OverviewLayout {
         let localizedWindowData = overviewSnapshot.windows.mapValues { windowData in
             (
                 entry: windowData.entry,
@@ -197,17 +204,32 @@ final class OverviewController {
         }
 
         let viewportFrame = OverviewLayoutCalculator.viewportFrame(for: monitor.frame)
-        var layout = OverviewLayoutCalculator.calculateLayout(
+        return OverviewLayoutCalculator.calculateLayout(
             workspaces: overviewSnapshot.workspaces,
             windows: localizedWindowData,
+            niriSnapshotsByWorkspace: niriSnapshotsByWorkspace,
             screenFrame: viewportFrame,
             searchQuery: searchQuery,
             scale: scale
         )
+    }
 
-        buildNiriColumnLayout(in: &layout, windowData: localizedWindowData)
-        buildNiriDropZones(in: &layout)
-        return layout
+    private func buildNiriOverviewSnapshots() -> [WorkspaceDescriptor.ID: NiriOverviewWorkspaceSnapshot] {
+        guard let engine = wmController?.niriEngine else { return [:] }
+
+        var snapshots: [WorkspaceDescriptor.ID: NiriOverviewWorkspaceSnapshot] = [:]
+        snapshots.reserveCapacity(overviewSnapshot.workspaces.count)
+
+        for workspace in overviewSnapshot.workspaces {
+            guard isNiriLayout(workspaceId: workspace.id),
+                  let snapshot = engine.overviewSnapshot(for: workspace.id)
+            else {
+                continue
+            }
+            snapshots[workspace.id] = snapshot
+        }
+
+        return snapshots
     }
 
     private func createWindows() {
@@ -683,32 +705,7 @@ private extension OverviewController {
 
     func resolveDragTarget(at point: CGPoint, on monitorId: Monitor.ID) -> OverviewDragTarget? {
         guard let layout = layoutsByMonitor[monitorId] else { return nil }
-
-        if let window = layout.windowAt(point: point) {
-            guard window.handle != dragSession?.handle else { return nil }
-            if isNiriLayout(workspaceId: window.workspaceId) {
-                let position = layout.insertPosition(for: window, at: point)
-                return .niriWindowInsert(
-                    workspaceId: window.workspaceId,
-                    targetHandle: window.handle,
-                    position: position
-                )
-            }
-            return .workspaceMove(workspaceId: window.workspaceId)
-        }
-
-        if let zone = layout.columnDropZone(at: point) {
-            return .niriColumnInsert(
-                workspaceId: zone.workspaceId,
-                insertIndex: zone.insertIndex
-            )
-        }
-
-        if let section = layout.workspaceSection(at: point) {
-            return .workspaceMove(workspaceId: section.workspaceId)
-        }
-
-        return nil
+        return layout.resolveDragTarget(at: point, draggedHandle: dragSession?.handle)
     }
 
     func performDragAction(session: DragSession, target: OverviewDragTarget) {
@@ -765,72 +762,6 @@ private extension OverviewController {
         return layoutType != .dwindle
     }
 
-    func buildNiriDropZones(in layout: inout OverviewLayout) {
-        guard let wmController else { return }
-        guard wmController.niriEngine != nil else {
-            layout.niriColumnDropZonesByWorkspace = [:]
-            return
-        }
-
-        let metricsScale = OverviewLayoutCalculator.clampedScale(layout.scale)
-        let gapBase = CGFloat(wmController.workspaceManager.gaps) * metricsScale
-        var zonesByWorkspace: [WorkspaceDescriptor.ID: [OverviewColumnDropZone]] = [:]
-
-        for section in layout.workspaceSections {
-            guard isNiriLayout(workspaceId: section.workspaceId) else { continue }
-
-            let niriColumns = layout.niriColumnsByWorkspace[section.workspaceId] ?? []
-            guard !niriColumns.isEmpty else { continue }
-            let columnFrames = niriColumns.map(\.frame)
-            let zoneWidth = max(12.0 * metricsScale, min(30.0 * metricsScale, gapBase))
-
-            var zones: [OverviewColumnDropZone] = []
-            let leftBoundary = columnFrames.first?.minX ?? section.gridFrame.minX
-            zones.append(OverviewColumnDropZone(
-                workspaceId: section.workspaceId,
-                insertIndex: 0,
-                frame: CGRect(
-                    x: leftBoundary - zoneWidth / 2,
-                    y: section.gridFrame.minY,
-                    width: zoneWidth,
-                    height: section.gridFrame.height
-                )
-            ))
-
-            if columnFrames.count > 1 {
-                for idx in 0 ..< (columnFrames.count - 1) {
-                    let boundary = (columnFrames[idx].maxX + columnFrames[idx + 1].minX) / 2
-                    zones.append(OverviewColumnDropZone(
-                        workspaceId: section.workspaceId,
-                        insertIndex: idx + 1,
-                        frame: CGRect(
-                            x: boundary - zoneWidth / 2,
-                            y: section.gridFrame.minY,
-                            width: zoneWidth,
-                            height: section.gridFrame.height
-                        )
-                    ))
-                }
-            }
-
-            let rightBoundary = columnFrames.last?.maxX ?? section.gridFrame.maxX
-            zones.append(OverviewColumnDropZone(
-                workspaceId: section.workspaceId,
-                insertIndex: columnFrames.count,
-                frame: CGRect(
-                    x: rightBoundary - zoneWidth / 2,
-                    y: section.gridFrame.minY,
-                    width: zoneWidth,
-                    height: section.gridFrame.height
-                )
-            ))
-
-            zonesByWorkspace[section.workspaceId] = zones
-        }
-
-        layout.niriColumnDropZonesByWorkspace = zonesByWorkspace
-    }
-
     func overviewInsertPositionToNiri(_ position: InsertPosition) -> InsertPosition {
         switch position {
         case .before:
@@ -842,88 +773,4 @@ private extension OverviewController {
         }
     }
 
-    func buildNiriColumnLayout(
-        in layout: inout OverviewLayout,
-        windowData: [WindowHandle: OverviewWindowLayoutData]
-    ) {
-        guard let wmController else { return }
-        guard let engine = wmController.niriEngine else {
-            layout.niriColumnsByWorkspace = [:]
-            return
-        }
-
-        let metricsScale = OverviewLayoutCalculator.clampedScale(layout.scale)
-        let spacing = OverviewLayoutMetrics.windowSpacing * metricsScale
-        let maxWidth = OverviewLayoutMetrics.maxThumbnailWidth * metricsScale
-        let minWidth = OverviewLayoutMetrics.minThumbnailWidth * metricsScale
-        var columnsByWorkspace: [WorkspaceDescriptor.ID: [OverviewNiriColumn]] = [:]
-
-        for section in layout.workspaceSections {
-            guard isNiriLayout(workspaceId: section.workspaceId) else { continue }
-            let niriColumns = engine.columns(in: section.workspaceId)
-            guard !niriColumns.isEmpty else { continue }
-
-            let columnCount = niriColumns.count
-            let totalSpacing = spacing * CGFloat(max(0, columnCount - 1))
-            let rawWidth = (section.gridFrame.width - totalSpacing) / CGFloat(columnCount)
-            let columnWidth = min(
-                maxWidth,
-                max(minWidth, rawWidth)
-            )
-            let totalWidth = CGFloat(columnCount) * columnWidth + totalSpacing
-            let startX = section.gridFrame.minX + max(0, (section.gridFrame.width - totalWidth) / 2)
-            let columnHeight = section.gridFrame.height
-
-            var columns: [OverviewNiriColumn] = []
-
-            for (idx, column) in niriColumns.enumerated() {
-                let columnX = startX + CGFloat(idx) * (columnWidth + spacing)
-                let columnFrame = CGRect(
-                    x: columnX,
-                    y: section.gridFrame.minY,
-                    width: columnWidth,
-                    height: columnHeight
-                )
-
-                let handles: [WindowHandle] = column.windowNodes.map(\.handle)
-                let orderedHandles = handles
-                    .compactMap { handle -> (WindowHandle, CGRect)? in
-                        guard let frame = windowData[handle]?.frame else { return nil }
-                        return (handle, frame)
-                    }
-                    .sorted { lhs, rhs in
-                        lhs.1.maxY > rhs.1.maxY
-                    }
-                    .map(\.0)
-
-                let tileCount = max(1, orderedHandles.count)
-                let innerSpacing: CGFloat = 6 * metricsScale
-                let totalInnerSpacing = innerSpacing * CGFloat(max(0, tileCount - 1))
-                let tileHeight = max(30 * metricsScale, (columnHeight - totalInnerSpacing) / CGFloat(tileCount))
-
-                for (tileIdx, handle) in orderedHandles.enumerated() {
-                    let tileY = columnFrame.maxY - CGFloat(tileIdx + 1) * tileHeight - CGFloat(tileIdx) * innerSpacing
-                    let tileFrame = CGRect(
-                        x: columnFrame.minX,
-                        y: tileY,
-                        width: columnFrame.width,
-                        height: tileHeight
-                    )
-                    layout.updateWindowFrame(handle: handle, frame: tileFrame)
-                }
-
-                let columnEntry = OverviewNiriColumn(
-                    workspaceId: section.workspaceId,
-                    columnIndex: idx,
-                    frame: columnFrame,
-                    windowHandles: orderedHandles
-                )
-                columns.append(columnEntry)
-            }
-
-            columnsByWorkspace[section.workspaceId] = columns
-        }
-
-        layout.niriColumnsByWorkspace = columnsByWorkspace
-    }
 }

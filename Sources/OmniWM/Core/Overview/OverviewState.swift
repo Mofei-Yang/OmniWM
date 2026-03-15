@@ -238,6 +238,33 @@ struct OverviewLayout {
         return adjustedPoint.y > window.overviewFrame.midY ? .before : .after
     }
 
+    func resolveDragTarget(at point: CGPoint, draggedHandle: WindowHandle?) -> OverviewDragTarget? {
+        if let zone = columnDropZone(at: point) {
+            return .niriColumnInsert(
+                workspaceId: zone.workspaceId,
+                insertIndex: zone.insertIndex
+            )
+        }
+
+        if let window = windowAt(point: point) {
+            guard window.handle != draggedHandle else { return nil }
+            if niriColumnsByWorkspace[window.workspaceId] != nil {
+                return .niriWindowInsert(
+                    workspaceId: window.workspaceId,
+                    targetHandle: window.handle,
+                    position: insertPosition(for: window, at: point)
+                )
+            }
+            return .workspaceMove(workspaceId: window.workspaceId)
+        }
+
+        if let section = workspaceSection(at: point) {
+            return .workspaceMove(workspaceId: section.workspaceId)
+        }
+
+        return nil
+    }
+
     func window(for handle: WindowHandle) -> OverviewWindowItem? {
         guard let position = windowPositionByHandle[handle],
               workspaceSections.indices.contains(position.sectionIndex),
