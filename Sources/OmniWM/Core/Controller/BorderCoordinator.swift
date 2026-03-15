@@ -24,6 +24,11 @@ final class BorderCoordinator {
             return
         }
 
+        if controller.workspaceManager.hasPendingNativeFullscreenTransition {
+            controller.borderManager.hideBorder()
+            return
+        }
+
         if shouldDeferBorderUpdates(for: activeWs.id) {
             return
         }

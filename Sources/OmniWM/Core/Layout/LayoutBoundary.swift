@@ -5,6 +5,11 @@ struct LayoutWindowSnapshot {
     let token: WindowToken
     let constraints: WindowSizeConstraints
     let hiddenState: WindowModel.HiddenState?
+    let layoutReason: LayoutReason
+
+    var isNativeFullscreenSuspended: Bool {
+        layoutReason == .nativeFullscreen
+    }
 }
 
 struct LayoutMonitorSnapshot {

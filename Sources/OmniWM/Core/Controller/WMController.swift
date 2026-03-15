@@ -259,6 +259,10 @@ final class WMController {
         return !workspaceManager.isHiddenInCorner(handle.id)
     }
 
+    func isManagedWindowSuspendedForNativeFullscreen(_ token: WindowToken) -> Bool {
+        workspaceManager.isNativeFullscreenSuspended(token)
+    }
+
     func updateWorkspaceBarSettings() {
         workspaceBarManager.updateSettings()
     }
@@ -578,6 +582,7 @@ final class WMController {
 
     func ensureFocusedTokenValid(in workspaceId: WorkspaceDescriptor.ID) {
         guard !shouldSuppressManagedFocusRecovery else { return }
+        guard !workspaceManager.hasPendingNativeFullscreenTransition else { return }
 
         if let focusedToken = workspaceManager.focusedToken,
            workspaceManager.entry(for: focusedToken)?.workspaceId == workspaceId
@@ -677,6 +682,7 @@ extension WMController {
     func focusWindow(_ token: WindowToken) {
         guard let entry = workspaceManager.entry(for: token) else { return }
         guard !(isFrontmostAppLockScreen() || isLockScreenActive) else { return }
+        guard !isManagedWindowSuspendedForNativeFullscreen(token) else { return }
 
         _ = workspaceManager.beginManagedFocusRequest(
             token,
@@ -710,6 +716,8 @@ extension WMController {
                        let node = engine.findNode(for: token),
                        let frame = node.renderedFrame ?? node.frame
                     {
+                        self.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
+                    } else if let frame = self.axManager.lastAppliedFrame(for: entry.windowId) {
                         self.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
                     } else if let frame = try? AXWindowService.frame(entry.axRef) {
                         self.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)

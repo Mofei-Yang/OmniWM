@@ -237,6 +237,10 @@ final class WindowModel {
         entries[token]?.layoutReason ?? .standard
     }
 
+    func isNativeFullscreenSuspended(_ token: WindowToken) -> Bool {
+        entries[token]?.layoutReason == .nativeFullscreen
+    }
+
     func setLayoutReason(_ reason: LayoutReason, for token: WindowToken) {
         guard let entry = entries[token] else { return }
         if reason != .standard, entry.layoutReason == .standard {
@@ -270,6 +274,10 @@ final class WindowModel {
         confirmedMissing.reserveCapacity(missingTokens.count)
 
         for token in missingTokens {
+            if entries[token]?.layoutReason == .nativeFullscreen {
+                missingDetectionCountByToken.removeValue(forKey: token)
+                continue
+            }
             let misses = (missingDetectionCountByToken[token] ?? 0) + 1
             if misses >= threshold {
                 confirmedMissing.append(token)

@@ -579,6 +579,69 @@ private func workspaceConfigurations(
         #expect(manager.lastFocusedHandle(in: workspaceId) == survivor)
     }
 
+    @Test @MainActor func removeMissingDoesNotEvictNativeFullscreenSuspendedWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 31, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let suspended = addWorkspaceManagerTestHandle(manager: manager, windowId: 2311, pid: 2311, workspaceId: workspaceId)
+        manager.setLayoutReason(.nativeFullscreen, for: suspended)
+
+        manager.removeMissing(keys: [], requiredConsecutiveMisses: 2)
+        manager.removeMissing(keys: [], requiredConsecutiveMisses: 2)
+
+        #expect(manager.entry(for: suspended) != nil)
+        #expect(manager.layoutReason(for: suspended) == .nativeFullscreen)
+    }
+
+    @Test @MainActor func nativeFullscreenRestoreOnlyClearsTargetRecordWhenSamePidHasMultipleSuspendedWindows() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = workspaceConfigurations([
+            ("1", .main),
+            ("2", .secondary)
+        ])
+
+        let manager = WorkspaceManager(settings: settings)
+        let left = makeWorkspaceManagerTestMonitor(displayId: 10, name: "Left", x: 0, y: 0)
+        let right = makeWorkspaceManagerTestMonitor(displayId: 20, name: "Right", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, right])
+
+        guard let ws1 = manager.workspaceId(for: "1", createIfMissing: true),
+              let ws2 = manager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Failed to create workspaces")
+            return
+        }
+
+        let pid: pid_t = 4601
+        let token1 = manager.addWindow(makeWorkspaceManagerTestWindow(windowId: 2321), pid: pid, windowId: 2321, to: ws1)
+        let token2 = manager.addWindow(makeWorkspaceManagerTestWindow(windowId: 2322), pid: pid, windowId: 2322, to: ws2)
+
+        _ = manager.requestNativeFullscreenEnter(token1, in: ws1)
+        _ = manager.markNativeFullscreenSuspended(token1)
+        _ = manager.requestNativeFullscreenEnter(token2, in: ws2)
+        _ = manager.markNativeFullscreenSuspended(token2)
+        _ = manager.requestNativeFullscreenExit(token2, initiatedByCommand: true)
+        _ = manager.restoreNativeFullscreenRecord(for: token2)
+
+        #expect(manager.nativeFullscreenRecord(for: token2) == nil)
+        #expect(manager.layoutReason(for: token2) == .standard)
+        #expect(manager.layoutReason(for: token1) == .nativeFullscreen)
+        #expect(manager.nativeFullscreenCommandTarget(frontmostToken: token1) == token1)
+    }
+
     @Test @MainActor func monitorReconnectPrefersFocusedWorkspaceMonitorForInteractionState() {
         let defaults = makeWorkspaceManagerTestDefaults()
         let settings = SettingsStore(defaults: defaults)

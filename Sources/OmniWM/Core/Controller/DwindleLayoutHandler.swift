@@ -389,8 +389,15 @@ import QuartzCore
         canRestoreHiddenWorkspaceWindows: Bool
     ) -> WorkspaceLayoutDiff {
         var diff = WorkspaceLayoutDiff()
+        let suspendedTokens = Set(
+            windows.lazy
+                .filter(\.isNativeFullscreenSuspended)
+                .map(\.token)
+        )
         if let confirmedFocusedToken {
-            let ownsFocusedToken = windows.contains(where: { $0.token == confirmedFocusedToken })
+            let ownsFocusedToken = windows.contains {
+                $0.token == confirmedFocusedToken && !$0.isNativeFullscreenSuspended
+            }
             diff.borderMode = ownsFocusedToken
                 ? (borderMode ?? (directBorderUpdate ? .direct : .coordinated))
                 : .none
@@ -399,6 +406,9 @@ import QuartzCore
         }
 
         for window in windows {
+            if window.isNativeFullscreenSuspended {
+                continue
+            }
             if canRestoreHiddenWorkspaceWindows,
                let hiddenState = window.hiddenState,
                hiddenState.workspaceInactive
@@ -418,6 +428,7 @@ import QuartzCore
         }
 
         if let confirmedFocusedToken,
+           !suspendedTokens.contains(confirmedFocusedToken),
            let frame = frames[confirmedFocusedToken]
         {
             diff.focusedFrame = LayoutFocusedFrame(

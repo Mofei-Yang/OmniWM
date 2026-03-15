@@ -16,6 +16,22 @@ struct WorkspaceDescriptor: Identifiable, Hashable {
 
 @MainActor
 final class WorkspaceManager {
+    enum NativeFullscreenTransition {
+        case enterRequested
+        case suspended
+        case exitRequested
+        case awaitingReplacement
+    }
+
+    struct NativeFullscreenRecord {
+        let originalToken: WindowToken
+        var currentToken: WindowToken
+        let workspaceId: WorkspaceDescriptor.ID
+        var replacementDeadline: Date?
+        var exitRequestedByCommand: Bool
+        var transition: NativeFullscreenTransition
+    }
+
     private struct DisconnectedVisibleWorkspaceMigration {
         let removedMonitor: Monitor
         let workspaceId: WorkspaceDescriptor.ID
@@ -66,6 +82,8 @@ final class WorkspaceManager {
     private(set) var gaps: Double = 8
     private(set) var outerGaps: LayoutGaps.OuterGaps = .zero
     private let windows = WindowModel()
+    private var nativeFullscreenRecordsByOriginalToken: [WindowToken: NativeFullscreenRecord] = [:]
+    private var nativeFullscreenOriginalTokenByCurrentToken: [WindowToken: WindowToken] = [:]
 
     private var _cachedSortedWorkspaces: [WorkspaceDescriptor]?
     var animationClock: AnimationClock?
@@ -135,6 +153,12 @@ final class WorkspaceManager {
 
     var isAppFullscreenActive: Bool {
         sessionState.focus.isAppFullscreenActive
+    }
+
+    var hasPendingNativeFullscreenTransition: Bool {
+        nativeFullscreenRecordsByOriginalToken.values.contains {
+            $0.transition == .enterRequested || $0.transition == .awaitingReplacement
+        }
     }
 
     @discardableResult
@@ -256,6 +280,277 @@ final class WorkspaceManager {
 
             return changed
         }
+    }
+
+    func nativeFullscreenRecord(for token: WindowToken) -> NativeFullscreenRecord? {
+        guard let originalToken = nativeFullscreenOriginalToken(for: token) else {
+            return nil
+        }
+        return nativeFullscreenRecordsByOriginalToken[originalToken]
+    }
+
+    @discardableResult
+    func requestNativeFullscreenEnter(
+        _ token: WindowToken,
+        in workspaceId: WorkspaceDescriptor.ID
+    ) -> Bool {
+        var changed = rememberFocus(token, in: workspaceId)
+        let originalToken = nativeFullscreenOriginalToken(for: token) ?? token
+        let existing = nativeFullscreenRecordsByOriginalToken[originalToken]
+        var record = existing ?? NativeFullscreenRecord(
+            originalToken: originalToken,
+            currentToken: token,
+            workspaceId: workspaceId,
+            replacementDeadline: nil,
+            exitRequestedByCommand: false,
+            transition: .enterRequested
+        )
+
+        if record.currentToken != token {
+            record.currentToken = token
+            changed = true
+        }
+        if record.replacementDeadline != nil {
+            record.replacementDeadline = nil
+            changed = true
+        }
+        if record.exitRequestedByCommand {
+            record.exitRequestedByCommand = false
+            changed = true
+        }
+        if record.transition != .enterRequested {
+            record.transition = .enterRequested
+            changed = true
+        }
+        if existing == nil || changed {
+            upsertNativeFullscreenRecord(record)
+        }
+
+        return changed || existing == nil
+    }
+
+    @discardableResult
+    func markNativeFullscreenSuspended(_ token: WindowToken) -> Bool {
+        guard let entry = entry(for: token) else { return false }
+
+        var changed = rememberFocus(token, in: entry.workspaceId)
+        let originalToken = nativeFullscreenOriginalToken(for: token) ?? token
+        let existing = nativeFullscreenRecordsByOriginalToken[originalToken]
+        var record = existing ?? NativeFullscreenRecord(
+            originalToken: originalToken,
+            currentToken: token,
+            workspaceId: entry.workspaceId,
+            replacementDeadline: nil,
+            exitRequestedByCommand: false,
+            transition: .suspended
+        )
+
+        if record.currentToken != token {
+            record.currentToken = token
+            changed = true
+        }
+        if record.replacementDeadline != nil {
+            record.replacementDeadline = nil
+            changed = true
+        }
+        if record.exitRequestedByCommand {
+            record.exitRequestedByCommand = false
+            changed = true
+        }
+        if record.transition != .suspended {
+            record.transition = .suspended
+            changed = true
+        }
+        if existing == nil || changed {
+            upsertNativeFullscreenRecord(record)
+        }
+
+        if layoutReason(for: token) != .nativeFullscreen {
+            setLayoutReason(.nativeFullscreen, for: token)
+            changed = true
+        }
+        changed = enterNonManagedFocus(appFullscreen: true) || changed
+        return changed
+    }
+
+    @discardableResult
+    func requestNativeFullscreenExit(
+        _ token: WindowToken,
+        initiatedByCommand: Bool
+    ) -> Bool {
+        let existing = nativeFullscreenRecord(for: token)
+        if existing == nil, entry(for: token) == nil {
+            return false
+        }
+
+        let originalToken = existing?.originalToken ?? token
+        let workspaceId = existing?.workspaceId ?? workspace(for: token)
+        guard let workspaceId else { return false }
+
+        var record = existing ?? NativeFullscreenRecord(
+            originalToken: originalToken,
+            currentToken: token,
+            workspaceId: workspaceId,
+            replacementDeadline: nil,
+            exitRequestedByCommand: initiatedByCommand,
+            transition: .exitRequested
+        )
+
+        var changed = existing == nil
+        if record.currentToken != token {
+            record.currentToken = token
+            changed = true
+        }
+        if record.replacementDeadline != nil {
+            record.replacementDeadline = nil
+            changed = true
+        }
+        if record.exitRequestedByCommand != initiatedByCommand {
+            record.exitRequestedByCommand = initiatedByCommand
+            changed = true
+        }
+        if record.transition != .exitRequested {
+            record.transition = .exitRequested
+            changed = true
+        }
+        if changed {
+            upsertNativeFullscreenRecord(record)
+        }
+
+        return changed
+    }
+
+    @discardableResult
+    func markNativeFullscreenAwaitingReplacement(
+        _ token: WindowToken,
+        replacementDeadline: Date
+    ) -> NativeFullscreenRecord? {
+        guard let originalToken = nativeFullscreenOriginalToken(for: token),
+              var record = nativeFullscreenRecordsByOriginalToken[originalToken]
+        else {
+            return nil
+        }
+
+        if layoutReason(for: record.currentToken) != .nativeFullscreen {
+            setLayoutReason(.nativeFullscreen, for: record.currentToken)
+        }
+
+        record.transition = .awaitingReplacement
+        record.replacementDeadline = replacementDeadline
+        upsertNativeFullscreenRecord(record)
+        _ = setManagedAppFullscreen(false)
+        return record
+    }
+
+    func nativeFullscreenAwaitingReplacementCandidate(
+        for pid: pid_t,
+        activeWorkspaceId: WorkspaceDescriptor.ID?,
+        now: Date = Date()
+    ) -> NativeFullscreenRecord? {
+        let candidates = nativeFullscreenRecordsByOriginalToken.values.filter { record in
+            guard record.currentToken.pid == pid,
+                  record.transition == .awaitingReplacement
+            else {
+                return false
+            }
+            if let deadline = record.replacementDeadline, deadline < now {
+                return false
+            }
+            return true
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        if let activeWorkspaceId {
+            let workspaceMatches = candidates.filter { $0.workspaceId == activeWorkspaceId }
+            if workspaceMatches.count == 1 {
+                return workspaceMatches[0]
+            }
+        }
+
+        let commandMatches = candidates.filter(\.exitRequestedByCommand)
+        if commandMatches.count == 1 {
+            return commandMatches[0]
+        }
+
+        guard candidates.count == 1 else { return nil }
+        return candidates[0]
+    }
+
+    @discardableResult
+    func attachNativeFullscreenReplacement(
+        _ originalToken: WindowToken,
+        to newToken: WindowToken
+    ) -> Bool {
+        guard var record = nativeFullscreenRecordsByOriginalToken[originalToken] else {
+            return false
+        }
+        guard record.currentToken != newToken else { return false }
+        record.currentToken = newToken
+        record.replacementDeadline = nil
+        upsertNativeFullscreenRecord(record)
+        return true
+    }
+
+    @discardableResult
+    func restoreNativeFullscreenRecord(for token: WindowToken) -> ParentKind? {
+        let record = nativeFullscreenRecord(for: token)
+        let resolvedToken = record?.currentToken ?? token
+        if let record {
+            _ = removeNativeFullscreenRecord(originalToken: record.originalToken)
+        }
+        let restoredParentKind = restoreFromNativeState(for: resolvedToken)
+        _ = setManagedAppFullscreen(false)
+        return restoredParentKind
+    }
+
+    func nativeFullscreenCommandTarget(frontmostToken: WindowToken?) -> WindowToken? {
+        if let frontmostToken,
+           let record = nativeFullscreenRecord(for: frontmostToken),
+           record.currentToken == frontmostToken,
+           record.transition == .suspended || record.transition == .exitRequested
+        {
+            return record.currentToken
+        }
+
+        let candidates = nativeFullscreenRecordsByOriginalToken.values.filter {
+            $0.transition == .suspended || $0.transition == .exitRequested
+        }
+        guard candidates.count == 1 else { return nil }
+        return candidates[0].currentToken
+    }
+
+    @discardableResult
+    func expireNativeFullscreenAwaitingReplacementRecords(
+        now: Date = Date()
+    ) -> [WindowModel.Entry] {
+        let expiredOriginalTokens = nativeFullscreenRecordsByOriginalToken.values.compactMap { record -> WindowToken? in
+            guard record.transition == .awaitingReplacement,
+                  let deadline = record.replacementDeadline,
+                  deadline < now
+            else {
+                return nil
+            }
+            return record.originalToken
+        }
+
+        guard !expiredOriginalTokens.isEmpty else { return [] }
+
+        var removedEntries: [WindowModel.Entry] = []
+        removedEntries.reserveCapacity(expiredOriginalTokens.count)
+
+        for originalToken in expiredOriginalTokens {
+            guard let record = removeNativeFullscreenRecord(originalToken: originalToken) else {
+                continue
+            }
+            if layoutReason(for: record.currentToken) == .nativeFullscreen {
+                _ = restoreFromNativeState(for: record.currentToken)
+            }
+            if let removed = removeWindow(pid: record.currentToken.pid, windowId: record.currentToken.windowId) {
+                removedEntries.append(removed)
+            }
+        }
+
+        return removedEntries
     }
 
     @discardableResult
@@ -737,6 +1032,14 @@ final class WorkspaceManager {
             return nil
         }
 
+        if let originalToken = nativeFullscreenOriginalToken(for: oldToken),
+           var record = nativeFullscreenRecordsByOriginalToken[originalToken]
+        {
+            record.currentToken = newToken
+            record.replacementDeadline = nil
+            upsertNativeFullscreenRecord(record)
+        }
+
         let focusChanged = updateFocusSession(notify: false) { focus in
             var changed = false
 
@@ -809,6 +1112,7 @@ final class WorkspaceManager {
     func removeMissing(keys activeKeys: Set<WindowModel.WindowKey>, requiredConsecutiveMisses: Int = 1) {
         let removedEntries = windows.removeMissing(keys: activeKeys, requiredConsecutiveMisses: requiredConsecutiveMisses)
         for entry in removedEntries {
+            _ = removeNativeFullscreenRecord(containing: entry.token)
             handleWindowRemoved(entry.token, in: entry.workspaceId)
         }
     }
@@ -816,6 +1120,7 @@ final class WorkspaceManager {
     @discardableResult
     func removeWindow(pid: pid_t, windowId: Int) -> WindowModel.Entry? {
         guard let entry = windows.entry(forPid: pid, windowId: windowId) else { return nil }
+        _ = removeNativeFullscreenRecord(containing: entry.token)
         handleWindowRemoved(entry.token, in: entry.workspaceId)
         _ = windows.removeWindow(key: .init(pid: pid, windowId: windowId))
         return entry
@@ -828,6 +1133,7 @@ final class WorkspaceManager {
 
         for entry in entriesToRemove {
             affectedWorkspaces.insert(entry.workspaceId)
+            _ = removeNativeFullscreenRecord(containing: entry.token)
             handleWindowRemoved(entry.token, in: entry.workspaceId)
             _ = windows.removeWindow(key: .init(pid: pid, windowId: entry.windowId))
         }
@@ -859,12 +1165,48 @@ final class WorkspaceManager {
         windows.layoutReason(for: token)
     }
 
+    func isNativeFullscreenSuspended(_ token: WindowToken) -> Bool {
+        windows.isNativeFullscreenSuspended(token)
+    }
+
     func setLayoutReason(_ reason: LayoutReason, for token: WindowToken) {
         windows.setLayoutReason(reason, for: token)
     }
 
     func restoreFromNativeState(for token: WindowToken) -> ParentKind? {
         windows.restoreFromNativeState(for: token)
+    }
+
+    private func nativeFullscreenOriginalToken(for token: WindowToken) -> WindowToken? {
+        if nativeFullscreenRecordsByOriginalToken[token] != nil {
+            return token
+        }
+        return nativeFullscreenOriginalTokenByCurrentToken[token]
+    }
+
+    private func upsertNativeFullscreenRecord(_ record: NativeFullscreenRecord) {
+        if let previous = nativeFullscreenRecordsByOriginalToken[record.originalToken] {
+            nativeFullscreenOriginalTokenByCurrentToken.removeValue(forKey: previous.currentToken)
+        }
+        nativeFullscreenRecordsByOriginalToken[record.originalToken] = record
+        nativeFullscreenOriginalTokenByCurrentToken[record.currentToken] = record.originalToken
+    }
+
+    @discardableResult
+    private func removeNativeFullscreenRecord(originalToken: WindowToken) -> NativeFullscreenRecord? {
+        guard let record = nativeFullscreenRecordsByOriginalToken.removeValue(forKey: originalToken) else {
+            return nil
+        }
+        nativeFullscreenOriginalTokenByCurrentToken.removeValue(forKey: record.currentToken)
+        return record
+    }
+
+    @discardableResult
+    private func removeNativeFullscreenRecord(containing token: WindowToken) -> NativeFullscreenRecord? {
+        guard let originalToken = nativeFullscreenOriginalToken(for: token) else {
+            return nil
+        }
+        return removeNativeFullscreenRecord(originalToken: originalToken)
     }
 
     func cachedConstraints(for token: WindowToken, maxAge: TimeInterval = 5.0) -> WindowSizeConstraints? {

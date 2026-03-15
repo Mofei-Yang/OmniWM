@@ -471,7 +471,8 @@ import QuartzCore
                 LayoutWindowSnapshot(
                     token: entry.token,
                     constraints: mergedConstraints,
-                    hiddenState: controller.workspaceManager.hiddenState(for: entry.token)
+                    hiddenState: controller.workspaceManager.hiddenState(for: entry.token),
+                    layoutReason: controller.workspaceManager.layoutReason(for: entry.token)
                 )
             )
         }
@@ -511,7 +512,9 @@ import QuartzCore
                 guard let monitor = controller.workspaceManager.monitor(byId: monitorId) else { continue }
                 startDwindleAnimation(for: workspaceId, monitor: monitor)
             case let .activateWindow(token):
-                guard !controller.shouldSuppressManagedFocusRecovery else { continue }
+                guard !controller.shouldSuppressManagedFocusRecovery,
+                      !controller.workspaceManager.hasPendingNativeFullscreenTransition
+                else { continue }
                 controller.focusWindow(token)
             case .updateTabbedOverlays:
                 niriHandler.updateTabbedColumnOverlays()
@@ -865,6 +868,8 @@ import QuartzCore
         effects.updateWorkspaceBar = true
         effects.updateTabbedOverlays = updateTabbedOverlays
         if recoverFocus,
+           !controller.workspaceManager.isAppFullscreenActive,
+           !controller.workspaceManager.hasPendingNativeFullscreenTransition,
            !controller.shouldSuppressManagedFocusRecovery,
            let focusedWorkspaceId = controller.activeWorkspace()?.id
         {
@@ -924,7 +929,10 @@ import QuartzCore
 
         let activeWorkspaceIds = currentActiveWorkspaceIds()
         let focusValidationWorkspaceIds: [WorkspaceDescriptor.ID]
-        if controller.shouldSuppressManagedFocusRecovery {
+        if controller.workspaceManager.isAppFullscreenActive
+            || controller.workspaceManager.hasPendingNativeFullscreenTransition
+            || controller.shouldSuppressManagedFocusRecovery
+        {
             focusValidationWorkspaceIds = []
         } else {
             focusValidationWorkspaceIds = focusedWorkspacesToRecover
@@ -944,6 +952,7 @@ import QuartzCore
     private func buildFullRefreshExecutionPlan() async throws -> RefreshExecutionPlan {
         guard let controller else { return .init() }
 
+        _ = controller.workspaceManager.expireNativeFullscreenAwaitingReplacementRecords()
         let windows = await controller.axManager.currentWindowsAsync()
         try Task.checkCancellation()
         var seenKeys: Set<WindowModel.WindowKey> = []
@@ -961,21 +970,43 @@ import QuartzCore
                 }
             }
 
+            let token = WindowToken(pid: pid, windowId: winId)
+            let appFullscreen = controller.axEventHandler.isFullscreenProvider?(ax) ?? AXWindowService.isFullscreen(ax)
             let defaultWorkspace = controller.resolveWorkspaceForNewWindow(
                 axRef: ax,
                 pid: pid,
                 fallbackWorkspaceId: focusedWorkspaceId
             )
+            if controller.workspaceAssignment(pid: pid, windowId: winId) == nil {
+                _ = controller.axEventHandler.restoreNativeFullscreenReplacementIfNeeded(
+                    token: token,
+                    windowId: UInt32(winId),
+                    axRef: ax,
+                    workspaceId: defaultWorkspace,
+                    appFullscreen: appFullscreen
+                )
+            }
+
+            if let existingEntry = controller.workspaceManager.entry(forPid: pid, windowId: winId) {
+                if appFullscreen {
+                    _ = controller.workspaceManager.markNativeFullscreenSuspended(existingEntry.token)
+                } else if controller.workspaceManager.nativeFullscreenRecord(for: existingEntry.token) != nil
+                    || existingEntry.layoutReason == .nativeFullscreen
+                {
+                    _ = controller.workspaceManager.restoreNativeFullscreenRecord(for: existingEntry.token)
+                }
+            }
             let existingAssignment = controller.workspaceAssignment(pid: pid, windowId: winId)
             let wsForWindow = existingAssignment ?? defaultWorkspace
 
             _ = controller.workspaceManager.addWindow(ax, pid: pid, windowId: winId, to: wsForWindow)
-            seenKeys.insert(.init(pid: pid, windowId: winId))
+            seenKeys.insert(token)
         }
 
         for entry in controller.workspaceManager.allEntries()
         where controller.hiddenAppPIDs.contains(entry.handle.pid)
             || controller.workspaceManager.layoutReason(for: entry.token) == .macosHiddenApp
+            || controller.workspaceManager.layoutReason(for: entry.token) == .nativeFullscreen
         {
             seenKeys.insert(.init(pid: entry.handle.pid, windowId: entry.windowId))
         }
@@ -1014,7 +1045,11 @@ import QuartzCore
         effects.visibility = .init(activeWorkspaceIds: activeWorkspaceIds)
         effects.updateWorkspaceBar = true
         effects.updateTabbedOverlays = updateTabbedOverlays
-        if !controller.shouldSuppressManagedFocusRecovery, let focusedWorkspaceId {
+        if !controller.workspaceManager.isAppFullscreenActive,
+           !controller.workspaceManager.hasPendingNativeFullscreenTransition,
+           !controller.shouldSuppressManagedFocusRecovery,
+           let focusedWorkspaceId
+        {
             effects.focusValidationWorkspaceIds = [focusedWorkspaceId]
         }
         effects.markInitialRefreshComplete = true
@@ -1831,10 +1866,12 @@ final class LayoutDiffExecutor {
             switch change {
             case let .show(token):
                 guard let entry = resolveEntry(for: token) else { continue }
+                guard entry.layoutReason != .nativeFullscreen else { continue }
                 shownEntries.append(entry)
             case let .hide(token, side):
                 hiddenTokens.insert(token)
                 guard let entry = resolveEntry(for: token) else { continue }
+                guard entry.layoutReason != .nativeFullscreen else { continue }
                 hiddenEntries.append((entry, side))
             }
         }
@@ -1845,6 +1882,7 @@ final class LayoutDiffExecutor {
             else {
                 continue
             }
+            guard entry.layoutReason != .nativeFullscreen else { continue }
             restoreEntries.append((entry, restoreChange.hiddenState))
         }
 
@@ -1929,6 +1967,7 @@ final class LayoutDiffExecutor {
             else {
                 continue
             }
+            guard entry.layoutReason != .nativeFullscreen else { continue }
             if change.forceApply {
                 controller.axManager.forceApplyNextFrame(for: entry.windowId)
             }

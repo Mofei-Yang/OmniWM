@@ -197,6 +197,29 @@ private func waitForFocusRefresh(on controller: WMController) async {
         #expect(controller.workspaceManager.isNonManagedFocusActive == true)
     }
 
+    @Test @MainActor func focusWindowIsNoOpForNativeFullscreenSuspendedWindow() {
+        var events: [FocusOperationEvent] = []
+        let operations = WindowFocusOperations(
+            activateApp: { pid in
+                events.append(.activate(pid))
+            },
+            focusSpecificWindow: { pid, windowId, _ in
+                events.append(.focus(pid, windowId))
+            },
+            raiseWindow: { _ in
+                events.append(.raise)
+            }
+        )
+        let (controller, _, handle) = makeFocusTestController(windowFocusOperations: operations)
+        controller.workspaceManager.setLayoutReason(.nativeFullscreen, for: handle)
+
+        controller.focusWindow(handle)
+
+        #expect(events.isEmpty)
+        #expect(controller.workspaceManager.pendingFocusedHandle == nil)
+        #expect(controller.workspaceManager.focusedHandle == nil)
+    }
+
     @Test @MainActor func relayoutDoesNotRefocusManagedWindowWhileOwnedUtilityWindowIsFrontmost() async {
         var events: [FocusOperationEvent] = []
         let operations = WindowFocusOperations(

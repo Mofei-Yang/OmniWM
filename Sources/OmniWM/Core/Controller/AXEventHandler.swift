@@ -75,12 +75,14 @@ final class AXEventHandler: CGSEventDelegate {
 
     private static let ghosttyBundleId = "com.mitchellh.ghostty"
     private static let ghosttyReplacementGraceDelay: Duration = .milliseconds(150)
+    private static let nativeFullscreenReplacementGraceDelay: Duration = .seconds(1)
 
     weak var controller: WMController?
     private var deferredCreatedWindowIds: Set<UInt32> = []
     private var deferredCreatedWindowOrder: [UInt32] = []
     private var pendingGhosttyReplacementBursts: [GhosttyReplacementKey: PendingGhosttyReplacementBurst] = [:]
     private var pendingGhosttyReplacementTasks: [GhosttyReplacementKey: Task<Void, Never>] = [:]
+    private var pendingNativeFullscreenReplacementTasks: [WindowToken: Task<Void, Never>] = [:]
     private var nextGhosttyEventSequence: UInt64 = 0
     var windowInfoProvider: ((UInt32) -> WindowServerInfo?)?
     var axWindowRefProvider: ((UInt32, pid_t) -> AXWindowRef?)?
@@ -89,6 +91,7 @@ final class AXEventHandler: CGSEventDelegate {
     var focusedWindowValueProvider: ((pid_t) -> CFTypeRef?)?
     var windowTypeProvider: ((AXWindowRef, pid_t) -> AXWindowType)?
     var frameProvider: ((AXWindowRef) -> CGRect?)?
+    var isFullscreenProvider: ((AXWindowRef) -> Bool)?
     private(set) var debugCounters = DebugCounters()
 
     init(
@@ -104,6 +107,7 @@ final class AXEventHandler: CGSEventDelegate {
 
     func cleanup() {
         resetGhosttyReplacementState()
+        resetNativeFullscreenReplacementState()
         CGSEventObserver.shared.delegate = nil
         CGSEventObserver.shared.stop()
     }
@@ -165,6 +169,7 @@ final class AXEventHandler: CGSEventDelegate {
     func resetDebugStateForTests() {
         debugCounters = .init()
         resetGhosttyReplacementState()
+        resetNativeFullscreenReplacementState()
     }
 
     private func handleFrameChanged(windowId: UInt32) {
@@ -238,6 +243,18 @@ final class AXEventHandler: CGSEventDelegate {
     private func trackPreparedCreate(_ candidate: PreparedCreate) {
         guard let controller else { return }
 
+        if restoreNativeFullscreenReplacementIfNeeded(
+            token: candidate.token,
+            windowId: candidate.windowId,
+            axRef: candidate.axRef,
+            workspaceId: candidate.workspaceId,
+            appFullscreen: isFullscreenProvider?(candidate.axRef) ?? AXWindowService.isFullscreen(candidate.axRef)
+        ) {
+            controller.updateWorkspaceBar()
+            controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
+            return
+        }
+
         if candidate.workspaceId != controller.activeWorkspace()?.id {
             if let monitor = controller.workspaceManager.monitor(for: candidate.workspaceId),
                controller.workspaceManager.workspaces(on: monitor.id)
@@ -276,6 +293,15 @@ final class AXEventHandler: CGSEventDelegate {
         let entry = controller.workspaceManager.entry(for: token)
         let affectedWorkspaceId = entry?.workspaceId
         let removedHandle = entry?.handle
+
+        if let removed = removedHandle {
+            controller.focusCoordinator.discardPendingFocus(removed.id)
+        }
+
+        if handleNativeFullscreenDestroy(token) {
+            return
+        }
+
         let shouldRecoverFocus = token == controller.workspaceManager.focusedToken
         let layoutType = affectedWorkspaceId
             .flatMap { controller.workspaceManager.descriptor(for: $0)?.name }
@@ -300,10 +326,6 @@ final class AXEventHandler: CGSEventDelegate {
                     monitor: monitor
                 )
             }
-        }
-
-        if let removed = removedHandle {
-            controller.focusCoordinator.discardPendingFocus(removed.id)
         }
 
         var oldFrames: [WindowToken: CGRect] = [:]
@@ -339,31 +361,21 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        let focusedWindow = resolveFocusedWindowValue(pid: pid)
-
-        guard let windowElement = focusedWindow else {
+        guard let axRef = resolveFocusedAXWindowRef(pid: pid) else {
             _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
             controller.borderManager.hideBorder()
             return
         }
+        let token = WindowToken(pid: pid, windowId: axRef.windowId)
 
-        guard CFGetTypeID(windowElement) == AXUIElementGetTypeID() else {
-            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
-            controller.borderManager.hideBorder()
-            return
-        }
+        let appFullscreen = isFullscreenProvider?(axRef) ?? AXWindowService.isFullscreen(axRef)
 
-        let axElement = unsafeDowncast(windowElement, to: AXUIElement.self)
-        guard let axRef = try? AXWindowRef(element: axElement) else {
-            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
-            controller.borderManager.hideBorder()
-            return
-        }
-        let winId = axRef.windowId
-
-        let appFullscreen = AXWindowService.isFullscreen(axRef)
-
-        if let entry = controller.workspaceManager.entry(forPid: pid, windowId: winId) {
+        if let entry = controller.workspaceManager.entry(for: token) {
+            if appFullscreen {
+                suspendManagedWindowForNativeFullscreen(entry)
+                return
+            }
+            _ = restoreManagedWindowFromNativeFullscreen(entry)
             let wsId = entry.workspaceId
 
             let targetMonitor = controller.workspaceManager.monitor(for: wsId)
@@ -373,6 +385,29 @@ final class AXEventHandler: CGSEventDelegate {
 
             handleManagedAppActivation(
                 entry: entry,
+                isWorkspaceActive: isWorkspaceActive,
+                appFullscreen: appFullscreen
+            )
+            return
+        }
+
+        if restoreNativeFullscreenReplacementIfNeeded(
+            token: token,
+            windowId: UInt32(axRef.windowId),
+            axRef: axRef,
+            workspaceId: controller.activeWorkspace()?.id,
+            appFullscreen: appFullscreen
+        ),
+            let restoredEntry = controller.workspaceManager.entry(for: token)
+        {
+            let wsId = restoredEntry.workspaceId
+            let targetMonitor = controller.workspaceManager.monitor(for: wsId)
+            let isWorkspaceActive = targetMonitor.map { monitor in
+                controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
+            } ?? false
+
+            handleManagedAppActivation(
+                entry: restoredEntry,
                 isWorkspaceActive: isWorkspaceActive,
                 appFullscreen: appFullscreen
             )
@@ -389,6 +424,12 @@ final class AXEventHandler: CGSEventDelegate {
         appFullscreen: Bool
     ) {
         guard let controller else { return }
+        if appFullscreen {
+            suspendManagedWindowForNativeFullscreen(entry)
+            return
+        }
+
+        _ = restoreManagedWindowFromNativeFullscreen(entry)
         let wsId = entry.workspaceId
         let monitorId = controller.workspaceManager.monitorId(for: wsId)
         let shouldActivateWorkspace = !isWorkspaceActive && !controller.isTransferringWindow
@@ -433,6 +474,126 @@ final class AXEventHandler: CGSEventDelegate {
                 reason: .appActivationTransition
             )
         }
+    }
+
+    func focusedWindowToken(for pid: pid_t) -> WindowToken? {
+        guard let axRef = resolveFocusedAXWindowRef(pid: pid) else { return nil }
+        return WindowToken(pid: pid, windowId: axRef.windowId)
+    }
+
+    @discardableResult
+    private func suspendManagedWindowForNativeFullscreen(_ entry: WindowModel.Entry) -> Bool {
+        guard let controller else { return false }
+        cancelNativeFullscreenReplacementExpiry(containing: entry.token)
+        let changed = controller.workspaceManager.markNativeFullscreenSuspended(entry.token)
+        controller.borderManager.hideBorder()
+        return changed
+    }
+
+    @discardableResult
+    private func restoreManagedWindowFromNativeFullscreen(_ entry: WindowModel.Entry) -> Bool {
+        guard let controller else { return false }
+        let hadRecord = controller.workspaceManager.nativeFullscreenRecord(for: entry.token) != nil
+        guard hadRecord || controller.workspaceManager.layoutReason(for: entry.token) == .nativeFullscreen else {
+            return false
+        }
+        cancelNativeFullscreenReplacementExpiry(containing: entry.token)
+        return controller.workspaceManager.restoreNativeFullscreenRecord(for: entry.token) != nil || hadRecord
+    }
+
+    @discardableResult
+    func restoreNativeFullscreenReplacementIfNeeded(
+        token: WindowToken,
+        windowId: UInt32,
+        axRef: AXWindowRef,
+        workspaceId: WorkspaceDescriptor.ID?,
+        appFullscreen: Bool
+    ) -> Bool {
+        guard let controller else { return false }
+        guard let record = controller.workspaceManager.nativeFullscreenAwaitingReplacementCandidate(
+            for: token.pid,
+            activeWorkspaceId: workspaceId
+        ) else {
+            return false
+        }
+        guard rekeyManagedWindowIdentity(from: record.currentToken, to: token, windowId: windowId, axRef: axRef) != nil else {
+            return false
+        }
+
+        cancelNativeFullscreenReplacementExpiry(for: record.originalToken)
+
+        if appFullscreen {
+            _ = controller.workspaceManager.markNativeFullscreenSuspended(token)
+        } else {
+            _ = controller.workspaceManager.restoreNativeFullscreenRecord(for: token)
+        }
+
+        return true
+    }
+
+    @discardableResult
+    func rekeyManagedWindowIdentity(
+        from oldToken: WindowToken,
+        to newToken: WindowToken,
+        windowId: UInt32,
+        axRef: AXWindowRef
+    ) -> WindowModel.Entry? {
+        guard let controller,
+              let entry = controller.workspaceManager.rekeyWindow(
+                  from: oldToken,
+                  to: newToken,
+                  newAXRef: axRef
+              )
+        else {
+            return nil
+        }
+
+        _ = controller.niriEngine?.rekeyWindow(from: oldToken, to: newToken)
+        if let workspaceId = controller.workspaceManager.workspace(for: newToken) {
+            _ = controller.dwindleEngine?.rekeyWindow(from: oldToken, to: newToken, in: workspaceId)
+        }
+
+        controller.focusCoordinator.rekeyPendingFocus(from: oldToken, to: newToken)
+        controller.axManager.rekeyWindowState(
+            pid: newToken.pid,
+            oldWindowId: oldToken.windowId,
+            newWindow: axRef
+        )
+        subscribeToWindows([windowId])
+        controller.updateWorkspaceBar()
+        controller.niriLayoutHandler.updateTabbedColumnOverlays()
+        refreshBorderAfterManagedRekey(entry: entry)
+
+        Task { @MainActor [weak self] in
+            guard let self, let controller = self.controller else { return }
+            if let app = NSRunningApplication(processIdentifier: newToken.pid) {
+                _ = await controller.axManager.windowsForApp(app)
+            }
+        }
+
+        return entry
+    }
+
+    private func handleNativeFullscreenDestroy(_ token: WindowToken) -> Bool {
+        guard let controller,
+              let record = controller.workspaceManager.nativeFullscreenRecord(for: token),
+              record.currentToken == token,
+              record.transition != .awaitingReplacement
+        else {
+            return false
+        }
+
+        let deadline = Date().addingTimeInterval(1)
+        guard let awaitingRecord = controller.workspaceManager.markNativeFullscreenAwaitingReplacement(
+            token,
+            replacementDeadline: deadline
+        ) else {
+            return false
+        }
+
+        controller.borderManager.hideBorder()
+        scheduleNativeFullscreenReplacementExpiry(for: awaitingRecord.originalToken)
+        return true
     }
 
     func handleAppHidden(pid: pid_t) {
@@ -650,43 +811,15 @@ final class AXEventHandler: CGSEventDelegate {
 
     @discardableResult
     private func rekeyGhosttyReplacement(from oldToken: WindowToken, to create: PreparedCreate) -> Bool {
-        guard let controller,
-              let entry = controller.workspaceManager.rekeyWindow(
-                  from: oldToken,
-                  to: create.token,
-                  newAXRef: create.axRef
-              )
-        else {
-            return false
-        }
-
-        _ = controller.niriEngine?.rekeyWindow(from: oldToken, to: create.token)
-        if let workspaceId = controller.workspaceManager.workspace(for: create.token) {
-            _ = controller.dwindleEngine?.rekeyWindow(from: oldToken, to: create.token, in: workspaceId)
-        }
-
-        controller.focusCoordinator.rekeyPendingFocus(from: oldToken, to: create.token)
-        controller.axManager.rekeyWindowState(
-            pid: create.token.pid,
-            oldWindowId: oldToken.windowId,
-            newWindow: create.axRef
-        )
-        subscribeToWindows([create.windowId])
-        controller.updateWorkspaceBar()
-        controller.niriLayoutHandler.updateTabbedColumnOverlays()
-        refreshBorderAfterGhosttyReplacement(entry: entry)
-
-        Task { @MainActor [weak self] in
-            guard let self, let controller = self.controller else { return }
-            if let app = NSRunningApplication(processIdentifier: create.token.pid) {
-                _ = await controller.axManager.windowsForApp(app)
-            }
-        }
-
-        return true
+        rekeyManagedWindowIdentity(
+            from: oldToken,
+            to: create.token,
+            windowId: create.windowId,
+            axRef: create.axRef
+        ) != nil
     }
 
-    private func refreshBorderAfterGhosttyReplacement(entry: WindowModel.Entry) {
+    private func refreshBorderAfterManagedRekey(entry: WindowModel.Entry) {
         guard let controller else { return }
         guard controller.workspaceManager.focusedToken == entry.token else { return }
 
@@ -709,6 +842,43 @@ final class AXEventHandler: CGSEventDelegate {
                 windowId: entry.windowId
             )
         }
+    }
+
+    private func resetNativeFullscreenReplacementState() {
+        for (_, task) in pendingNativeFullscreenReplacementTasks {
+            task.cancel()
+        }
+        pendingNativeFullscreenReplacementTasks.removeAll()
+    }
+
+    private func scheduleNativeFullscreenReplacementExpiry(for originalToken: WindowToken) {
+        cancelNativeFullscreenReplacementExpiry(for: originalToken)
+        pendingNativeFullscreenReplacementTasks[originalToken] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.nativeFullscreenReplacementGraceDelay)
+            guard !Task.isCancelled, let self, let controller = self.controller else { return }
+            defer { self.pendingNativeFullscreenReplacementTasks.removeValue(forKey: originalToken) }
+            guard let record = controller.workspaceManager.nativeFullscreenRecord(for: originalToken),
+                  record.originalToken == originalToken,
+                  record.transition == .awaitingReplacement
+            else {
+                return
+            }
+            controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
+        }
+    }
+
+    private func cancelNativeFullscreenReplacementExpiry(for originalToken: WindowToken) {
+        pendingNativeFullscreenReplacementTasks.removeValue(forKey: originalToken)?.cancel()
+    }
+
+    private func cancelNativeFullscreenReplacementExpiry(containing token: WindowToken) {
+        if let controller,
+           let originalToken = controller.workspaceManager.nativeFullscreenRecord(for: token)?.originalToken
+        {
+            cancelNativeFullscreenReplacementExpiry(for: originalToken)
+            return
+        }
+        cancelNativeFullscreenReplacementExpiry(for: token)
     }
 
     private func scheduleGhosttyReplacementFlush(for key: GhosttyReplacementKey) {
@@ -790,6 +960,17 @@ final class AXEventHandler: CGSEventDelegate {
         let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
         guard result == .success else { return nil }
         return focusedWindow
+    }
+
+    private func resolveFocusedAXWindowRef(pid: pid_t) -> AXWindowRef? {
+        guard let windowElement = resolveFocusedWindowValue(pid: pid) else {
+            return nil
+        }
+        guard CFGetTypeID(windowElement) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        let axElement = unsafeDowncast(windowElement, to: AXUIElement.self)
+        return try? AXWindowRef(element: axElement)
     }
 
     private func resolveBundleId(_ pid: pid_t) -> String? {

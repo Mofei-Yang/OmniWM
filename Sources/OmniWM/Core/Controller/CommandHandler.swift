@@ -4,6 +4,10 @@ import Foundation
 @MainActor
 final class CommandHandler {
     weak var controller: WMController?
+    var nativeFullscreenStateProvider: ((AXWindowRef) -> Bool)?
+    var nativeFullscreenSetter: ((AXWindowRef, Bool) -> Bool)?
+    var frontmostAppPidProvider: (() -> pid_t?)?
+    var frontmostFocusedWindowTokenProvider: (() -> WindowToken?)?
 
     init(controller: WMController) {
         self.controller = controller
@@ -316,16 +320,53 @@ final class CommandHandler {
 
     private func toggleNativeFullscreenForFocused() {
         guard let controller else { return }
-        guard let token = controller.workspaceManager.focusedToken else { return }
-        guard let entry = controller.workspaceManager.entry(for: token) else { return }
+        let setFullscreen = nativeFullscreenSetter ?? { axRef, fullscreen in
+            AXWindowService.setNativeFullscreen(axRef, fullscreen: fullscreen)
+        }
+        let isFullscreen = nativeFullscreenStateProvider ?? { axRef in
+            AXWindowService.isFullscreen(axRef)
+        }
 
-        let currentState = AXWindowService.isFullscreen(entry.axRef)
-        let newState = !currentState
+        if let token = controller.workspaceManager.focusedToken,
+           let entry = controller.workspaceManager.entry(for: token)
+        {
+            let currentState = isFullscreen(entry.axRef)
+            if currentState {
+                _ = controller.workspaceManager.requestNativeFullscreenExit(token, initiatedByCommand: true)
+                guard setFullscreen(entry.axRef, false) else {
+                    _ = controller.workspaceManager.markNativeFullscreenSuspended(token)
+                    return
+                }
+                return
+            }
 
-        _ = AXWindowService.setNativeFullscreen(entry.axRef, fullscreen: newState)
+            _ = controller.workspaceManager.requestNativeFullscreenEnter(token, in: entry.workspaceId)
+            guard setFullscreen(entry.axRef, true) else {
+                _ = controller.workspaceManager.restoreNativeFullscreenRecord(for: token)
+                return
+            }
+            return
+        }
 
-        if newState {
-            controller.borderManager.hideBorder()
+        guard controller.workspaceManager.isAppFullscreenActive
+            || controller.workspaceManager.hasPendingNativeFullscreenTransition
+        else {
+            return
+        }
+
+        let frontmostPid = frontmostAppPidProvider?() ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let frontmostToken = frontmostFocusedWindowTokenProvider?()
+            ?? frontmostPid.flatMap { controller.axEventHandler.focusedWindowToken(for: $0) }
+        guard let token = controller.workspaceManager.nativeFullscreenCommandTarget(frontmostToken: frontmostToken),
+              let entry = controller.workspaceManager.entry(for: token)
+        else {
+            return
+        }
+
+        _ = controller.workspaceManager.requestNativeFullscreenExit(token, initiatedByCommand: true)
+        guard setFullscreen(entry.axRef, false) else {
+            _ = controller.workspaceManager.markNativeFullscreenSuspended(token)
+            return
         }
     }
 

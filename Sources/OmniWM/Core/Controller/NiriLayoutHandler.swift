@@ -726,8 +726,15 @@ import QuartzCore
         canRestoreHiddenWorkspaceWindows: Bool
     ) -> WorkspaceLayoutDiff {
         var diff = WorkspaceLayoutDiff()
+        let suspendedTokens = Set(
+            windows.lazy
+                .filter(\.isNativeFullscreenSuspended)
+                .map(\.token)
+        )
         if let confirmedFocusedToken {
-            let ownsFocusedToken = windows.contains(where: { $0.token == confirmedFocusedToken })
+            let ownsFocusedToken = windows.contains {
+                $0.token == confirmedFocusedToken && !$0.isNativeFullscreenSuspended
+            }
             diff.borderMode = ownsFocusedToken ? (directBorderUpdate ? .direct : .coordinated) : .none
         } else {
             diff.borderMode = directBorderUpdate ? .direct : .coordinated
@@ -735,6 +742,9 @@ import QuartzCore
 
         for window in windows {
             let token = window.token
+            if window.isNativeFullscreenSuspended {
+                continue
+            }
             let previousOffscreenSide = window.hiddenState?.offscreenSide
             if let side = hiddenHandles[token] {
                 if previousOffscreenSide != side {
@@ -772,6 +782,7 @@ import QuartzCore
         }
 
         if let confirmedFocusedToken,
+           !suspendedTokens.contains(confirmedFocusedToken),
            hiddenHandles[confirmedFocusedToken] == nil,
            let frame = frames[confirmedFocusedToken]
         {
