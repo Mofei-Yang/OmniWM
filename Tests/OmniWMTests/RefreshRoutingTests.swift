@@ -902,6 +902,7 @@ private func prepareNiriState(
 
     @Test @MainActor func nativeFullscreenExitRestoresPriorManagedFrameInNiri() async {
         let controller = makeRefreshTestController()
+        defer { controller.layoutRefreshController.resetState() }
         let visibleWindows = VisibleWindowsStore([
             (makeRefreshTestWindow(windowId: 2611), getpid(), 2611),
             (makeRefreshTestWindow(windowId: 2612), getpid(), 2612)
@@ -912,6 +913,7 @@ private func prepareNiriState(
 
         controller.layoutRefreshController.requestFullRescan(reason: .startup)
         await waitForRefreshWork(on: controller)
+        controller.layoutRefreshController.settleAllAnimationsForTests()
 
         guard let workspaceId = controller.activeWorkspace()?.id else {
             Issue.record("Missing active workspace")
@@ -948,6 +950,7 @@ private func prepareNiriState(
         ]
         controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
         await waitForRefreshWork(on: controller)
+        controller.layoutRefreshController.settleAllAnimationsForTests()
 
         guard let restoredNode = engine.findNode(for: targetToken),
               let restoredColumn = engine.column(of: restoredNode),
@@ -970,6 +973,7 @@ private func prepareNiriState(
 
     @Test @MainActor func nativeFullscreenExitWithReplacementWindowIdPreservesNiriIdentity() async {
         let controller = makeRefreshTestController()
+        defer { controller.layoutRefreshController.resetState() }
         let visibleWindows = VisibleWindowsStore([
             (makeRefreshTestWindow(windowId: 2615), getpid(), 2615),
             (makeRefreshTestWindow(windowId: 2616), getpid(), 2616)
@@ -981,6 +985,7 @@ private func prepareNiriState(
 
         controller.layoutRefreshController.requestFullRescan(reason: .startup)
         await waitForRefreshWork(on: controller)
+        controller.layoutRefreshController.settleAllAnimationsForTests()
 
         guard let workspaceId = controller.activeWorkspace()?.id else {
             Issue.record("Missing active workspace")
@@ -1009,6 +1014,7 @@ private func prepareNiriState(
         ]
         controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
         await waitForRefreshWork(on: controller)
+        controller.layoutRefreshController.settleAllAnimationsForTests()
 
         guard let replacementEntry = controller.workspaceManager.entry(for: replacementToken),
               let replacementNode = engine.findNode(for: replacementToken),

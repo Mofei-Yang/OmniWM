@@ -757,6 +757,22 @@ import QuartzCore
         }
     }
 
+    func settleAllAnimationsForTests() {
+        let settleTime = CACurrentMediaTime() + 10.0
+
+        for displayId in Array(niriHandler.scrollAnimationByDisplay.keys) {
+            niriHandler.tickScrollAnimation(targetTime: settleTime, displayId: displayId)
+        }
+
+        for displayId in Array(dwindleHandler.dwindleAnimationByDisplay.keys) {
+            dwindleHandler.tickDwindleAnimation(targetTime: settleTime, displayId: displayId)
+        }
+
+        for displayId in Array(layoutState.closingAnimationsByDisplay.keys) {
+            tickClosingAnimations(targetTime: settleTime, displayId: displayId)
+        }
+    }
+
     func resetState() {
         layoutState.activeRefreshTask?.cancel()
         layoutState.activeRefreshTask = nil
