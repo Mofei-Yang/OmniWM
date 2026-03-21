@@ -138,7 +138,7 @@ final class WorkspaceBarManager {
     }
 
     func reconfigureBars(using monitors: [Monitor]) {
-        guard controller != nil, let settings else { return }
+        guard let controller, let settings else { return }
 
         var existingMonitorIds = Set(barsByMonitor.keys)
 
@@ -146,8 +146,8 @@ final class WorkspaceBarManager {
             existingMonitorIds.remove(monitor.id)
             let resolved = settings.resolvedBarSettings(for: monitor)
 
-            // Global workspace-bar settings are defaults; monitor overrides decide bar ownership.
-            if !resolved.enabled {
+            // Global workspace-bar settings are defaults; monitor overrides and runtime visibility decide bar ownership.
+            if !controller.isWorkspaceBarVisible(on: monitor, resolved: resolved) {
                 removeBarForMonitor(monitor.id)
                 continue
             }
@@ -311,12 +311,8 @@ final class WorkspaceBarManager {
         instance: MonitorBarInstance
     ) {
         let fittingWidth = measuredWidth(for: snapshot, using: instance.measurementView)
-        let frame = Self.barFrame(
-            fittingWidth: fittingWidth,
-            monitor: monitor,
-            resolved: resolved,
-            menuBarHeight: menuBarHeight(for: monitor)
-        )
+        let geometry = WorkspaceBarGeometry.resolve(monitor: monitor, resolved: resolved, isVisible: true)
+        let frame = geometry.frame(fittingWidth: fittingWidth, monitor: monitor, resolved: resolved)
 
         guard instance.lastAppliedFrame != frame else { return }
 
@@ -337,6 +333,7 @@ final class WorkspaceBarManager {
         for monitor: Monitor,
         resolved: ResolvedBarSettings
     ) -> WorkspaceBarSnapshot {
+        let geometry = WorkspaceBarGeometry.resolve(monitor: monitor, resolved: resolved, isVisible: true)
         let items = controller?.workspaceBarItems(
             for: monitor,
             deduplicate: resolved.deduplicateAppIcons,
@@ -347,7 +344,7 @@ final class WorkspaceBarManager {
             items: items,
             showLabels: resolved.showLabels,
             backgroundOpacity: resolved.backgroundOpacity,
-            barHeight: CGFloat(max(menuBarHeight(for: monitor), resolved.height))
+            barHeight: geometry.barHeight
         )
     }
 
@@ -392,13 +389,7 @@ final class WorkspaceBarManager {
     }
 
     nonisolated static func effectivePosition(for monitor: Monitor, resolved: ResolvedBarSettings) -> WorkspaceBarPosition {
-        if monitor.hasNotch,
-           resolved.notchAware,
-           resolved.position == .overlappingMenuBar
-        {
-            return .belowMenuBar
-        }
-        return resolved.position
+        WorkspaceBarGeometry.effectivePosition(for: monitor, resolved: resolved)
     }
 
     nonisolated static func barFrame(
@@ -407,16 +398,27 @@ final class WorkspaceBarManager {
         resolved: ResolvedBarSettings,
         menuBarHeight: Double
     ) -> NSRect {
-        let effectivePosition = effectivePosition(for: monitor, resolved: resolved)
-        let width = max(fittingWidth, 300)
-        let height = CGFloat(max(menuBarHeight, resolved.height))
-        var x = monitor.frame.midX - width / 2
-        var y = effectivePosition == .belowMenuBar ? monitor.visibleFrame.maxY - height : monitor.visibleFrame.maxY
+        let geometry = WorkspaceBarGeometry.resolve(
+            monitor: monitor,
+            resolved: resolved,
+            isVisible: true,
+            menuBarHeight: CGFloat(menuBarHeight)
+        )
+        return geometry.frame(fittingWidth: fittingWidth, monitor: monitor, resolved: resolved)
+    }
 
-        x += CGFloat(resolved.xOffset)
-        y += CGFloat(resolved.yOffset)
-
-        return NSRect(x: x, y: y, width: width, height: height)
+    nonisolated static func reservedTopInset(
+        for monitor: Monitor,
+        resolved: ResolvedBarSettings,
+        isVisible: Bool,
+        menuBarHeight: Double? = nil
+    ) -> CGFloat {
+        WorkspaceBarGeometry.resolve(
+            monitor: monitor,
+            resolved: resolved,
+            isVisible: isVisible,
+            menuBarHeight: menuBarHeight.map { CGFloat($0) }
+        ).reservedTopInset
     }
 
     private func setupScreenChangeObserver() {
@@ -490,11 +492,6 @@ final class WorkspaceBarManager {
 
     private func applySettingsToPanel(_ panel: NSPanel, resolved: ResolvedBarSettings) {
         panel.level = resolved.windowLevel.nsWindowLevel
-    }
-
-    private func menuBarHeight(for monitor: Monitor) -> Double {
-        let h = monitor.frame.maxY - monitor.visibleFrame.maxY
-        return h > 0 ? h : 28
     }
 }
 

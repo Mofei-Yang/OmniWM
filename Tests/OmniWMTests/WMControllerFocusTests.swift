@@ -202,6 +202,60 @@ private func waitForFocusRefresh(on controller: WMController) async {
         #expect(settings.hiddenBarIsCollapsed == true)
     }
 
+    @Test @MainActor func toggleWorkspaceBarVisibilityHidesOnlyInteractionMonitorAndPreservesSettings() async {
+        let primaryMonitor = Monitor(
+            id: Monitor.ID(displayId: 31),
+            displayId: 31,
+            frame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 772),
+            hasNotch: false,
+            name: "Primary"
+        )
+        let secondaryMonitor = Monitor(
+            id: Monitor.ID(displayId: 32),
+            displayId: 32,
+            frame: CGRect(x: 1000, y: 0, width: 1000, height: 800),
+            visibleFrame: CGRect(x: 1000, y: 0, width: 1000, height: 772),
+            hasNotch: false,
+            name: "Secondary"
+        )
+        let controller = makeLayoutPlanTestController(
+            monitors: [primaryMonitor, secondaryMonitor],
+            workspaceConfigurations: [
+                WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+                WorkspaceConfiguration(name: "2", monitorAssignment: .secondary)
+            ]
+        )
+        controller.configureWorkspaceBarManagerForTests(monitors: [primaryMonitor, secondaryMonitor])
+        controller.settings.workspaceBarPosition = .overlappingMenuBar
+        controller.settings.workspaceBarHeight = 24
+        controller.settings.workspaceBarReserveLayoutSpace = true
+        _ = controller.workspaceManager.setInteractionMonitor(primaryMonitor.id)
+        controller.setWorkspaceBarEnabled(true)
+        defer { controller.cleanupUIOnStop() }
+
+        #expect(controller.activeWorkspaceBarCountForTests() == 2)
+        #expect(controller.insetWorkingFrame(for: primaryMonitor).height == 748)
+        #expect(controller.insetWorkingFrame(for: secondaryMonitor).height == 748)
+
+        #expect(controller.toggleWorkspaceBarVisibility() == true)
+        await waitForFocusRefresh(on: controller)
+
+        #expect(controller.settings.workspaceBarEnabled == true)
+        #expect(controller.isWorkspaceBarRuntimeHiddenForTests(on: primaryMonitor.id) == true)
+        #expect(controller.isWorkspaceBarRuntimeHiddenForTests(on: secondaryMonitor.id) == false)
+        #expect(controller.activeWorkspaceBarCountForTests() == 1)
+        #expect(controller.insetWorkingFrame(for: primaryMonitor) == primaryMonitor.visibleFrame)
+        #expect(controller.insetWorkingFrame(for: secondaryMonitor).height == 748)
+
+        #expect(controller.toggleWorkspaceBarVisibility() == true)
+        await waitForFocusRefresh(on: controller)
+
+        #expect(controller.isWorkspaceBarRuntimeHiddenForTests(on: primaryMonitor.id) == false)
+        #expect(controller.activeWorkspaceBarCountForTests() == 2)
+        #expect(controller.insetWorkingFrame(for: primaryMonitor).height == 748)
+    }
+
     @Test @MainActor func focusWindowPerformsActivatePrivateFocusAndRaiseInOrder() {
         var events: [FocusOperationEvent] = []
         let operations = WindowFocusOperations(

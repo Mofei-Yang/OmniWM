@@ -118,6 +118,8 @@ final class CommandHandler {
             controller.toggleScratchpadWindow()
         case .openMenuAnywhere:
             controller.openMenuAnywhere()
+        case .toggleWorkspaceBarVisibility:
+            controller.toggleWorkspaceBarVisibility()
         case .toggleHiddenBar:
             controller.toggleHiddenBar()
         case .toggleQuakeTerminal:

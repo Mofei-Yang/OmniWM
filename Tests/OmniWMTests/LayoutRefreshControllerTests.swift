@@ -13,6 +13,26 @@ import Testing
         #expect(LayoutRefreshController.hiddenEdgeReveal(isZoomApp: true) == 0)
     }
 
+    @Test @MainActor func buildMonitorSnapshotUsesConfiguredWorkspaceBarInsetInOverlappingMode() {
+        let monitor = Monitor(
+            id: Monitor.ID(displayId: 91),
+            displayId: 91,
+            frame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 772),
+            hasNotch: false,
+            name: "Reserved"
+        )
+        let controller = makeLayoutPlanTestController(monitors: [monitor])
+        controller.settings.workspaceBarPosition = .overlappingMenuBar
+        controller.settings.workspaceBarHeight = 24
+        controller.settings.workspaceBarReserveLayoutSpace = true
+
+        let snapshot = controller.layoutRefreshController.buildMonitorSnapshot(for: monitor)
+
+        #expect(snapshot.visibleFrame == monitor.visibleFrame)
+        #expect(snapshot.workingFrame == CGRect(x: 0, y: 0, width: 1000, height: 748))
+    }
+
     @Test @MainActor func executeLayoutPlanAppliesFrameDiffAndFocusedBorder() {
         let controller = makeLayoutPlanTestController()
         guard let monitor = controller.workspaceManager.monitors.first,

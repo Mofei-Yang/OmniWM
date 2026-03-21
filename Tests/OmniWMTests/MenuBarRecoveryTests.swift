@@ -13,6 +13,7 @@ private func makeMenuBarRecoveryDefaults() -> UserDefaults {
 private func makeBarSettings(
     notchAware: Bool = true,
     position: WorkspaceBarPosition = .overlappingMenuBar,
+    reserveLayoutSpace: Bool = false,
     height: Double = 24,
     xOffset: Double = 0,
     yOffset: Double = 0
@@ -22,6 +23,7 @@ private func makeBarSettings(
         showLabels: true,
         deduplicateAppIcons: false,
         hideEmptyWorkspaces: false,
+        reserveLayoutSpace: reserveLayoutSpace,
         notchAware: notchAware,
         position: position,
         windowLevel: .popup,
@@ -119,5 +121,53 @@ private func makeMonitorForBarTests(hasNotch: Bool) -> Monitor {
 
         #expect(frame.minX == 330)
         #expect(frame.minY == 772)
+    }
+
+    @Test func belowMenuBarReservationMatchesEffectiveBarHeight() {
+        let monitor = makeMonitorForBarTests(hasNotch: false)
+        let inset = WorkspaceBarManager.reservedTopInset(
+            for: monitor,
+            resolved: makeBarSettings(position: .belowMenuBar, reserveLayoutSpace: true),
+            isVisible: true,
+            menuBarHeight: 28
+        )
+
+        #expect(inset == 28)
+    }
+
+    @Test func overlappingPlacementReservesConfiguredHeightWhenMenuBarIsTaller() {
+        let monitor = makeMonitorForBarTests(hasNotch: false)
+        let inset = WorkspaceBarManager.reservedTopInset(
+            for: monitor,
+            resolved: makeBarSettings(position: .overlappingMenuBar, reserveLayoutSpace: true),
+            isVisible: true,
+            menuBarHeight: 28
+        )
+
+        #expect(inset == 24)
+    }
+
+    @Test func overlappingPlacementReservesConfiguredHeightWhenBarIsTallerThanMenuBar() {
+        let monitor = makeMonitorForBarTests(hasNotch: false)
+        let inset = WorkspaceBarManager.reservedTopInset(
+            for: monitor,
+            resolved: makeBarSettings(position: .overlappingMenuBar, reserveLayoutSpace: true, height: 36),
+            isVisible: true,
+            menuBarHeight: 28
+        )
+
+        #expect(inset == 36)
+    }
+
+    @Test func notchAwareOverlapReservationUsesRuntimeBelowMenuBarHeight() {
+        let monitor = makeMonitorForBarTests(hasNotch: true)
+        let inset = WorkspaceBarManager.reservedTopInset(
+            for: monitor,
+            resolved: makeBarSettings(notchAware: true, position: .overlappingMenuBar, reserveLayoutSpace: true),
+            isVisible: true,
+            menuBarHeight: 28
+        )
+
+        #expect(inset == 28)
     }
 }

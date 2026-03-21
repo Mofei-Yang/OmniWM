@@ -105,6 +105,12 @@ private struct GlobalBarSettingsSection: View {
                             controller.updateWorkspaceBarSettings()
                         }
 
+                    Toggle("Reserve Space for Workspace Bar", isOn: $settings.workspaceBarReserveLayoutSpace)
+                        .onChange(of: settings.workspaceBarReserveLayoutSpace) { _, _ in
+                            controller.updateWorkspaceBarSettings()
+                        }
+                        .help("Reserve tiled layout space for the workspace bar. Overlapping Menu Bar uses the configured bar height; bars placed below the menu bar use the rendered bar height.")
+
                     Toggle("Notch-Aware Positioning", isOn: $settings.workspaceBarNotchAware)
                         .onChange(of: settings.workspaceBarNotchAware) { _, _ in
                             controller.updateWorkspaceBarSettings()
@@ -295,6 +301,15 @@ private struct MonitorBarSettingsSection: View {
                     onChange: { newValue in updateSetting { $0.hideEmptyWorkspaces = newValue } },
                     onReset: { updateSetting { $0.hideEmptyWorkspaces = nil } }
                 )
+
+                OverridableToggle(
+                    label: "Reserve Space for Workspace Bar",
+                    value: ms.reserveLayoutSpace,
+                    globalValue: settings.workspaceBarReserveLayoutSpace,
+                    onChange: { newValue in updateSetting { $0.reserveLayoutSpace = newValue } },
+                    onReset: { updateSetting { $0.reserveLayoutSpace = nil } }
+                )
+                .help("Reserve tiled layout space for the workspace bar. Overlapping Menu Bar uses the configured bar height; bars placed below the menu bar use the rendered bar height.")
 
                 OverridableToggle(
                     label: "Notch-Aware Positioning",

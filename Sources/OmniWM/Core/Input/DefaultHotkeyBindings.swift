@@ -302,6 +302,12 @@ enum DefaultHotkeyBindings {
         ))
 
         bindings.append(HotkeyBinding(
+            id: "toggleWorkspaceBarVisibility",
+            command: .toggleWorkspaceBarVisibility,
+            binding: .unassigned
+        ))
+
+        bindings.append(HotkeyBinding(
             id: "toggleHiddenBar",
             command: .toggleHiddenBar,
             binding: .unassigned

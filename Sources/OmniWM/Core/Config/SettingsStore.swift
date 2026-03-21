@@ -156,6 +156,10 @@ final class SettingsStore {
         didSet { defaults.set(workspaceBarHideEmptyWorkspaces, forKey: Keys.workspaceBarHideEmptyWorkspaces) }
     }
 
+    var workspaceBarReserveLayoutSpace: Bool {
+        didSet { defaults.set(workspaceBarReserveLayoutSpace, forKey: Keys.workspaceBarReserveLayoutSpace) }
+    }
+
     var workspaceBarHeight: Double {
         didSet { defaults.set(workspaceBarHeight, forKey: Keys.workspaceBarHeight) }
     }
@@ -386,6 +390,8 @@ final class SettingsStore {
             .object(forKey: Keys.workspaceBarDeduplicateAppIcons) as? Bool ?? false
         workspaceBarHideEmptyWorkspaces = defaults
             .object(forKey: Keys.workspaceBarHideEmptyWorkspaces) as? Bool ?? false
+        workspaceBarReserveLayoutSpace = defaults
+            .object(forKey: Keys.workspaceBarReserveLayoutSpace) as? Bool ?? false
         workspaceBarHeight = defaults.object(forKey: Keys.workspaceBarHeight) as? Double ?? 24.0
         workspaceBarBackgroundOpacity = defaults.object(forKey: Keys.workspaceBarBackgroundOpacity) as? Double ?? 0.1
         workspaceBarXOffset = defaults.object(forKey: Keys.workspaceBarXOffset) as? Double ?? 0.0
@@ -618,6 +624,7 @@ final class SettingsStore {
             showLabels: override?.showLabels ?? workspaceBarShowLabels,
             deduplicateAppIcons: override?.deduplicateAppIcons ?? workspaceBarDeduplicateAppIcons,
             hideEmptyWorkspaces: override?.hideEmptyWorkspaces ?? workspaceBarHideEmptyWorkspaces,
+            reserveLayoutSpace: override?.reserveLayoutSpace ?? workspaceBarReserveLayoutSpace,
             notchAware: override?.notchAware ?? workspaceBarNotchAware,
             position: override?.position ?? workspaceBarPosition,
             windowLevel: override?.windowLevel ?? workspaceBarWindowLevel,
@@ -869,6 +876,7 @@ private enum Keys {
     static let workspaceBarNotchAware = "settings.workspaceBar.notchAware"
     static let workspaceBarDeduplicateAppIcons = "settings.workspaceBar.deduplicateAppIcons"
     static let workspaceBarHideEmptyWorkspaces = "settings.workspaceBar.hideEmptyWorkspaces"
+    static let workspaceBarReserveLayoutSpace = "settings.workspaceBar.reserveLayoutSpace"
     static let workspaceBarHeight = "settings.workspaceBar.height"
     static let workspaceBarBackgroundOpacity = "settings.workspaceBar.backgroundOpacity"
     static let workspaceBarXOffset = "settings.workspaceBar.xOffset"

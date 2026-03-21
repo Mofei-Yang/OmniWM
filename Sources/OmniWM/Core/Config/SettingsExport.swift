@@ -72,6 +72,7 @@ struct SettingsExport: Codable {
     var workspaceBarNotchAware: Bool
     var workspaceBarDeduplicateAppIcons: Bool
     var workspaceBarHideEmptyWorkspaces: Bool
+    var workspaceBarReserveLayoutSpace: Bool
     var workspaceBarHeight: Double
     var workspaceBarBackgroundOpacity: Double
     var workspaceBarXOffset: Double
@@ -155,6 +156,7 @@ extension SettingsExport {
             workspaceBarNotchAware: true,
             workspaceBarDeduplicateAppIcons: false,
             workspaceBarHideEmptyWorkspaces: false,
+            workspaceBarReserveLayoutSpace: false,
             workspaceBarHeight: 24.0,
             workspaceBarBackgroundOpacity: 0.1,
             workspaceBarXOffset: 0.0,
@@ -333,6 +335,7 @@ extension SettingsStore {
             workspaceBarNotchAware: workspaceBarNotchAware,
             workspaceBarDeduplicateAppIcons: workspaceBarDeduplicateAppIcons,
             workspaceBarHideEmptyWorkspaces: workspaceBarHideEmptyWorkspaces,
+            workspaceBarReserveLayoutSpace: workspaceBarReserveLayoutSpace,
             workspaceBarHeight: workspaceBarHeight,
             workspaceBarBackgroundOpacity: workspaceBarBackgroundOpacity,
             workspaceBarXOffset: workspaceBarXOffset,
@@ -433,6 +436,7 @@ extension SettingsStore {
         workspaceBarNotchAware = export.workspaceBarNotchAware
         workspaceBarDeduplicateAppIcons = export.workspaceBarDeduplicateAppIcons
         workspaceBarHideEmptyWorkspaces = export.workspaceBarHideEmptyWorkspaces
+        workspaceBarReserveLayoutSpace = export.workspaceBarReserveLayoutSpace
         workspaceBarHeight = export.workspaceBarHeight
         workspaceBarBackgroundOpacity = export.workspaceBarBackgroundOpacity
         workspaceBarXOffset = export.workspaceBarXOffset

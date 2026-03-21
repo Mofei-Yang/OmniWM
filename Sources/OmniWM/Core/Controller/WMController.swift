@@ -68,6 +68,8 @@ final class WMController {
     @ObservationIgnored
     private var pendingWorkspaceBarRefreshGeneration: UInt64?
     @ObservationIgnored
+    private var hiddenWorkspaceBarMonitorIds: Set<Monitor.ID> = []
+    @ObservationIgnored
     private let hiddenBarController: HiddenBarController
     @ObservationIgnored
     private lazy var quakeTerminalController: QuakeTerminalController = .init(settings: settings)
@@ -232,8 +234,10 @@ final class WMController {
         if settings.workspaceBarEnabled != enabled {
             settings.workspaceBarEnabled = enabled
         }
+        pruneHiddenWorkspaceBarMonitorIds()
         cancelPendingWorkspaceBarRefresh()
         workspaceBarManager.setup(controller: self, settings: settings)
+        layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
     }
 
     func cleanupUIOnStop() {
@@ -251,6 +255,26 @@ final class WMController {
 
     func toggleHiddenBar() {
         hiddenBarController.toggle()
+    }
+
+    @discardableResult
+    func toggleWorkspaceBarVisibility() -> Bool {
+        pruneHiddenWorkspaceBarMonitorIds()
+
+        guard let monitor = monitorForInteraction() else { return false }
+        let resolved = settings.resolvedBarSettings(for: monitor)
+        guard resolved.enabled else { return false }
+
+        if hiddenWorkspaceBarMonitorIds.contains(monitor.id) {
+            hiddenWorkspaceBarMonitorIds.remove(monitor.id)
+        } else {
+            hiddenWorkspaceBarMonitorIds.insert(monitor.id)
+        }
+
+        cancelPendingWorkspaceBarRefresh()
+        workspaceBarManager.setup(controller: self, settings: settings)
+        layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
+        return true
     }
 
     func setQuakeTerminalEnabled(_ enabled: Bool) {
@@ -304,7 +328,10 @@ final class WMController {
     }
 
     func updateWorkspaceBarSettings() {
+        pruneHiddenWorkspaceBarMonitorIds()
+        cancelPendingWorkspaceBarRefresh()
         workspaceBarManager.updateSettings()
+        layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
     }
 
     func updateMonitorOrientations() {
@@ -398,15 +425,21 @@ final class WMController {
 
     func insetWorkingFrame(for monitor: Monitor) -> CGRect {
         let scale = NSScreen.screens.first(where: { $0.displayId == monitor.displayId })?.backingScaleFactor ?? 2.0
-        return insetWorkingFrame(from: monitor.visibleFrame, scale: scale)
+        let resolved = settings.resolvedBarSettings(for: monitor)
+        let reservedTopInset = WorkspaceBarGeometry.resolve(
+            monitor: monitor,
+            resolved: resolved,
+            isVisible: isWorkspaceBarVisible(on: monitor, resolved: resolved)
+        ).reservedTopInset
+        return insetWorkingFrame(from: monitor.visibleFrame, scale: scale, reservedTopInset: reservedTopInset)
     }
 
-    func insetWorkingFrame(from frame: CGRect, scale: CGFloat = 2.0) -> CGRect {
+    func insetWorkingFrame(from frame: CGRect, scale: CGFloat = 2.0, reservedTopInset: CGFloat = 0) -> CGRect {
         let outer = workspaceManager.outerGaps
         let struts = Struts(
             left: outer.left,
             right: outer.right,
-            top: outer.top,
+            top: outer.top + reservedTopInset,
             bottom: outer.bottom
         )
         return computeWorkingArea(
@@ -466,6 +499,18 @@ final class WMController {
         workspaceBarRefreshDebugState.isQueued = false
     }
 
+    func isWorkspaceBarVisible(on monitor: Monitor, resolved: ResolvedBarSettings? = nil) -> Bool {
+        let effective = resolved ?? settings.resolvedBarSettings(for: monitor)
+        return effective.enabled && !hiddenWorkspaceBarMonitorIds.contains(monitor.id)
+    }
+
+    private func pruneHiddenWorkspaceBarMonitorIds() {
+        hiddenWorkspaceBarMonitorIds = hiddenWorkspaceBarMonitorIds.filter { monitorId in
+            guard let monitor = workspaceManager.monitor(byId: monitorId) else { return false }
+            return settings.resolvedBarSettings(for: monitor).enabled
+        }
+    }
+
     func waitForWorkspaceBarRefreshForTests() async {
         for _ in 0..<100 {
             await Task.yield()
@@ -480,6 +525,19 @@ final class WMController {
         cancelPendingWorkspaceBarRefresh()
         workspaceBarRefreshDebugState = .init()
         workspaceBarRefreshExecutionHookForTests = nil
+    }
+
+    func activeWorkspaceBarCountForTests() -> Int {
+        workspaceBarManager.activeBarCountForTests()
+    }
+
+    func isWorkspaceBarRuntimeHiddenForTests(on monitorId: Monitor.ID) -> Bool {
+        hiddenWorkspaceBarMonitorIds.contains(monitorId)
+    }
+
+    func configureWorkspaceBarManagerForTests(monitors: [Monitor]) {
+        workspaceBarManager.monitorProvider = { monitors }
+        workspaceBarManager.screenProvider = { _ in nil }
     }
 
     func enableNiriLayout(

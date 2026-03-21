@@ -234,6 +234,7 @@ private func makeSettingsTestMonitor(
             monitorName: "Roundtrip",
             enabled: true,
             showLabels: false,
+            reserveLayoutSpace: true,
             position: .belowMenuBar,
             windowLevel: .status,
             height: 30
@@ -318,6 +319,7 @@ private func makeSettingsTestMonitor(
         #expect(defaults.hotkeyBindings == HotkeyBindingRegistry.defaults())
         #expect(defaults.workspaceBarEnabled == true)
         #expect(defaults.workspaceBarNotchAware == true)
+        #expect(defaults.workspaceBarReserveLayoutSpace == false)
         #expect(defaults.appRules == BuiltInSettingsDefaults.appRules)
         #expect(defaults.preventSleepEnabled == false)
         #expect(defaults.scrollSensitivity == 5.0)
@@ -371,6 +373,7 @@ private func makeSettingsTestMonitor(
             "workspaceBarNotchAware": false,
             "workspaceBarDeduplicateAppIcons": false,
             "workspaceBarHideEmptyWorkspaces": false,
+            "workspaceBarReserveLayoutSpace": false,
             "workspaceBarHeight": 24,
             "workspaceBarBackgroundOpacity": 0.1,
             "workspaceBarXOffset": 0,
@@ -455,11 +458,12 @@ private func makeSettingsTestMonitor(
             workspaceBarNotchAware: true,
             workspaceBarDeduplicateAppIcons: true,
             workspaceBarHideEmptyWorkspaces: true,
+            workspaceBarReserveLayoutSpace: true,
             workspaceBarHeight: 30.0,
             workspaceBarBackgroundOpacity: 0.5,
             workspaceBarXOffset: 10.0,
             workspaceBarYOffset: 20.0,
-            monitorBarSettings: [MonitorBarSettings(monitorName: "TestBar", enabled: true)],
+            monitorBarSettings: [MonitorBarSettings(monitorName: "TestBar", enabled: true, reserveLayoutSpace: true)],
             appRules: [],
             monitorOrientationSettings: [],
             monitorNiriSettings: [MonitorNiriSettings(monitorName: "TestNiri", maxVisibleColumns: 3)],
@@ -744,6 +748,7 @@ private func makeSettingsTestMonitor(
         #expect(decoded.commandPaletteLastMode == CommandPaletteMode.windows.rawValue)
         #expect(decoded.workspaceBarEnabled == true)
         #expect(decoded.workspaceBarNotchAware == true)
+        #expect(decoded.workspaceBarReserveLayoutSpace == false)
         #expect(decoded.workspaceConfigurations == BuiltInSettingsDefaults.workspaceConfigurations)
         #expect(decoded.appRules == BuiltInSettingsDefaults.appRules)
         #expect(decoded.preventSleepEnabled == false)
@@ -756,6 +761,24 @@ private func makeSettingsTestMonitor(
         #expect(decoded.quakeTerminalAutoHide == false)
         #expect(decoded.quakeTerminalUseCustomFrame == false)
         #expect(decoded.quakeTerminalCustomFrame == nil)
+    }
+}
+
+@Suite @MainActor struct WorkspaceBarSettingsResolutionTests {
+    @Test func monitorOverrideCanEnableReservedLayoutSpaceIndependently() {
+        let settings = SettingsStore(defaults: makeTestDefaults())
+        let monitor = makeLayoutPlanTestMonitor(name: "Reservation Test")
+
+        settings.workspaceBarReserveLayoutSpace = false
+        settings.updateBarSettings(
+            MonitorBarSettings(
+                monitorName: monitor.name,
+                monitorDisplayId: monitor.displayId,
+                reserveLayoutSpace: true
+            )
+        )
+
+        #expect(settings.resolvedBarSettings(for: monitor).reserveLayoutSpace == true)
     }
 }
 
@@ -1241,6 +1264,7 @@ private func makeSettingsTestMonitor(
         #expect(settings.hotkeyBindings == HotkeyBindingRegistry.defaults())
         #expect(settings.workspaceBarEnabled == true)
         #expect(settings.workspaceBarNotchAware == true)
+        #expect(settings.workspaceBarReserveLayoutSpace == false)
         #expect(settings.appRules == BuiltInSettingsDefaults.appRules)
         #expect(settings.mouseWarpMonitorOrder.isEmpty)
         #expect(settings.preventSleepEnabled == false)
