@@ -10,6 +10,8 @@ private final class OverviewSessionRecorder {
     var restoredApplicationPIDs: [pid_t] = []
 }
 
+private let overviewSelectionActivationWaitNanoseconds: UInt64 = 5_000_000
+
 @MainActor
 private func makeOverviewKeyEvent(
     keyCode: UInt16,
@@ -51,6 +53,43 @@ private func makeOverviewTestEnvironment(
     environment.notificationCenter = NotificationCenter()
     environment.selectionDismissDelayNanoseconds = 0
     return environment
+}
+
+@MainActor
+private func addOverviewTestWindow(
+    on controller: WMController,
+    workspaceId: WorkspaceDescriptor.ID,
+    windowId: Int,
+    pid: pid_t,
+    appName: String
+) -> WindowHandle {
+    controller.appInfoCache.storeInfoForTests(
+        pid: pid,
+        name: appName,
+        bundleId: "com.example.\(appName.lowercased())"
+    )
+    let token = addLayoutPlanTestWindow(
+        on: controller,
+        workspaceId: workspaceId,
+        windowId: windowId,
+        pid: pid
+    )
+    guard let handle = controller.workspaceManager.handle(for: token) else {
+        fatalError("Expected overview test window handle")
+    }
+    return handle
+}
+
+@MainActor
+private func activatePreparedOverviewSelection(
+    in overview: OverviewController,
+    expectedHandle: WindowHandle
+) async {
+    overview.onAnimationComplete(state: .open)
+    overview.activateSelectedWindow()
+    await Task.yield()
+    try? await Task.sleep(nanoseconds: overviewSelectionActivationWaitNanoseconds)
+    overview.completeCloseTransition(targetWindow: expectedHandle)
 }
 
 @Suite @MainActor struct OverviewInputHandlerTests {
@@ -122,6 +161,140 @@ private func makeOverviewTestEnvironment(
 }
 
 @Suite @MainActor struct OverviewControllerModalTests {
+    @Test func prepareOpenStateSeedsSelectionFromFocusedWindow() async {
+        let recorder = OverviewSessionRecorder()
+        let wmController = makeLayoutPlanTestController()
+        let overview = OverviewController(
+            wmController: wmController,
+            environment: makeOverviewTestEnvironment(recorder: recorder)
+        )
+        let workspaceId = try! #require(wmController.activeWorkspace()?.id)
+        let monitorId = try! #require(wmController.workspaceManager.monitors.first?.id)
+
+        _ = addOverviewTestWindow(
+            on: wmController,
+            workspaceId: workspaceId,
+            windowId: 8101,
+            pid: 5101,
+            appName: "Alpha"
+        )
+        let focusedHandle = addOverviewTestWindow(
+            on: wmController,
+            workspaceId: workspaceId,
+            windowId: 8102,
+            pid: 5102,
+            appName: "Bravo"
+        )
+        _ = addOverviewTestWindow(
+            on: wmController,
+            workspaceId: workspaceId,
+            windowId: 8103,
+            pid: 5103,
+            appName: "Charlie"
+        )
+        _ = wmController.workspaceManager.setManagedFocus(
+            focusedHandle,
+            in: workspaceId,
+            onMonitor: monitorId
+        )
+
+        var activatedHandle: WindowHandle?
+        var activatedWorkspaceId: WorkspaceDescriptor.ID?
+        overview.onActivateWindow = { handle, workspaceId in
+            activatedHandle = handle
+            activatedWorkspaceId = workspaceId
+        }
+
+        overview.prepareOpenState()
+        await activatePreparedOverviewSelection(in: overview, expectedHandle: focusedHandle)
+
+        #expect(activatedHandle == focusedHandle)
+        #expect(activatedWorkspaceId == workspaceId)
+        #expect(recorder.restoredApplicationPIDs.isEmpty)
+    }
+
+    @Test func prepareOpenStateFallsBackToFirstMatchingWindowWithoutManagedFocus() async {
+        let recorder = OverviewSessionRecorder()
+        let wmController = makeLayoutPlanTestController()
+        let overview = OverviewController(
+            wmController: wmController,
+            environment: makeOverviewTestEnvironment(recorder: recorder)
+        )
+        let workspaceId = try! #require(wmController.activeWorkspace()?.id)
+
+        let firstHandle = addOverviewTestWindow(
+            on: wmController,
+            workspaceId: workspaceId,
+            windowId: 8201,
+            pid: 5201,
+            appName: "Alpha"
+        )
+        _ = addOverviewTestWindow(
+            on: wmController,
+            workspaceId: workspaceId,
+            windowId: 8202,
+            pid: 5202,
+            appName: "Bravo"
+        )
+        _ = addOverviewTestWindow(
+            on: wmController,
+            workspaceId: workspaceId,
+            windowId: 8203,
+            pid: 5203,
+            appName: "Charlie"
+        )
+
+        var activatedHandle: WindowHandle?
+        overview.onActivateWindow = { handle, _ in
+            activatedHandle = handle
+        }
+
+        overview.prepareOpenState()
+        await activatePreparedOverviewSelection(in: overview, expectedHandle: firstHandle)
+
+        #expect(activatedHandle == firstHandle)
+    }
+
+    @Test func prepareOpenStateUsesFocusedMonitorSelectionAcrossMultipleMonitors() async {
+        let recorder = OverviewSessionRecorder()
+        let fixture = makeTwoMonitorLayoutPlanTestController()
+        let overview = OverviewController(
+            wmController: fixture.controller,
+            environment: makeOverviewTestEnvironment(recorder: recorder)
+        )
+
+        let primaryHandle = addOverviewTestWindow(
+            on: fixture.controller,
+            workspaceId: fixture.primaryWorkspaceId,
+            windowId: 8301,
+            pid: 5301,
+            appName: "Primary"
+        )
+        let secondaryHandle = addOverviewTestWindow(
+            on: fixture.controller,
+            workspaceId: fixture.secondaryWorkspaceId,
+            windowId: 8302,
+            pid: 5302,
+            appName: "Secondary"
+        )
+        _ = fixture.controller.workspaceManager.setManagedFocus(
+            secondaryHandle,
+            in: fixture.secondaryWorkspaceId,
+            onMonitor: fixture.secondaryMonitor.id
+        )
+
+        var activatedHandle: WindowHandle?
+        overview.onActivateWindow = { handle, _ in
+            activatedHandle = handle
+        }
+
+        overview.prepareOpenState()
+        await activatePreparedOverviewSelection(in: overview, expectedHandle: secondaryHandle)
+
+        #expect(activatedHandle == secondaryHandle)
+        #expect(activatedHandle != primaryHandle)
+    }
+
     @Test func cancelDismissRestoresPreviousFrontmostApplication() {
         let recorder = OverviewSessionRecorder()
         let overview = OverviewController(

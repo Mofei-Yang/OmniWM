@@ -114,7 +114,7 @@ final class OverviewController {
         guard case .closed = state else { return }
         guard wmController != nil else { return }
 
-        buildOverviewState()
+        prepareOpenState()
         createWindows()
         beginOwnedSession()
         startThumbnailCapture()
@@ -130,6 +130,21 @@ final class OverviewController {
         showWindows()
         activateOwnedSession()
         primaryOverviewWindow()?.show(asKeyWindow: true)
+    }
+
+    func prepareOpenState() {
+        guard let wmController else { return }
+
+        activeInteractionMonitorId = wmController.monitorForInteraction()?.id
+        buildOverviewSnapshot()
+
+        if let focusedHandle = wmController.workspaceManager.focusedHandle,
+           overviewSnapshot.windows[focusedHandle] != nil
+        {
+            selectedWindowHandle = focusedHandle
+        }
+
+        rebuildProjectedLayouts()
     }
 
     func dismiss(
