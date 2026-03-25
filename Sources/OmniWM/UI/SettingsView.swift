@@ -143,7 +143,7 @@ struct GeneralSettingsTab: View {
                     .foregroundColor(.secondary)
             }
 
-            Section("Settings File") {
+            Section("Config File") {
                 HStack {
                     Button("Export Editable Config") {
                         do {
@@ -175,6 +175,16 @@ struct GeneralSettingsTab: View {
                 }
 
                 HStack {
+                    if !settings.settingsFileExists {
+                        Button("Create Config File") {
+                            do {
+                                try createSettingsFile()
+                            } catch {
+                                exportStatus = .error(error.localizedDescription)
+                            }
+                        }
+                    }
+
                     Button("Reveal Settings File") {
                         do {
                             try revealSettingsFile()
@@ -192,17 +202,7 @@ struct GeneralSettingsTab: View {
                     }
                 }
 
-                if !settings.settingsFileExists {
-                    Button("Create Settings File") {
-                        do {
-                            try createSettingsFile()
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
-                    }
-                }
-
-                Text("Editable config exports the full canonical file. Compact backup exports only settings that differ from defaults.")
+                Text("Editable Config writes the full canonical file. Compact Backup writes only settings that differ from defaults. Import merges either file back into the full settings model.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
