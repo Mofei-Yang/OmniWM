@@ -163,6 +163,35 @@ private func makeWindowRuleFacts(
         #expect(decision.heuristicReasons == [.attributeFetchFailed])
     }
 
+    @Test func matchedUserRuleOverridesAttributeFetchFailureFallback() {
+        let engine = WindowRuleEngine()
+        let rule = AppRule(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000162")!,
+            bundleId: "dentalplus-air",
+            assignToWorkspace: "2"
+        )
+        engine.rebuild(rules: [rule])
+
+        let decision = engine.decision(
+            for: makeWindowRuleFacts(
+                bundleId: "dentalplus-air",
+                appName: "DentalPlus Client",
+                attributeFetchSucceeded: false
+            ),
+            token: nil,
+            appFullscreen: false
+        )
+
+        #expect(decision.disposition == .managed)
+        #expect(decision.trackedMode == .tiling)
+        #expect(decision.source == .userRule(rule.id))
+        #expect(decision.layoutDecisionKind == .fallbackLayout)
+        #expect(decision.workspaceName == "2")
+        #expect(decision.ruleEffects.matchedRuleId == rule.id)
+        #expect(decision.heuristicReasons == [.attributeFetchFailed])
+        #expect(decision.deferredReason == nil)
+    }
+
     @Test func missingFullscreenButtonFallsBackToTrackedFloating() {
         let engine = WindowRuleEngine()
 

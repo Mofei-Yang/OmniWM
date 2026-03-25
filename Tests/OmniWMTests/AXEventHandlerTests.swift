@@ -394,6 +394,62 @@ private func waitUntilAXEventTest(
         #expect(relayoutReasons == [.windowRuleReevaluation])
     }
 
+    @Test @MainActor func createdWindowWithMatchedUserRuleTracksDespiteIncompleteAxFacts() async {
+        let controller = makeAXEventTestController(trackedBundleId: "dentalplus-air")
+        controller.settings.appRules = [
+            AppRule(
+                bundleId: "dentalplus-air",
+                assignToWorkspace: "2"
+            )
+        ]
+        var fullRescanReasons: [RefreshReason] = []
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onFullRescan = { reason in
+            fullRescanReasons.append(reason)
+            return true
+        }
+        controller.updateAppRules()
+        await waitUntilAXEventTest { fullRescanReasons == [.appRulesChanged] }
+
+        var relayoutReasons: [RefreshReason] = []
+        controller.axEventHandler.windowInfoProvider = { windowId in
+            guard windowId == 816 else { return nil }
+            return WindowServerInfo(id: windowId, pid: getpid(), level: 0, frame: .zero)
+        }
+        controller.axEventHandler.axWindowRefProvider = { windowId, _ in
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: Int(windowId))
+        }
+        controller.axEventHandler.windowFactsProvider = { _, _ in
+            makeAXEventWindowRuleFacts(
+                bundleId: "dentalplus-air",
+                appName: "DentalPlus Client",
+                attributeFetchSucceeded: false
+            )
+        }
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, _ in
+            relayoutReasons.append(reason)
+            return true
+        }
+
+        controller.axEventHandler.cgsEventObserver(
+            CGSEventObserver.shared,
+            didReceive: .created(windowId: 816, spaceId: 0)
+        )
+        await controller.layoutRefreshController.waitForRefreshWorkForTests()
+
+        guard let entry = controller.workspaceManager.entry(forPid: getpid(), windowId: 816) else {
+            Issue.record("Expected DentalPlus window to be tracked despite incomplete AX facts")
+            return
+        }
+
+        let workspaceTwoId = controller.workspaceManager.workspaceId(named: "2")
+        #expect(entry.mode == .tiling)
+        #expect(entry.workspaceId == workspaceTwoId)
+        #expect(entry.ruleEffects.matchedRuleId == controller.settings.appRules.first?.id)
+        #expect(relayoutReasons == [.axWindowCreated])
+    }
+
     @Test @MainActor func createdWindowRetriesWhenAXWindowRefIsInitiallyUnavailableWithoutRuleReevaluation() async {
         let controller = makeAXEventTestController()
         var relayoutReasons: [RefreshReason] = []

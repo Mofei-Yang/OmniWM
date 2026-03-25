@@ -356,6 +356,14 @@ final class WindowRuleEngine {
         }
 
         if !facts.ax.attributeFetchSucceeded {
+            if let userRule {
+                return fallbackDecisionForMatchedUserRule(
+                    userRule,
+                    workspaceName: workspaceName,
+                    effects: effects,
+                    heuristicReasons: [.attributeFetchFailed]
+                )
+            }
             return WindowDecision(
                 disposition: .undecided,
                 source: userRule.map { .userRule($0.rule.id) } ?? .heuristic,
@@ -380,6 +388,30 @@ final class WindowRuleEngine {
             ruleEffects: effects,
             heuristicReasons: heuristic.reasons,
             deferredReason: heuristic.disposition == .undecided ? .attributeFetchFailed : nil
+        )
+    }
+
+    private func fallbackDecisionForMatchedUserRule(
+        _ compiled: CompiledRule,
+        workspaceName: String?,
+        effects: ManagedWindowRuleEffects,
+        heuristicReasons: [AXWindowHeuristicReason]
+    ) -> WindowDecision {
+        let disposition: WindowDecisionDisposition = switch compiled.rule.effectiveLayoutAction {
+        case .float:
+            .floating
+        case .tile, .auto:
+            .managed
+        }
+
+        return WindowDecision(
+            disposition: disposition,
+            source: .userRule(compiled.rule.id),
+            layoutDecisionKind: .fallbackLayout,
+            workspaceName: workspaceName,
+            ruleEffects: effects,
+            heuristicReasons: heuristicReasons,
+            deferredReason: nil
         )
     }
 
