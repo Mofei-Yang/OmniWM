@@ -176,14 +176,30 @@ struct GeneralSettingsTab: View {
 
                 HStack {
                     Button("Reveal Settings File") {
-                        revealSettingsFile()
+                        do {
+                            try revealSettingsFile()
+                        } catch {
+                            exportStatus = .error(error.localizedDescription)
+                        }
                     }
-                    .disabled(!settings.settingsFileExists)
 
                     Button("Open Settings File") {
-                        openSettingsFile()
+                        do {
+                            try openSettingsFile()
+                        } catch {
+                            exportStatus = .error(error.localizedDescription)
+                        }
                     }
-                    .disabled(!settings.settingsFileExists)
+                }
+
+                if !settings.settingsFileExists {
+                    Button("Create Settings File") {
+                        do {
+                            try createSettingsFile()
+                        } catch {
+                            exportStatus = .error(error.localizedDescription)
+                        }
+                    }
                 }
 
                 Text("Editable config exports the full canonical file. Compact backup exports only settings that differ from defaults.")
@@ -213,15 +229,26 @@ struct GeneralSettingsTab: View {
         )
     }
 
-    private func revealSettingsFile() {
+    private func createSettingsFile() throws {
+        try settings.exportSettings(mode: .full)
+        exportStatus = .created
+    }
+
+    private func ensureSettingsFileExists() throws {
+        guard !settings.settingsFileExists else { return }
+        try createSettingsFile()
+    }
+
+    private func revealSettingsFile() throws {
+        try ensureSettingsFileExists()
         NSWorkspace.shared.activateFileViewerSelecting([SettingsStore.exportURL])
         exportStatus = .revealed
     }
 
-    private func openSettingsFile() {
+    private func openSettingsFile() throws {
+        try ensureSettingsFileExists()
         guard NSWorkspace.shared.open(SettingsStore.exportURL) else {
-            exportStatus = .error("Could not open settings file")
-            return
+            throw CocoaError(.fileNoSuchFile)
         }
         exportStatus = .opened
     }
@@ -562,6 +589,7 @@ private struct MonitorNiriSettingsSection: View {
 private enum ExportStatus {
     case exported(SettingsExportMode)
     case imported
+    case created
     case revealed
     case opened
     case error(String)
@@ -571,6 +599,7 @@ private enum ExportStatus {
         case .exported(.full): "Editable config exported"
         case .exported(.compact): "Compact backup exported"
         case .imported: "Settings imported"
+        case .created: "Settings file created"
         case .revealed: "Settings file revealed in Finder"
         case .opened: "Settings file opened"
         case .error(let msg): "Error: \(msg)"
@@ -579,14 +608,14 @@ private enum ExportStatus {
 
     var icon: String {
         switch self {
-        case .exported, .imported, .revealed, .opened: "checkmark.circle.fill"
+        case .exported, .imported, .created, .revealed, .opened: "checkmark.circle.fill"
         case .error: "xmark.circle.fill"
         }
     }
 
     var color: Color {
         switch self {
-        case .exported, .imported, .revealed, .opened: .green
+        case .exported, .imported, .created, .revealed, .opened: .green
         case .error: .red
         }
     }
