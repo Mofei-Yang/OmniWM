@@ -62,12 +62,13 @@ private func makeRefreshTestWindowFacts(
 
 @MainActor
 private func makeRefreshTestController(
+    windowFocusOperations: WindowFocusOperations? = nil,
     workspaceConfigurations: [WorkspaceConfiguration] = [
         WorkspaceConfiguration(name: "1", monitorAssignment: .main),
         WorkspaceConfiguration(name: "2", monitorAssignment: .main)
     ]
 ) -> WMController {
-    let operations = WindowFocusOperations(
+    let operations = windowFocusOperations ?? WindowFocusOperations(
         activateApp: { _ in },
         focusSpecificWindow: { _, _, _ in },
         raiseWindow: { _ in }
@@ -272,6 +273,118 @@ private func addWindow(
         fatalError("Expected bridge handle for refresh test window")
     }
     return handle
+}
+
+@MainActor
+private func assertWorkspaceSwitchCommandRequestsRememberedFocus(
+    prepare: ((WMController, WorkspaceDescriptor.ID, WorkspaceDescriptor.ID, Monitor) -> Void)? = nil,
+    action: (WMController) -> Void
+) async {
+    var focusRequests: [(pid_t, UInt32)] = []
+    let controller = makeRefreshTestController(
+        windowFocusOperations: WindowFocusOperations(
+            activateApp: { _ in },
+            focusSpecificWindow: { pid, windowId, _ in
+                focusRequests.append((pid, windowId))
+            },
+            raiseWindow: { _ in }
+        )
+    )
+    guard let workspaceOne = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false),
+          let workspaceTwo = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true),
+          let monitor = controller.workspaceManager.monitors.first
+    else {
+        Issue.record("Failed to create workspace-switch focus fixture")
+        return
+    }
+
+    let sourceToken = controller.workspaceManager.addWindow(
+        makeRefreshTestWindow(windowId: 401),
+        pid: 4_101,
+        windowId: 401,
+        to: workspaceOne
+    )
+    _ = controller.workspaceManager.setManagedFocus(
+        sourceToken,
+        in: workspaceOne,
+        onMonitor: monitor.id
+    )
+
+    let inactiveHiddenState = WindowModel.HiddenState(
+        proportionalPosition: CGPoint(x: 0.2, y: 0.8),
+        referenceMonitorId: monitor.id,
+        reason: .workspaceInactive
+    )
+    let fallbackHandle = addWindow(on: controller, workspaceId: workspaceTwo, pid: 4_201, windowId: 402)
+    let targetHandle = addWindow(on: controller, workspaceId: workspaceTwo, pid: 4_201, windowId: 403)
+    controller.workspaceManager.setHiddenState(inactiveHiddenState, for: fallbackHandle.id)
+    controller.workspaceManager.setHiddenState(inactiveHiddenState, for: targetHandle.id)
+    _ = controller.workspaceManager.rememberFocus(targetHandle.id, in: workspaceTwo)
+
+    prepare?(controller, workspaceOne, workspaceTwo, monitor)
+    action(controller)
+    await waitForRefreshWork(on: controller)
+    await waitUntil {
+        controller.activeWorkspace()?.id == workspaceTwo &&
+            controller.workspaceManager.pendingFocusedToken == targetHandle.id &&
+            focusRequests.contains { $0.0 == targetHandle.id.pid && $0.1 == UInt32(targetHandle.id.windowId) }
+    }
+
+    #expect(controller.activeWorkspace()?.id == workspaceTwo)
+    #expect(controller.workspaceManager.pendingFocusedToken == targetHandle.id)
+    #expect(focusRequests.contains { $0.0 == targetHandle.id.pid && $0.1 == UInt32(targetHandle.id.windowId) })
+}
+
+@MainActor
+private func assertWorkspaceSwitchCommandClearsManagedFocusForEmptyTarget(
+    prepare: ((WMController, WorkspaceDescriptor.ID, WorkspaceDescriptor.ID, Monitor) -> Void)? = nil,
+    action: (WMController) -> Void
+) async {
+    var focusRequests: [(pid_t, UInt32)] = []
+    let controller = makeRefreshTestController(
+        windowFocusOperations: WindowFocusOperations(
+            activateApp: { _ in },
+            focusSpecificWindow: { pid, windowId, _ in
+                focusRequests.append((pid, windowId))
+            },
+            raiseWindow: { _ in }
+        )
+    )
+    guard let workspaceOne = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false),
+          let workspaceTwo = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true),
+          let monitor = controller.workspaceManager.monitors.first
+    else {
+        Issue.record("Failed to create empty-workspace switch fixture")
+        return
+    }
+
+    let sourceToken = controller.workspaceManager.addWindow(
+        makeRefreshTestWindow(windowId: 411),
+        pid: 4_111,
+        windowId: 411,
+        to: workspaceOne
+    )
+    _ = controller.workspaceManager.setManagedFocus(
+        sourceToken,
+        in: workspaceOne,
+        onMonitor: monitor.id
+    )
+
+    prepare?(controller, workspaceOne, workspaceTwo, monitor)
+    action(controller)
+    await waitForRefreshWork(on: controller)
+    await waitUntil {
+        controller.activeWorkspace()?.id == workspaceTwo &&
+            controller.workspaceManager.focusedToken == nil &&
+            controller.workspaceManager.pendingFocusedToken == nil &&
+            controller.workspaceManager.isNonManagedFocusActive
+    }
+
+    #expect(controller.activeWorkspace()?.id == workspaceTwo)
+    #expect(controller.workspaceManager.focusedToken == nil)
+    #expect(controller.workspaceManager.pendingFocusedToken == nil)
+    #expect(controller.workspaceManager.isNonManagedFocusActive)
+    #expect(focusRequests.isEmpty)
 }
 
 @MainActor
@@ -729,6 +842,97 @@ private func prepareNiriState(
         #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
         #expect(recorder.fullRescanReasons.isEmpty)
         assertNoLegacyReasons(recorder)
+    }
+
+    @Test @MainActor func workspaceSwitchCommandsRequestRememberedTargetFocus() async {
+        await assertWorkspaceSwitchCommandRequestsRememberedFocus { controller in
+            controller.workspaceNavigationHandler.switchWorkspace(index: 1)
+        }
+        await assertWorkspaceSwitchCommandRequestsRememberedFocus { controller in
+            controller.workspaceNavigationHandler.switchWorkspaceRelative(isNext: true)
+        }
+        await assertWorkspaceSwitchCommandRequestsRememberedFocus { controller in
+            controller.workspaceNavigationHandler.focusWorkspaceAnywhere(index: 1)
+        }
+        await assertWorkspaceSwitchCommandRequestsRememberedFocus(
+            prepare: { controller, workspaceOne, workspaceTwo, monitor in
+                _ = controller.workspaceManager.setActiveWorkspace(workspaceTwo, on: monitor.id)
+                _ = controller.workspaceManager.setActiveWorkspace(workspaceOne, on: monitor.id)
+            }
+        ) { controller in
+            controller.workspaceNavigationHandler.workspaceBackAndForth()
+        }
+    }
+
+    @Test @MainActor func workspaceSwitchCommandsClearManagedFocusForEmptyTargets() async {
+        await assertWorkspaceSwitchCommandClearsManagedFocusForEmptyTarget { controller in
+            controller.workspaceNavigationHandler.switchWorkspace(index: 1)
+        }
+        await assertWorkspaceSwitchCommandClearsManagedFocusForEmptyTarget { controller in
+            controller.workspaceNavigationHandler.switchWorkspaceRelative(isNext: true)
+        }
+        await assertWorkspaceSwitchCommandClearsManagedFocusForEmptyTarget { controller in
+            controller.workspaceNavigationHandler.focusWorkspaceAnywhere(index: 1)
+        }
+        await assertWorkspaceSwitchCommandClearsManagedFocusForEmptyTarget(
+            prepare: { controller, workspaceOne, workspaceTwo, monitor in
+                _ = controller.workspaceManager.setActiveWorkspace(workspaceTwo, on: monitor.id)
+                _ = controller.workspaceManager.setActiveWorkspace(workspaceOne, on: monitor.id)
+            }
+        ) { controller in
+            controller.workspaceNavigationHandler.workspaceBackAndForth()
+        }
+    }
+
+    @Test @MainActor func movingFocusedWindowUpdatesCachedFocusTargetWorkspace() async {
+        let controller = makeRefreshTestController()
+        controller.setBordersEnabled(true)
+        guard let workspaceOne = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false),
+              let workspaceTwo = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Failed to create focused-target sync fixture")
+            return
+        }
+
+        let handles = await prepareNiriState(
+            on: controller,
+            assignments: [
+                (workspaceOne, 415),
+            ],
+            focusedWindowId: 415,
+            ensureWorkspaces: [workspaceTwo]
+        )
+        guard let focusedHandle = handles[415] else {
+            Issue.record("Missing focused window handle")
+            return
+        }
+
+        controller.keyboardFocusLifecycle.setFocusedTarget(
+            controller.managedKeyboardFocusTarget(for: focusedHandle.id)
+        )
+
+        var animatingState = controller.workspaceManager.niriViewportState(for: workspaceOne)
+        animatingState.viewOffsetPixels = .spring(
+            SpringAnimation(
+                from: 0,
+                to: 120,
+                startTime: 0,
+                config: .snappy
+            )
+        )
+        controller.workspaceManager.updateNiriViewportState(animatingState, for: workspaceOne)
+
+        #expect(controller.workspaceNavigationHandler.moveWindow(handle: focusedHandle, toWorkspaceId: workspaceTwo))
+        #expect(controller.keyboardFocusLifecycle.focusedTarget?.workspaceId == workspaceTwo)
+        #expect(controller.currentKeyboardFocusTargetForRendering()?.workspaceId == workspaceTwo)
+
+        let rendered = controller.renderKeyboardFocusBorder(
+            preferredFrame: CGRect(x: 20, y: 20, width: 640, height: 480),
+            policy: .coordinated
+        )
+
+        #expect(rendered)
+        #expect(lastAppliedBorderWindowId(on: controller) == 415)
     }
 
     @Test @MainActor func moveFocusedWindowFollowFocusUsesImmediateRelayoutOnly() async {

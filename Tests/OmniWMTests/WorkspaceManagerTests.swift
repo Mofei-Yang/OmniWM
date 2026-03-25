@@ -558,6 +558,82 @@ private func workspaceConfigurations(
         #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == tiledToken)
     }
 
+    @Test @MainActor func preferredFocusAllowsRememberedWorkspaceInactiveWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 120, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        _ = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2210),
+            pid: 2210,
+            windowId: 2210,
+            to: workspaceId
+        )
+        let rememberedToken = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2211),
+            pid: 2211,
+            windowId: 2211,
+            to: workspaceId
+        )
+        _ = manager.rememberFocus(rememberedToken, in: workspaceId)
+        manager.setHiddenState(
+            .init(
+                proportionalPosition: CGPoint(x: 0.1, y: 0.9),
+                referenceMonitorId: monitor.id,
+                reason: .workspaceInactive
+            ),
+            for: rememberedToken
+        )
+
+        #expect(manager.preferredFocusToken(in: workspaceId) == rememberedToken)
+        #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == rememberedToken)
+    }
+
+    @Test @MainActor func preferredFocusFallsBackToWorkspaceInactiveTiledWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 121, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let token = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2212),
+            pid: 2212,
+            windowId: 2212,
+            to: workspaceId
+        )
+        manager.setHiddenState(
+            .init(
+                proportionalPosition: CGPoint(x: 0.2, y: 0.8),
+                referenceMonitorId: monitor.id,
+                reason: .workspaceInactive
+            ),
+            for: token
+        )
+
+        #expect(manager.preferredFocusToken(in: workspaceId) == token)
+    }
+
     @Test @MainActor func resolveWorkspaceFocusFallsBackToFloatingWhenNoTiledWindowExists() {
         let defaults = makeWorkspaceManagerTestDefaults()
         let settings = SettingsStore(defaults: defaults)
@@ -582,6 +658,42 @@ private func workspaceConfigurations(
             mode: .floating
         )
         _ = manager.setManagedFocus(floatingToken, in: workspaceId, onMonitor: monitor.id)
+
+        #expect(manager.preferredFocusToken(in: workspaceId) == nil)
+        #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == floatingToken)
+    }
+
+    @Test @MainActor func resolveWorkspaceFocusFallsBackToWorkspaceInactiveFloatingWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 122, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let floatingToken = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2213),
+            pid: 2213,
+            windowId: 2213,
+            to: workspaceId,
+            mode: .floating
+        )
+        manager.setHiddenState(
+            .init(
+                proportionalPosition: CGPoint(x: 0.3, y: 0.7),
+                referenceMonitorId: monitor.id,
+                reason: .workspaceInactive
+            ),
+            for: floatingToken
+        )
 
         #expect(manager.preferredFocusToken(in: workspaceId) == nil)
         #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == floatingToken)

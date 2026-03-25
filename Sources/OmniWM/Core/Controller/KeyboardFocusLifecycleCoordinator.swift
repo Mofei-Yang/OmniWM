@@ -177,6 +177,21 @@ final class KeyboardFocusLifecycleCoordinator {
         )
     }
 
+    func updateFocusedTargetWorkspace(
+        matching token: WindowToken,
+        axRef: AXWindowRef,
+        workspaceId: WorkspaceDescriptor.ID?
+    ) {
+        guard let focusedTarget, focusedTarget.token == token else { return }
+
+        self.focusedTarget = KeyboardFocusTarget(
+            token: token,
+            axRef: axRef,
+            workspaceId: workspaceId,
+            isManaged: workspaceId != nil
+        )
+    }
+
     func reset() {
         focusedTarget = nil
         activeManagedRequest = nil

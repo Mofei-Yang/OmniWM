@@ -707,7 +707,9 @@ final class WorkspaceManager {
             return confirmed
         }
 
-        return tiledEntries(in: workspaceId).first { !isHiddenInCorner($0.token) }?.token
+        return tiledEntries(in: workspaceId).first {
+            isFocusResolutionEligible($0, in: workspaceId, mode: .tiling)
+        }?.token
     }
 
     func resolveWorkspaceFocusToken(in workspaceId: WorkspaceDescriptor.ID) -> WindowToken? {
@@ -735,7 +737,9 @@ final class WorkspaceManager {
         ) {
             return confirmed
         }
-        return floatingEntries(in: workspaceId).first { !isHiddenInCorner($0.token) }?.token
+        return floatingEntries(in: workspaceId).first {
+            isFocusResolutionEligible($0, in: workspaceId, mode: .floating)
+        }?.token
     }
 
     @discardableResult
@@ -921,13 +925,33 @@ final class WorkspaceManager {
     ) -> WindowToken? {
         guard let token,
               let entry = entry(for: token),
-              entry.workspaceId == workspaceId,
-              entry.mode == mode,
-              !isHiddenInCorner(token)
+              isFocusResolutionEligible(entry, in: workspaceId, mode: mode)
         else {
             return nil
         }
         return token
+    }
+
+    private func isFocusResolutionEligible(
+        _ entry: WindowModel.Entry,
+        in workspaceId: WorkspaceDescriptor.ID,
+        mode: TrackedWindowMode
+    ) -> Bool {
+        guard entry.workspaceId == workspaceId,
+              entry.mode == mode
+        else {
+            return false
+        }
+
+        guard entry.hiddenProportionalPosition != nil else {
+            return true
+        }
+
+        if case .workspaceInactive = entry.hiddenReason {
+            return true
+        }
+
+        return false
     }
 
     private func setRememberedFocus(

@@ -967,7 +967,7 @@ final class WMController {
         monitor: Monitor
     ) {
         if entry.workspaceId != workspaceId {
-            workspaceManager.setWorkspace(for: entry.token, to: workspaceId)
+            reassignManagedWindow(entry.token, to: workspaceId)
         }
         axManager.markWindowActive(entry.windowId)
 
@@ -1520,6 +1520,19 @@ final class WMController {
         workspaceManager.resolveAndSetWorkspaceFocusToken(
             in: workspaceId,
             onMonitor: workspaceManager.monitorId(for: workspaceId)
+        )
+    }
+
+    func reassignManagedWindow(
+        _ token: WindowToken,
+        to workspaceId: WorkspaceDescriptor.ID
+    ) {
+        workspaceManager.setWorkspace(for: token, to: workspaceId)
+        guard let entry = workspaceManager.entry(for: token) else { return }
+        keyboardFocusLifecycle.updateFocusedTargetWorkspace(
+            matching: token,
+            axRef: entry.axRef,
+            workspaceId: entry.workspaceId
         )
     }
 
