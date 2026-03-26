@@ -132,6 +132,12 @@ import QuartzCore
     var layoutState = LayoutState()
     var debugCounters = RefreshDebugCounters()
     var debugHooks = RefreshDebugHooks()
+    private(set) var activeFrameContext: RefreshFrameContext?
+
+    func fastFrame(for token: WindowToken, axRef: AXWindowRef) -> CGRect? {
+        activeFrameContext?.fastFrame(for: token, axRef: axRef)
+            ?? AXWindowService.framePreferFast(axRef)
+    }
 
     private(set) lazy var niriHandler = NiriLayoutHandler(controller: controller)
     private(set) lazy var dwindleHandler = DwindleLayoutHandler(controller: controller)
@@ -256,7 +262,7 @@ import QuartzCore
 
     func startWindowCloseAnimation(entry: WindowModel.Entry, monitor: Monitor) {
         guard controller != nil else { return }
-        guard let frame = AXWindowService.framePreferFast(entry.axRef) else { return }
+        guard let frame = fastFrame(for: entry.token, axRef: entry.axRef) else { return }
 
         let reduceMotionScale: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.25 : 1.0
         let closeOffset = 12.0 * reduceMotionScale
@@ -406,6 +412,8 @@ import QuartzCore
         guard let controller else { return }
 
         layoutState.didExecuteRefreshExecutionPlan = true
+        activeFrameContext = plan.frameContext
+        defer { activeFrameContext = nil }
 
         // Rebuild the inactive-workspace window set BEFORE executing layout plans
         // so that applyFramesParallel (inside executeLayoutPlans) uses the correct
@@ -469,7 +477,7 @@ import QuartzCore
             if !resolveConstraints {
                 constraints = controller.workspaceManager.cachedConstraints(for: entry.token) ?? .unconstrained
             } else {
-                let currentSize = AXWindowService.framePreferFast(entry.axRef)?.size
+                let currentSize = fastFrame(for: entry.token, axRef: entry.axRef)?.size
                 if let cached = controller.workspaceManager.cachedConstraints(for: entry.token) {
                     constraints = cached
                 } else {
@@ -897,7 +905,7 @@ import QuartzCore
         effects.requestWorkspaceBarRefresh = true
         effects.updateTabbedOverlays = true
         effects.refreshFocusedBorderForVisibilityState = true
-        return RefreshExecutionPlan(effects: effects)
+        return RefreshExecutionPlan(effects: effects, frameContext: RefreshFrameContext())
     }
 
     private func buildRelayoutExecutionPlan(
@@ -946,7 +954,7 @@ import QuartzCore
             effects.focusValidationWorkspaceIds = [focusedWorkspaceId]
         }
 
-        return RefreshExecutionPlan(workspacePlans: workspacePlans, effects: effects)
+        return RefreshExecutionPlan(workspacePlans: workspacePlans, effects: effects, frameContext: RefreshFrameContext())
     }
 
     private func buildWindowRemovalExecutionPlan(
@@ -1021,7 +1029,7 @@ import QuartzCore
         effects.updateTabbedOverlays = updateTabbedOverlays
         effects.focusValidationWorkspaceIds = focusValidationWorkspaceIds
 
-        return RefreshExecutionPlan(workspacePlans: workspacePlans, effects: effects)
+        return RefreshExecutionPlan(workspacePlans: workspacePlans, effects: effects, frameContext: RefreshFrameContext())
     }
 
     private func buildFullRefreshExecutionPlan() async throws -> RefreshExecutionPlan {
@@ -1227,7 +1235,7 @@ import QuartzCore
         effects.drainDeferredCreatedWindows = true
         effects.subscribeManagedWindows = true
 
-        return RefreshExecutionPlan(workspacePlans: workspacePlans, effects: effects)
+        return RefreshExecutionPlan(workspacePlans: workspacePlans, effects: effects, frameContext: RefreshFrameContext())
     }
 
     private func shouldPreserveMissingWindowsDuringNativeFullscreen(
@@ -1797,7 +1805,7 @@ import QuartzCore
         hiddenPlacementMonitors: [HiddenPlacementMonitorContext]? = nil
     ) -> HideOperationResolution {
         guard let controller else { return .unavailable }
-        guard let frame = AXWindowService.framePreferFast(entry.axRef)
+        guard let frame = fastFrame(for: entry.token, axRef: entry.axRef)
             ?? controller.axManager.lastAppliedFrame(for: entry.windowId)
             ?? (try? AXWindowService.frame(entry.axRef))
         else {
@@ -2088,7 +2096,7 @@ import QuartzCore
         hiddenState: WindowModel.HiddenState
     ) -> WindowPositionPlan? {
         guard let controller else { return nil }
-        guard let frame = AXWindowService.framePreferFast(entry.axRef)
+        guard let frame = fastFrame(for: entry.token, axRef: entry.axRef)
             ?? controller.axManager.lastAppliedFrame(for: entry.windowId)
         else {
             return nil
@@ -2155,7 +2163,7 @@ import QuartzCore
             let appKitRect = ScreenCoordinateSpace.toAppKit(rect: wsRect)
             return appKitRect.origin
         }
-        return AXWindowService.framePreferFast(entry.axRef)?.origin
+        return fastFrame(for: entry.token, axRef: entry.axRef)?.origin
     }
 
     static func hiddenEdgeReveal(isZoomApp: Bool) -> CGFloat {
