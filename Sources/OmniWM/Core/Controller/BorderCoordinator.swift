@@ -130,7 +130,9 @@ final class BorderCoordinator {
            let entry = controller.workspaceManager.entry(for: target.token)
         {
             let shouldPreferObservedFrame = controller.axManager.shouldPreferObservedFrame(for: entry.windowId)
-            if !shouldPreferObservedFrame, !prefersGhosttyObservedFrame, let preferredFrame {
+            let prefersObservedFrame = shouldPreferObservedFrame || prefersGhosttyObservedFrame
+
+            if !prefersObservedFrame, let preferredFrame {
                 return preferredFrame
             }
 
@@ -139,17 +141,14 @@ final class BorderCoordinator {
                 return observed
             }
 
-            // Ghostty decorates the live frame; prefer one AX read when available,
-            // but never let stale cached geometry outrank the fresh layout frame.
-            if prefersGhosttyObservedFrame, let preferredFrame {
+            if let preferredFrame {
                 return preferredFrame
             }
 
             return controller.axManager.lastAppliedFrame(for: entry.windowId)
-                ?? (!shouldPreferObservedFrame
+                ?? (!prefersObservedFrame
                     ? controller.niriEngine?.findNode(for: target.token).flatMap { $0.renderedFrame ?? $0.frame }
                     : nil)
-                ?? preferredFrame
         }
 
         if !prefersGhosttyObservedFrame, let preferredFrame {
@@ -160,10 +159,8 @@ final class BorderCoordinator {
     }
 
     private func observedFrame(for axRef: AXWindowRef) -> CGRect? {
-        if let observedFrameProviderForTests,
-           let frame = observedFrameProviderForTests(axRef)
-        {
-            return frame
+        if let observedFrameProviderForTests {
+            return observedFrameProviderForTests(axRef)
         }
 
         if let frame = AXWindowService.framePreferFast(axRef) {

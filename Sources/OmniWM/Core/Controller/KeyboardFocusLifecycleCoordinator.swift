@@ -85,11 +85,11 @@ final class FocusBridgeCoordinator {
     }
 
     func recordRetry(
-        for token: WindowToken,
+        requestId: UInt64,
         source: ActivationEventSource,
         retryLimit: Int
     ) -> ManagedFocusRequest? {
-        guard var activeManagedRequest, activeManagedRequest.token == token else {
+        guard var activeManagedRequest, activeManagedRequest.requestId == requestId else {
             return nil
         }
 

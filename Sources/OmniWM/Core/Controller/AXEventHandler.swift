@@ -910,8 +910,8 @@ final class AXEventHandler: CGSEventDelegate {
         let monitorId = controller.workspaceManager.monitorId(for: wsId)
         let shouldActivateWorkspace = !isWorkspaceActive && !controller.isTransferringWindow
         let activeRequest = controller.focusBridge.activeManagedRequest(for: entry.pid)
-        let shouldConfirmRequest = confirmRequest ?? (activeRequest?.token == entry.token || activeRequest == nil)
-        let preservePendingSelection = !shouldConfirmRequest && activeRequest != nil
+        let shouldConfirmRequest = confirmRequest ?? true
+        var confirmedRequestId: UInt64?
 
         if shouldConfirmRequest {
             _ = controller.workspaceManager.confirmManagedFocus(
@@ -921,21 +921,31 @@ final class AXEventHandler: CGSEventDelegate {
                 appFullscreen: appFullscreen,
                 activateWorkspaceOnMonitor: shouldActivateWorkspace
             )
-            if let confirmedRequest = controller.focusBridge.confirmManagedRequest(
-                token: entry.token,
-                source: source
-            ) {
-                cancelActivationRetry(requestId: confirmedRequest.requestId)
-                recordNiriCreateFocusTrace(
-                    .init(
-                        kind: .focusConfirmed(
-                            token: entry.token,
-                            workspaceId: wsId,
-                            source: source
-                        )
+
+            if let activeRequest {
+                confirmedRequestId = activeRequest.requestId
+                if activeRequest.token == entry.token {
+                    _ = controller.focusBridge.confirmManagedRequest(
+                        token: entry.token,
+                        source: source
+                    )
+                } else {
+                    _ = controller.focusBridge.cancelManagedRequest(requestId: activeRequest.requestId)
+                }
+            }
+
+            if let confirmedRequestId {
+                cancelActivationRetry(requestId: confirmedRequestId)
+            }
+            recordNiriCreateFocusTrace(
+                .init(
+                    kind: .focusConfirmed(
+                        token: entry.token,
+                        workspaceId: wsId,
+                        source: source
                     )
                 )
-            }
+            )
         } else {
             _ = controller.workspaceManager.setManagedFocus(
                 entry.token,
@@ -951,20 +961,18 @@ final class AXEventHandler: CGSEventDelegate {
            let node = engine.findNode(for: entry.handle),
            let _ = controller.workspaceManager.monitor(for: wsId)
         {
-            if !preservePendingSelection {
-                var state = controller.workspaceManager.niriViewportState(for: wsId)
-                controller.niriLayoutHandler.activateNode(
-                    node, in: wsId, state: &state,
-                    options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
+            var state = controller.workspaceManager.niriViewportState(for: wsId)
+            controller.niriLayoutHandler.activateNode(
+                node, in: wsId, state: &state,
+                options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
+            )
+            _ = controller.workspaceManager.applySessionPatch(
+                .init(
+                    workspaceId: wsId,
+                    viewportState: state,
+                    rememberedFocusToken: nil
                 )
-                _ = controller.workspaceManager.applySessionPatch(
-                    .init(
-                        workspaceId: wsId,
-                        viewportState: state,
-                        rememberedFocusToken: nil
-                    )
-                )
-            }
+            )
 
             _ = controller.renderKeyboardFocusBorder(
                 for: target,
@@ -975,18 +983,6 @@ final class AXEventHandler: CGSEventDelegate {
             _ = controller.renderKeyboardFocusBorder(
                 for: target,
                 policy: .direct
-            )
-        }
-
-        if !shouldConfirmRequest,
-           let activeRequest,
-           activeRequest.token != entry.token
-        {
-            continueManagedFocusRequest(
-                activeRequest,
-                source: source,
-                origin: origin,
-                reason: .pendingFocusMismatch
             )
         }
 
@@ -1946,7 +1942,7 @@ final class AXEventHandler: CGSEventDelegate {
     ) -> Bool {
         guard let controller,
               let updatedRequest = controller.focusBridge.recordRetry(
-                  for: request.token,
+                  requestId: request.requestId,
                   source: source,
                   retryLimit: Self.activationRetryLimit
               )

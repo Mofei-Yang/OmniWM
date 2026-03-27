@@ -32,3 +32,6 @@ Frameworks/
 .tmp/
 .cache/
 .codex-cache/
+
+# Local documentation
+STABILITY_IMPROVEMENTS.md

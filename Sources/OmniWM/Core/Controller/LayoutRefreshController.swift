@@ -2378,18 +2378,29 @@ final class LayoutDiffExecutor {
 
     private func applyDirectBorderUpdate(_ focusedFrame: LayoutFocusedFrame?) {
         guard let controller = refreshController.controller else { return }
-        let target = controller.currentKeyboardFocusTargetForRendering()
+        let target = resolvedBorderRenderTarget(controller: controller, focusedFrame: focusedFrame)
+        let fallbackPreferredFrame: CGRect?
+        if let target, target.isManaged {
+            fallbackPreferredFrame = controller.preferredKeyboardFocusFrame(for: target.token)
+        } else {
+            fallbackPreferredFrame = nil
+        }
+        if target?.isManaged == true,
+           focusedFrame == nil,
+           fallbackPreferredFrame == nil
+        {
+            controller.borderManager.hideBorder()
+            return
+        }
         guard !shouldIgnoreStaleManagedBorderUpdate(target: target, focusedFrame: focusedFrame) else {
             return
         }
         let preferredFrame: CGRect? = if let target,
                                          target.isManaged,
-                                         focusedFrame?.token == target.token,
-                                         let entry = controller.workspaceManager.entry(for: target.token),
-                                         !controller.axManager.shouldPreferObservedFrame(for: entry.windowId) {
+                                         focusedFrame?.token == target.token {
             focusedFrame?.frame
         } else {
-            nil
+            fallbackPreferredFrame
         }
         _ = controller.renderKeyboardFocusBorder(
             for: target,
@@ -2400,18 +2411,29 @@ final class LayoutDiffExecutor {
 
     private func applyCoordinatedBorderUpdate(_ focusedFrame: LayoutFocusedFrame?) {
         guard let controller = refreshController.controller else { return }
-        let target = controller.currentKeyboardFocusTargetForRendering()
+        let target = resolvedBorderRenderTarget(controller: controller, focusedFrame: focusedFrame)
+        let fallbackPreferredFrame: CGRect?
+        if let target, target.isManaged {
+            fallbackPreferredFrame = controller.preferredKeyboardFocusFrame(for: target.token)
+        } else {
+            fallbackPreferredFrame = nil
+        }
+        if target?.isManaged == true,
+           focusedFrame == nil,
+           fallbackPreferredFrame == nil
+        {
+            controller.borderManager.hideBorder()
+            return
+        }
         guard !shouldIgnoreStaleManagedBorderUpdate(target: target, focusedFrame: focusedFrame) else {
             return
         }
         let preferredFrame: CGRect? = if let target,
                                          target.isManaged,
-                                         focusedFrame?.token == target.token,
-                                         let entry = controller.workspaceManager.entry(for: target.token),
-                                         !controller.axManager.shouldPreferObservedFrame(for: entry.windowId) {
+                                         focusedFrame?.token == target.token {
             focusedFrame?.frame
         } else {
-            nil
+            fallbackPreferredFrame
         }
         _ = controller.renderKeyboardFocusBorder(
             for: target,
@@ -2432,5 +2454,19 @@ final class LayoutDiffExecutor {
         }
 
         return focusedFrame.token != target.token
+    }
+
+    private func resolvedBorderRenderTarget(
+        controller: WMController,
+        focusedFrame: LayoutFocusedFrame?
+    ) -> KeyboardFocusTarget? {
+        let currentTarget = controller.currentKeyboardFocusTargetForRendering()
+        guard let focusedFrame,
+              controller.workspaceManager.pendingFocusedToken == focusedFrame.token
+        else {
+            return currentTarget
+        }
+
+        return controller.managedKeyboardFocusTarget(for: focusedFrame.token) ?? currentTarget
     }
 }

@@ -57,6 +57,7 @@ private func makeAXEventTestController(
     trackedBundleId: String? = nil,
     workspaceConfigurations: [WorkspaceConfiguration]? = nil
 ) -> WMController {
+    resetSharedControllerStateForTests()
     let operations = windowFocusOperations ?? WindowFocusOperations(
         activateApp: { _ in },
         focusSpecificWindow: { _, _, _ in },

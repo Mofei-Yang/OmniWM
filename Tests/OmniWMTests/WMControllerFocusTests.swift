@@ -134,6 +134,7 @@ private func makeFocusTestController(
         WorkspaceConfiguration(name: "1", monitorAssignment: .main)
     ]
 ) -> (controller: WMController, workspaceId: WorkspaceDescriptor.ID, handle: WindowHandle) {
+    resetSharedControllerStateForTests()
     let settings = SettingsStore(defaults: makeFocusTestDefaults())
     settings.workspaceConfigurations = workspaceConfigurations
     let controller = WMController(settings: settings, windowFocusOperations: windowFocusOperations)
@@ -162,6 +163,7 @@ private func makeTwoMonitorFocusController(
     primaryWorkspaceId: WorkspaceDescriptor.ID,
     secondaryWorkspaceId: WorkspaceDescriptor.ID
 ) {
+    resetSharedControllerStateForTests()
     let settings = SettingsStore(defaults: makeFocusTestDefaults())
     settings.workspaceConfigurations = [
         WorkspaceConfiguration(name: "1", monitorAssignment: .main),
