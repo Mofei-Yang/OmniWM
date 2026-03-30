@@ -25,6 +25,21 @@ private final class TestIPCServer: IPCServerLifecycle {
     func stop() {}
 }
 
+@MainActor
+private final class TestUpdateCoordinator: AppUpdateCoordinating {
+    private let onStart: @MainActor () -> Void
+
+    init(onStart: @escaping @MainActor () -> Void = {}) {
+        self.onStart = onStart
+    }
+
+    func startAutomaticChecks() {
+        onStart()
+    }
+
+    func checkForUpdatesManually() {}
+}
+
 @Suite @MainActor struct AppDelegateIPCTests {
     @Test func finishBootstrapStartsIPCOnlyAfterStatusBarSetup() {
         let defaults = makeLayoutPlanTestDefaults()
@@ -67,6 +82,27 @@ private final class TestIPCServer: IPCServerLifecycle {
         appDelegate.finishBootstrap(defaults: defaults)
 
         #expect(observedStart == false)
+    }
+
+    @Test func finishBootstrapStartsUpdateChecksOnlyAfterStatusBarSetup() {
+        let defaults = makeLayoutPlanTestDefaults()
+        var observedControllerStatusBar = false
+        var bootstrappedController: WMController?
+        AppDelegate.updateCoordinatorFactoryForTests = { _, controller, _ in
+            bootstrappedController = controller
+            return TestUpdateCoordinator {
+                observedControllerStatusBar = controller.statusBarController != nil
+            }
+        }
+        defer {
+            AppDelegate.updateCoordinatorFactoryForTests = nil
+            bootstrappedController?.statusBarController?.cleanup()
+        }
+
+        let appDelegate = AppDelegate()
+        appDelegate.finishBootstrap(defaults: defaults)
+
+        #expect(observedControllerStatusBar)
     }
 
     @Test func finishBootstrapMakesIPCReachableAndTerminateUnlinksSocket() async throws {

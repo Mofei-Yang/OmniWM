@@ -8,14 +8,22 @@ final class SettingsWindowController {
     private var window: NSWindow?
     private let ownedWindowRegistry = OwnedWindowRegistry.shared
 
-    func show(settings: SettingsStore, controller: WMController) {
+    func show(
+        settings: SettingsStore,
+        controller: WMController,
+        updateCoordinator: (any AppUpdateCoordinating)? = nil
+    ) {
         if let window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let settingsView = SettingsView(settings: settings, controller: controller)
+        let settingsView = SettingsView(
+            settings: settings,
+            controller: controller,
+            updateCoordinator: updateCoordinator
+        )
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
 
         let hosting = NSHostingController(rootView: settingsView)

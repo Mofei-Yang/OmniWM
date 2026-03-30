@@ -97,6 +97,7 @@ struct SettingsExport: Codable {
     var monitorDwindleSettings: [MonitorDwindleSettings]
 
     var preventSleepEnabled: Bool
+    var updateChecksEnabled: Bool
     var ipcEnabled: Bool
     var scrollGestureEnabled: Bool
     var scrollSensitivity: Double
@@ -182,6 +183,7 @@ extension SettingsExport {
             dwindleMoveToRootStable: true,
             monitorDwindleSettings: [],
             preventSleepEnabled: false,
+            updateChecksEnabled: true,
             ipcEnabled: false,
             scrollGestureEnabled: true,
             scrollSensitivity: 5.0,
@@ -369,6 +371,7 @@ extension SettingsStore {
             dwindleMoveToRootStable: dwindleMoveToRootStable,
             monitorDwindleSettings: monitorDwindleSettings,
             preventSleepEnabled: preventSleepEnabled,
+            updateChecksEnabled: updateChecksEnabled,
             ipcEnabled: ipcEnabled,
             scrollGestureEnabled: scrollGestureEnabled,
             scrollSensitivity: scrollSensitivity,
@@ -504,6 +507,7 @@ extension SettingsStore {
         )
 
         preventSleepEnabled = export.preventSleepEnabled
+        updateChecksEnabled = export.updateChecksEnabled
         ipcEnabled = export.ipcEnabled
         scrollGestureEnabled = export.scrollGestureEnabled
         scrollSensitivity = export.scrollSensitivity

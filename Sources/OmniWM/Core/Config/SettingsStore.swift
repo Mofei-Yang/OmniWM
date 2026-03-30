@@ -226,6 +226,10 @@ final class SettingsStore {
         didSet { defaults.set(preventSleepEnabled, forKey: Keys.preventSleepEnabled) }
     }
 
+    var updateChecksEnabled: Bool {
+        didSet { defaults.set(updateChecksEnabled, forKey: Keys.updateChecksEnabled) }
+    }
+
     var ipcEnabled: Bool {
         didSet {
             defaults.set(ipcEnabled, forKey: Keys.ipcEnabled)
@@ -459,6 +463,7 @@ final class SettingsStore {
         monitorDwindleSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorDwindleSettings)
 
         preventSleepEnabled = defaults.object(forKey: Keys.preventSleepEnabled) as? Bool ?? baseline.preventSleepEnabled
+        updateChecksEnabled = defaults.object(forKey: Keys.updateChecksEnabled) as? Bool ?? baseline.updateChecksEnabled
         ipcEnabled = defaults.object(forKey: Keys.ipcEnabled) as? Bool ?? baseline.ipcEnabled
         scrollGestureEnabled = defaults.object(forKey: Keys.scrollGestureEnabled) as? Bool ??
             baseline.scrollGestureEnabled
@@ -949,6 +954,7 @@ private enum Keys {
     static let appRules = "settings.appRules"
     static let monitorOrientationSettings = "settings.monitorOrientationSettings"
     static let preventSleepEnabled = "settings.preventSleepEnabled"
+    static let updateChecksEnabled = "settings.updateChecksEnabled"
     static let ipcEnabled = "settings.ipcEnabled"
     static let scrollGestureEnabled = "settings.scrollGestureEnabled"
     static let scrollSensitivity = "settings.scrollSensitivity"

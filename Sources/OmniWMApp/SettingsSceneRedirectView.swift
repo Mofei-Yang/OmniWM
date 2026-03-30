@@ -59,7 +59,11 @@ struct SettingsSceneRedirectView: View {
         else { return }
 
         didRedirect = true
-        SettingsWindowController.shared.show(settings: settings, controller: controller)
+        SettingsWindowController.shared.show(
+            settings: settings,
+            controller: controller,
+            updateCoordinator: bootstrap.updateCoordinator
+        )
 
         guard let window else { return }
         OwnedWindowRegistry.shared.unregister(window)

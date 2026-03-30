@@ -5,12 +5,14 @@ import Observation
 final class AppBootstrapState {
     var settings: SettingsStore?
     var controller: WMController?
+    var updateCoordinator: (any AppUpdateCoordinating)?
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated(unsafe) static weak var sharedBootstrap: AppBootstrapState?
     static var ipcServerFactoryForTests: ((WMController) -> IPCServerLifecycle)?
+    static var updateCoordinatorFactoryForTests: ((SettingsStore, WMController, UserDefaults) -> any AppUpdateCoordinating)?
     private static let desktopAndDockSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension"
     )!
@@ -30,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var ipcServer: IPCServerLifecycle?
     private var cliManager: AppCLIManager?
+    private var updateCoordinator: (any AppUpdateCoordinating)?
 
     func applicationDidFinishLaunching(_: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -62,17 +65,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = WMController(settings: settings, hiddenBarController: hiddenBarController)
         controller.applyPersistedSettings(settings)
         let cliManager = AppCLIManager()
+        let updateCoordinator = Self.updateCoordinatorFactoryForTests?(settings, controller, defaults)
+            ?? UpdateCoordinator(settings: settings, defaults: defaults)
         self.cliManager = cliManager
+        self.updateCoordinator = updateCoordinator
 
         AppDelegate.sharedBootstrap?.settings = settings
         AppDelegate.sharedBootstrap?.controller = controller
+        AppDelegate.sharedBootstrap?.updateCoordinator = updateCoordinator
 
         statusBarController = StatusBarController(
             settings: settings,
             controller: controller,
             hiddenBarController: hiddenBarController,
             defaults: defaults,
-            cliManager: cliManager
+            cliManager: cliManager,
+            updateCoordinator: updateCoordinator
         )
         controller.statusBarController = statusBarController
         settings.onIPCEnabledChanged = { [weak self, weak controller] isEnabled in
@@ -100,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             settings.ipcEnabled = false
         }
+        updateCoordinator.startAutomaticChecks()
     }
 
     func startIPCServer(controller: WMController) throws {

@@ -58,6 +58,24 @@ private func makeStatusBarMenuTestDirectory() -> URL {
         #expect(labels.contains("Open Settings File"))
     }
 
+    @Test func buildMenuIncludesCheckForUpdatesRowAndDelegatesAction() {
+        let controller = makeLayoutPlanTestController()
+        let builder = StatusBarMenuBuilder(settings: controller.settings, controller: controller)
+        var didCheckForUpdates = false
+        builder.checkForUpdatesAction = {
+            didCheckForUpdates = true
+        }
+
+        let menu = builder.buildMenu()
+        let labels = menu.items.compactMap(\.view).flatMap(textLabels(in:))
+
+        #expect(labels.contains("Check for Updates..."))
+
+        builder.performCheckForUpdatesAction()
+
+        #expect(didCheckForUpdates)
+    }
+
     @Test func buildMenuIncludesIPCSectionAndCLIInstallActionWhenEnabled() throws {
         let root = makeStatusBarMenuTestDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

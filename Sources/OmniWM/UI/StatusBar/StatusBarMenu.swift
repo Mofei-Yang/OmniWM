@@ -17,6 +17,8 @@ final class StatusBarMenuBuilder {
     var configFileActionPerformer: (ConfigFileAction, URL, SettingsStore, WMController) throws -> ExportStatus
     var ipcMenuEnabled = false
     var cliManager: AppCLIManager?
+    var checkForUpdatesAction: (() -> Void)?
+    var updateCoordinator: (any AppUpdateCoordinating)?
 
     private var toggleViews: [String: MenuToggleRowView] = [:]
 
@@ -246,6 +248,18 @@ final class StatusBarMenuBuilder {
     }
 
     private func addSettingsSection(to menu: NSMenu) {
+        if checkForUpdatesAction != nil {
+            let updatesRow = MenuActionRowView(
+                icon: "arrow.down.circle",
+                label: "Check for Updates..."
+            ) { [weak self] in
+                self?.performCheckForUpdatesAction()
+            }
+            let updatesItem = NSMenuItem()
+            updatesItem.view = updatesRow
+            menu.addItem(updatesItem)
+        }
+
         let appRulesRow = MenuActionRowView(
             icon: "slider.horizontal.3",
             label: "App Rules",
@@ -264,7 +278,11 @@ final class StatusBarMenuBuilder {
             showChevron: true
         ) { [weak self] in
             guard let self, let controller = self.controller else { return }
-            SettingsWindowController.shared.show(settings: self.settings, controller: controller)
+            SettingsWindowController.shared.show(
+                settings: self.settings,
+                controller: controller,
+                updateCoordinator: self.updateCoordinator
+            )
         }
         let settingsItem = NSMenuItem()
         settingsItem.view = settingsRow
@@ -321,6 +339,10 @@ final class StatusBarMenuBuilder {
         let openSettingsFileItem = NSMenuItem()
         openSettingsFileItem.view = openSettingsFileRow
         menu.addItem(openSettingsFileItem)
+    }
+
+    func performCheckForUpdatesAction() {
+        checkForUpdatesAction?()
     }
 
     func performConfigFileAction(_ action: ConfigFileAction) {

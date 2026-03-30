@@ -4,6 +4,7 @@ struct SettingsDetailView: View {
     let section: SettingsSection
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
+    let updateCoordinator: (any AppUpdateCoordinating)?
 
     var body: some View {
         ScrollView {
@@ -19,7 +20,11 @@ struct SettingsDetailView: View {
     private var contentView: some View {
         switch section {
         case .general:
-            GeneralSettingsTab(settings: settings, controller: controller)
+            GeneralSettingsTab(
+                settings: settings,
+                controller: controller,
+                updateCoordinator: updateCoordinator
+            )
         case .niri:
             NiriSettingsTab(settings: settings, controller: controller)
         case .dwindle:

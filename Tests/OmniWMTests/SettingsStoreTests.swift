@@ -358,6 +358,7 @@ private func makeSettingsTestMonitor(
         #expect(defaults.workspaceBarReserveLayoutSpace == false)
         #expect(defaults.appRules == BuiltInSettingsDefaults.appRules)
         #expect(defaults.preventSleepEnabled == false)
+        #expect(defaults.updateChecksEnabled == true)
         #expect(defaults.ipcEnabled == false)
         #expect(defaults.scrollSensitivity == 5.0)
         #expect(defaults.statusBarShowWorkspaceName == false)
@@ -430,6 +431,7 @@ private func makeSettingsTestMonitor(
             "dwindleMoveToRootStable": true,
             "monitorDwindleSettings": [],
             "preventSleepEnabled": false,
+            "updateChecksEnabled": true,
             "ipcEnabled": true,
             "scrollGestureEnabled": true,
             "scrollSensitivity": 1,
@@ -519,6 +521,7 @@ private func makeSettingsTestMonitor(
             dwindleMoveToRootStable: false,
             monitorDwindleSettings: [MonitorDwindleSettings(monitorName: "TestDwindle", smartSplit: true)],
             preventSleepEnabled: true,
+            updateChecksEnabled: false,
             ipcEnabled: true,
             scrollGestureEnabled: false,
             scrollSensitivity: 2.0,
@@ -647,6 +650,7 @@ private func makeSettingsTestMonitor(
     @Test func compactExportIncludesReadableAdditionalPersistedSettings() throws {
         var export = SettingsExport.defaults()
         export.focusFollowsWindowToMonitor = true
+        export.updateChecksEnabled = false
         export.commandPaletteLastMode = CommandPaletteMode.menu.rawValue
         export.quakeTerminalPosition = QuakeTerminalPosition.bottom.rawValue
         export.quakeTerminalWidthPercent = 80
@@ -663,6 +667,7 @@ private func makeSettingsTestMonitor(
         }
 
         #expect((json["focusFollowsWindowToMonitor"] as? Bool) == true)
+        #expect((json["updateChecksEnabled"] as? Bool) == false)
         #expect(json["commandPaletteLastMode"] as? String == "menu")
         #expect(json["quakeTerminalEnabled"] == nil)
         #expect(json["quakeTerminalPosition"] as? String == "bottom")
@@ -698,6 +703,7 @@ private func makeSettingsTestMonitor(
         #expect(json["mouseWarpMonitorOrder"] == nil)
         #expect(json["quakeTerminalUseCustomFrame"] == nil)
         #expect(json["preventSleepEnabled"] == nil)
+        #expect(json["updateChecksEnabled"] == nil)
         #expect(json["ipcEnabled"] == nil)
     }
 
@@ -816,6 +822,7 @@ private func makeSettingsTestMonitor(
         #expect(decoded.workspaceConfigurations == BuiltInSettingsDefaults.workspaceConfigurations)
         #expect(decoded.appRules == BuiltInSettingsDefaults.appRules)
         #expect(decoded.preventSleepEnabled == false)
+        #expect(decoded.updateChecksEnabled == true)
         #expect(decoded.ipcEnabled == false)
         #expect(decoded.hotkeyBindings == HotkeyBindingRegistry.defaults())
         #expect(decoded.quakeTerminalEnabled == true)
@@ -1250,6 +1257,7 @@ private func makeSettingsTestMonitor(
         let settings = SettingsStore(defaults: makeTestDefaults())
         settings.focusFollowsWindowToMonitor = true
         settings.mouseWarpAxis = .vertical
+        settings.updateChecksEnabled = false
         settings.statusBarShowWorkspaceName = true
         settings.statusBarShowAppNames = true
         settings.statusBarUseWorkspaceId = true
@@ -1272,6 +1280,7 @@ private func makeSettingsTestMonitor(
 
         #expect(imported.focusFollowsWindowToMonitor == true)
         #expect(imported.mouseWarpAxis == .vertical)
+        #expect(imported.updateChecksEnabled == false)
         #expect(imported.statusBarShowWorkspaceName == true)
         #expect(imported.statusBarShowAppNames == true)
         #expect(imported.statusBarUseWorkspaceId == true)
@@ -1488,6 +1497,7 @@ private func makeSettingsTestMonitor(
             dwindleMoveToRootStable: imported.dwindleMoveToRootStable,
             monitorDwindleSettings: imported.monitorDwindleSettings,
             preventSleepEnabled: imported.preventSleepEnabled,
+            updateChecksEnabled: imported.updateChecksEnabled,
             ipcEnabled: imported.ipcEnabled,
             scrollGestureEnabled: imported.scrollGestureEnabled,
             scrollSensitivity: imported.scrollSensitivity,
@@ -1629,6 +1639,7 @@ private func makeSettingsTestMonitor(
         #expect(settings.appRules == BuiltInSettingsDefaults.appRules)
         #expect(settings.mouseWarpMonitorOrder.isEmpty)
         #expect(settings.preventSleepEnabled == false)
+        #expect(settings.updateChecksEnabled == true)
         #expect(settings.ipcEnabled == false)
         #expect(settings.scrollSensitivity == 5.0)
         #expect(settings.statusBarShowWorkspaceName == false)
@@ -1670,6 +1681,7 @@ private func makeSettingsTestMonitor(
         #expect(settings.statusBarUseWorkspaceId == exportDefaults.statusBarUseWorkspaceId)
         #expect(settings.commandPaletteLastMode.rawValue == exportDefaults.commandPaletteLastMode)
         #expect(settings.hiddenBarIsCollapsed == exportDefaults.hiddenBarIsCollapsed)
+        #expect(settings.updateChecksEnabled == exportDefaults.updateChecksEnabled)
         #expect(settings.ipcEnabled == exportDefaults.ipcEnabled)
         #expect(settings.quakeTerminalPosition.rawValue == exportDefaults.quakeTerminalPosition)
         #expect(settings.quakeTerminalMonitorMode.rawValue == exportDefaults.quakeTerminalMonitorMode)

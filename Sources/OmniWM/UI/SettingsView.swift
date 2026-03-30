@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
+    let updateCoordinator: (any AppUpdateCoordinating)?
     @State private var selectedSection: SettingsSection = .general
 
     var body: some View {
@@ -13,7 +14,8 @@ struct SettingsView: View {
             SettingsDetailView(
                 section: selectedSection,
                 settings: settings,
-                controller: controller
+                controller: controller,
+                updateCoordinator: updateCoordinator
             )
         }
         .navigationSplitViewStyle(.balanced)
@@ -24,6 +26,7 @@ struct SettingsView: View {
 struct GeneralSettingsTab: View {
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
+    let updateCoordinator: (any AppUpdateCoordinating)?
     @State private var exportStatus: ExportStatus?
 
     var body: some View {
@@ -59,6 +62,22 @@ struct GeneralSettingsTab: View {
                     }
                     .disabled(!settings.statusBarShowWorkspaceName)
                 Text("Shows the active workspace and focused app beside the menu bar icon")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Updates") {
+                Toggle("Check for Updates Automatically", isOn: $settings.updateChecksEnabled)
+
+                Button("Check for Updates...") {
+                    updateCoordinator?.checkForUpdatesManually()
+                }
+                .disabled(updateCoordinator == nil)
+
+                Text(
+                    "OmniWM checks the latest GitHub release once per day on launch. "
+                        + "Updates stay manual and the popup includes both the GitHub page and the Homebrew command."
+                )
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

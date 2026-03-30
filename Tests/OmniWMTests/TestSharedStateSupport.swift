@@ -15,6 +15,7 @@ func resetSharedControllerStateForTests() {
     SettingsWindowController.shared.windowForTests?.close()
     AppRulesWindowController.shared.windowForTests?.close()
     SponsorsWindowController.shared.windowForTests?.close()
+    UpdateWindowController.shared.windowForTests?.close()
     OwnedWindowRegistry.shared.resetForTests()
 
     AppAXContext.contextFactoryForTests = contextFactory
