@@ -26,6 +26,7 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
     private var isHandlingResize: Bool = false
 
     private let settings: SettingsStore
+    private let surfaceCoordinator = SurfaceCoordinator.shared
 
     private static var ghosttyInitialized = false
 
@@ -136,6 +137,7 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
             ghostty_config_free(ghosttyConfig)
             self.ghosttyConfig = nil
         }
+        surfaceCoordinator.unregister(id: surfaceID)
         window?.close()
         window = nil
         containerView = nil
@@ -208,6 +210,16 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
         win.delegate = self
         win.tabController = self
         self.window = win
+        surfaceCoordinator.register(
+            window: win,
+            id: surfaceID,
+            policy: SurfacePolicy(
+                kind: .quake,
+                hitTestPolicy: .interactive,
+                capturePolicy: .included,
+                suppressesManagedFocusRecovery: true
+            )
+        )
 
         let container = NSView(frame: win.contentView?.bounds ?? .zero)
         container.autoresizingMask = [.width, .height]
@@ -222,6 +234,10 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
                            width: container.bounds.width, height: QuakeTerminalTabBar.barHeight)
         container.addSubview(bar)
         self.tabBar = bar
+    }
+
+    private var surfaceID: String {
+        "quake-terminal"
     }
 
     private func createSurfaceView() -> GhosttySurfaceView? {

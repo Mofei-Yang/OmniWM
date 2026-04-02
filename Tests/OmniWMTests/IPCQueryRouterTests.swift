@@ -550,6 +550,34 @@ private func prepareIPCQueryRouterNiriState(
         #expect(result.window?.disposition == .undecided)
         #expect(result.window?.admissionOutcome == .deferred)
     }
+
+    @Test func reconcileDebugQueryReturnsSnapshotAndTraceDump() {
+        let controller = makeLayoutPlanTestController()
+        let workspaceId = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false)!
+        let token = controller.workspaceManager.addWindow(
+            makeLayoutPlanTestWindow(windowId: 5101),
+            pid: 5101,
+            windowId: 5101,
+            to: workspaceId
+        )
+        _ = controller.workspaceManager.setManagedFocus(token, in: workspaceId)
+        _ = controller.workspaceManager.recordReconcileEvent(
+            .windowModeChanged(
+                token: token,
+                workspaceId: workspaceId,
+                monitorId: controller.workspaceManager.monitorId(for: workspaceId),
+                mode: .floating,
+                source: .service
+            )
+        )
+        let router = IPCQueryRouter(controller: controller, sessionToken: ipcQueryRouterSessionToken)
+
+        let result = router.reconcileDebugResult(traceLimit: 5)
+
+        #expect(result.traceLimit == 5)
+        #expect(result.snapshot.contains(String(describing: token)))
+        #expect(result.trace.contains("window_mode_changed"))
+    }
 }
 
 @Suite(.serialized) @MainActor struct IPCApplicationBridgeQueryTests {

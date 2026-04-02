@@ -5,56 +5,138 @@ import Foundation
 final class OwnedWindowRegistry {
     static let shared = OwnedWindowRegistry()
 
-    private let windows = NSHashTable<NSWindow>.weakObjects()
-    private var registeredWindowNumbers: Set<Int> = []
+    private let surfaceCoordinator = SurfaceCoordinator.shared
 
     func register(_ window: NSWindow) {
-        windows.add(window)
-        if window.windowNumber > 0 {
-            registeredWindowNumbers.insert(window.windowNumber)
-        }
+        register(
+            window,
+            surfaceId: "utility-\(ObjectIdentifier(window).hashValue)",
+            policy: SurfacePolicy(
+                kind: .utility,
+                hitTestPolicy: .interactive,
+                capturePolicy: .included,
+                suppressesManagedFocusRecovery: true
+            )
+        )
+    }
+
+    func register(
+        _ window: NSWindow,
+        surfaceId: String,
+        policy: SurfacePolicy
+    ) {
+        surfaceCoordinator.register(
+            window: window,
+            id: surfaceId,
+            policy: policy
+        )
+    }
+
+    func register(
+        _ window: NSWindow,
+        surfaceId: String,
+        kind: SurfaceKind,
+        hitTestPolicy: HitTestPolicy,
+        capturePolicy: CapturePolicy,
+        suppressesManagedFocusRecovery: Bool
+    ) {
+        register(
+            window,
+            surfaceId: surfaceId,
+            policy: SurfacePolicy(
+                kind: kind,
+                hitTestPolicy: hitTestPolicy,
+                capturePolicy: capturePolicy,
+                suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+            )
+        )
+    }
+
+    func registerWindowNumber(
+        surfaceId: String,
+        policy: SurfacePolicy,
+        windowNumber: Int,
+        frameProvider: @escaping @MainActor () -> CGRect?,
+        visibilityProvider: @escaping @MainActor () -> Bool
+    ) {
+        surfaceCoordinator.registerWindowNumber(
+            id: surfaceId,
+            windowNumber: windowNumber,
+            frameProvider: frameProvider,
+            visibilityProvider: visibilityProvider,
+            policy: policy
+        )
+    }
+
+    func registerWindowNumber(
+        surfaceId: String,
+        kind: SurfaceKind,
+        windowNumber: Int,
+        frameProvider: @escaping @MainActor () -> CGRect?,
+        visibilityProvider: @escaping @MainActor () -> Bool,
+        hitTestPolicy: HitTestPolicy,
+        capturePolicy: CapturePolicy,
+        suppressesManagedFocusRecovery: Bool
+    ) {
+        registerWindowNumber(
+            surfaceId: surfaceId,
+            policy: SurfacePolicy(
+                kind: kind,
+                hitTestPolicy: hitTestPolicy,
+                capturePolicy: capturePolicy,
+                suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+            ),
+            windowNumber: windowNumber,
+            frameProvider: frameProvider,
+            visibilityProvider: visibilityProvider
+        )
     }
 
     func unregister(_ window: NSWindow) {
-        windows.remove(window)
-        if window.windowNumber > 0 {
-            registeredWindowNumbers.remove(window.windowNumber)
-        }
+        surfaceCoordinator.unregister(window: window)
+    }
+
+    func unregister(surfaceId: String) {
+        surfaceCoordinator.unregister(id: surfaceId)
     }
 
     func contains(point: CGPoint) -> Bool {
-        visibleWindows.contains { $0.frame.contains(point) }
+        surfaceCoordinator.containsInteractive(point: point)
     }
 
     func contains(window: NSWindow?) -> Bool {
-        guard let window else { return false }
-        return visibleWindows.contains { $0 === window }
+        surfaceCoordinator.contains(window: window)
     }
 
     func contains(windowNumber: Int) -> Bool {
-        guard windowNumber > 0 else { return false }
-        return registeredWindowNumbers.contains(windowNumber)
+        surfaceCoordinator.contains(windowNumber: windowNumber)
     }
 
     var hasFrontmostWindow: Bool {
-        guard let app = NSApp else { return false }
-        return contains(window: app.keyWindow) || contains(window: app.mainWindow)
+        surfaceCoordinator.hasFrontmostSuppressingWindow
     }
 
     var hasVisibleWindow: Bool {
-        !visibleWindows.isEmpty
+        surfaceCoordinator.hasVisibleSuppressingWindow
+    }
+
+    func isCaptureEligible(windowNumber: Int) -> Bool {
+        surfaceCoordinator.isCaptureEligible(windowNumber: windowNumber)
+    }
+
+    func visibleSurfaceIDs(
+        kind: SurfaceKind? = nil,
+        capturePolicy: CapturePolicy? = nil,
+        suppressesManagedFocusRecovery: Bool? = nil
+    ) -> [String] {
+        surfaceCoordinator.visibleSurfaceIDs(
+            kind: kind,
+            capturePolicy: capturePolicy,
+            suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+        )
     }
 
     func resetForTests() {
-        windows.removeAllObjects()
-        registeredWindowNumbers.removeAll()
-    }
-
-    private var registeredWindows: [NSWindow] {
-        windows.allObjects
-    }
-
-    private var visibleWindows: [NSWindow] {
-        registeredWindows.filter(\.isVisible)
+        surfaceCoordinator.resetForTests()
     }
 }

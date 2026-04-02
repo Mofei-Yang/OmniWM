@@ -203,6 +203,13 @@ private func assertRoundTrip<T: Codable & Equatable>(_ value: T) throws {
             )
         )
         try assertRoundTrip(
+            IPCReconcileDebugQueryResult(
+                snapshot: "focused=nil",
+                trace: "#1 event=system-wake",
+                traceLimit: 50
+            )
+        )
+        try assertRoundTrip(
             IPCQueriesQueryResult(
                 queries: IPCAutomationManifest.queryDescriptors
             )

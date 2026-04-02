@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        AppDelegate.sharedBootstrap?.controller?.workspaceManager.flushPersistedWindowRestoreCatalogNow()
         stopIPCServer()
     }
 

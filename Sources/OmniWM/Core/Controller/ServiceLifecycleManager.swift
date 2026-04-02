@@ -20,6 +20,8 @@ final class ServiceLifecycleManager {
     private var appHideObserver: NSObjectProtocol?
     private var appUnhideObserver: NSObjectProtocol?
     private var workspaceObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     private var permissionCheckerTask: Task<Void, Never>?
     private var wasHotkeysEnabledBeforeSecureInput = true
 
@@ -78,6 +80,7 @@ final class ServiceLifecycleManager {
         setupDisplayObserver()
         setupAppActivationObserver()
         setupAppHideObservers()
+        setupSleepWakeObservation()
         controller.workspaceManager.onGapsChanged = { [weak self] in
             self?.handleGapsChanged()
         }
@@ -210,6 +213,7 @@ final class ServiceLifecycleManager {
     func handleActiveSpaceDidChange() {
         guard let controller else { return }
         controller.borderManager.hideBorder()
+        controller.workspaceManager.recordReconcileEvent(.activeSpaceChanged(source: .service))
         controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
     }
 
@@ -275,6 +279,31 @@ final class ServiceLifecycleManager {
         }
     }
 
+    private func setupSleepWakeObservation() {
+        guard controller != nil else { return }
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                _ = self?.controller?.workspaceManager.recordReconcileEvent(.systemSleep(source: .service))
+            }
+        }
+
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let controller = self?.controller else { return }
+                _ = controller.workspaceManager.recordReconcileEvent(.systemWake(source: .service))
+                controller.layoutRefreshController.requestFullRescan(reason: .unlock)
+            }
+        }
+    }
+
     func stop() {
         guard let controller else { return }
         controller.hasStartedServices = false
@@ -313,6 +342,14 @@ final class ServiceLifecycleManager {
         if let observer = workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             workspaceObserver = nil
+        }
+        if let observer = sleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            sleepObserver = nil
+        }
+        if let observer = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            wakeObserver = nil
         }
 
         controller.secureInputMonitor.stop()

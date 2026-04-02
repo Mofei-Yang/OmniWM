@@ -222,6 +222,12 @@ actor IPCApplicationBridge {
                 kind: .query,
                 result: IPCResult(focusedWindowDecision: queryRouter.focusedWindowDecisionResult())
             )
+        case .reconcileDebug:
+            return .success(
+                id: id,
+                kind: .query,
+                result: IPCResult(reconcileDebug: queryRouter.reconcileDebugResult())
+            )
         }
     }
 

@@ -118,6 +118,8 @@ final class CommandHandler {
             controller.openCommandPalette()
         case .raiseAllFloatingWindows:
             controller.raiseAllFloatingWindows()
+        case .rescueOffscreenWindows:
+            _ = controller.rescueOffscreenWindows()
         case .toggleFocusedWindowFloating:
             controller.toggleFocusedWindowFloating()
         case .assignFocusedWindowToScratchpad:

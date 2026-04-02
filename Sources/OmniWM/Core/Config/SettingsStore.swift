@@ -365,6 +365,26 @@ final class SettingsStore {
         didSet { defaults.set(appearanceMode.rawValue, forKey: Keys.appearanceMode) }
     }
 
+    func loadPersistedWindowRestoreCatalog() -> PersistedWindowRestoreCatalog {
+        guard let data = defaults.data(forKey: Keys.persistedWindowRestoreCatalog),
+              let catalog = try? JSONDecoder().decode(PersistedWindowRestoreCatalog.self, from: data)
+        else {
+            return .empty
+        }
+
+        return catalog
+    }
+
+    func savePersistedWindowRestoreCatalog(_ catalog: PersistedWindowRestoreCatalog) {
+        if catalog.entries.isEmpty {
+            defaults.removeObject(forKey: Keys.persistedWindowRestoreCatalog)
+            return
+        }
+
+        guard let data = try? JSONEncoder().encode(catalog) else { return }
+        defaults.set(data, forKey: Keys.persistedWindowRestoreCatalog)
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let baseline = SettingsExport.defaults()
@@ -538,16 +558,86 @@ final class SettingsStore {
     }
 
     func updateBinding(for commandId: String, newBinding: KeyBinding) {
+        updateBindings(for: commandId, newBindings: newBinding.isUnassigned ? [] : [newBinding])
+    }
+
+    func updateBindings(for commandId: String, newBindings: [KeyBinding]) {
         guard let index = hotkeyBindings.firstIndex(where: { $0.id == commandId }) else { return }
         hotkeyBindings[index] = HotkeyBinding(
             id: hotkeyBindings[index].id,
             command: hotkeyBindings[index].command,
-            binding: newBinding
+            bindings: newBindings
         )
     }
 
+    func addBinding(for commandId: String, newBinding: KeyBinding) {
+        guard let index = hotkeyBindings.firstIndex(where: { $0.id == commandId }),
+              !newBinding.isUnassigned
+        else { return }
+
+        var updated = hotkeyBindings[index].bindings
+        updated.append(newBinding)
+        hotkeyBindings[index] = HotkeyBinding(
+            id: hotkeyBindings[index].id,
+            command: hotkeyBindings[index].command,
+            bindings: updated
+        )
+    }
+
+    func replaceBinding(for commandId: String, at index: Int, with newBinding: KeyBinding) {
+        guard let bindingIndex = hotkeyBindings.firstIndex(where: { $0.id == commandId }),
+              hotkeyBindings[bindingIndex].bindings.indices.contains(index)
+        else { return }
+
+        var updated = hotkeyBindings[bindingIndex].bindings
+        if newBinding.isUnassigned {
+            updated.remove(at: index)
+        } else {
+            updated[index] = newBinding
+        }
+        hotkeyBindings[bindingIndex] = HotkeyBinding(
+            id: hotkeyBindings[bindingIndex].id,
+            command: hotkeyBindings[bindingIndex].command,
+            bindings: updated
+        )
+    }
+
+    func removeBinding(for commandId: String, at index: Int) {
+        guard let bindingIndex = hotkeyBindings.firstIndex(where: { $0.id == commandId }),
+              hotkeyBindings[bindingIndex].bindings.indices.contains(index)
+        else { return }
+
+        var updated = hotkeyBindings[bindingIndex].bindings
+        updated.remove(at: index)
+        hotkeyBindings[bindingIndex] = HotkeyBinding(
+            id: hotkeyBindings[bindingIndex].id,
+            command: hotkeyBindings[bindingIndex].command,
+            bindings: updated
+        )
+    }
+
+    func removeBinding(_ targetBinding: KeyBinding, from commandId: String) {
+        guard let bindingIndex = hotkeyBindings.firstIndex(where: { $0.id == commandId }) else { return }
+
+        let updated = hotkeyBindings[bindingIndex].bindings.filter { !$0.conflicts(with: targetBinding) }
+        hotkeyBindings[bindingIndex] = HotkeyBinding(
+            id: hotkeyBindings[bindingIndex].id,
+            command: hotkeyBindings[bindingIndex].command,
+            bindings: updated
+        )
+    }
+
+    func resetBindings(for commandId: String) {
+        guard let defaultBinding = HotkeyBindingRegistry.defaults().first(where: { $0.id == commandId }),
+              let index = hotkeyBindings.firstIndex(where: { $0.id == commandId })
+        else { return }
+        hotkeyBindings[index] = defaultBinding
+    }
+
     func findConflicts(for binding: KeyBinding, excluding commandId: String) -> [HotkeyBinding] {
-        hotkeyBindings.filter { $0.id != commandId && $0.binding.conflicts(with: binding) }
+        hotkeyBindings.filter { hotkeyBinding in
+            hotkeyBinding.id != commandId && hotkeyBinding.bindings.contains(where: { $0.conflicts(with: binding) })
+        }
     }
 
     func configuredWorkspaceNames() -> [String] {
@@ -985,4 +1075,5 @@ private enum Keys {
     static let quakeTerminalCustomFrameHeight = "settings.quakeTerminal.customFrameHeight"
 
     static let appearanceMode = "settings.appearanceMode"
+    static let persistedWindowRestoreCatalog = "settings.restoreCatalog"
 }

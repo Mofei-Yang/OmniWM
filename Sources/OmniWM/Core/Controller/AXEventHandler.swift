@@ -508,6 +508,15 @@ final class AXEventHandler: CGSEventDelegate {
             )
         )
 
+        if candidate.mode == .floating {
+            controller.focusPolicyEngine.beginLease(
+                owner: .ruleCreatedFloatingWindow,
+                reason: "floating_window_create",
+                suppressesFocusFollowsMouse: true,
+                duration: 0.35
+            )
+        }
+
         if restoreNativeFullscreenReplacementIfNeeded(
             token: candidate.token,
             windowId: candidate.windowId,
@@ -735,6 +744,11 @@ final class AXEventHandler: CGSEventDelegate {
         origin: ActivationCallOrigin = .external
     ) {
         guard let controller else { return }
+        guard controller.focusPolicyEngine.evaluate(
+            .managedAppActivation(source: source)
+        ).allowsFocusChange else {
+            return
+        }
         recordNiriCreateFocusTrace(
             .init(
                 kind: .activationSourceObserved(
@@ -744,6 +758,15 @@ final class AXEventHandler: CGSEventDelegate {
             )
         )
         guard controller.hasStartedServices else { return }
+
+        if source != .focusedWindowChanged {
+            controller.focusPolicyEngine.beginLease(
+                owner: .nativeAppSwitch,
+                reason: source.rawValue,
+                suppressesFocusFollowsMouse: true,
+                duration: 0.4
+            )
+        }
 
         let activeRequest = controller.focusBridge.activeManagedRequest
 
@@ -1756,7 +1779,8 @@ final class AXEventHandler: CGSEventDelegate {
     }
 
     private func updateManagedReplacementFrame(_ frame: CGRect, for entry: WindowModel.Entry) {
-        entry.managedReplacementMetadata?.frame = frame
+        guard let controller else { return }
+        _ = controller.workspaceManager.updateManagedReplacementFrame(frame, for: entry.token)
     }
 
     private func updateManagedReplacementTitle(windowId: UInt32, token: WindowToken) {
@@ -1766,7 +1790,7 @@ final class AXEventHandler: CGSEventDelegate {
         else {
             return
         }
-        entry.managedReplacementMetadata?.title = title
+        _ = controller.workspaceManager.updateManagedReplacementTitle(title, for: entry.token)
     }
 
     private func scheduleWindowStabilizationRetryIfNeeded(

@@ -93,6 +93,7 @@ final class WorkspaceBarManager {
     private var pendingReconfigureTask: Task<Void, Never>?
     private weak var controller: WMController?
     private weak var settings: SettingsStore?
+    private let surfaceCoordinator = SurfaceCoordinator.shared
 
     init() {
         setupScreenChangeObserver()
@@ -232,6 +233,16 @@ final class WorkspaceBarManager {
             snapshot: snapshot,
             instance: instance
         )
+        surfaceCoordinator.register(
+            window: panel,
+            id: surfaceId(for: monitor.id),
+            policy: SurfacePolicy(
+                kind: .workspaceBar,
+                hitTestPolicy: .interactive,
+                capturePolicy: .included,
+                suppressesManagedFocusRecovery: false
+            )
+        )
         panel.orderFrontRegardless()
     }
 
@@ -292,6 +303,7 @@ final class WorkspaceBarManager {
 
     private func removeBarForMonitor(_ monitorId: Monitor.ID) {
         if let instance = barsByMonitor[monitorId] {
+            surfaceCoordinator.unregister(id: surfaceId(for: monitorId))
             instance.panel.orderOut(nil)
             instance.panel.close()
             barsByMonitor.removeValue(forKey: monitorId)
@@ -300,10 +312,15 @@ final class WorkspaceBarManager {
 
     func removeAllBars() {
         for (_, instance) in barsByMonitor {
+            surfaceCoordinator.unregister(id: surfaceId(for: instance.monitorId))
             instance.panel.orderOut(nil)
             instance.panel.close()
         }
         barsByMonitor.removeAll()
+    }
+
+    private func surfaceId(for monitorId: Monitor.ID) -> String {
+        "workspace-bar-\(String(describing: monitorId))"
     }
 
     private func updateBarFrameAndPosition(

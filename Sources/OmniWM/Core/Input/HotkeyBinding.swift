@@ -63,67 +63,86 @@ extension KeyBinding: Codable {
 struct HotkeyBinding: Codable, Equatable, Identifiable {
     let id: String
     let command: HotkeyCommand
-    var binding: KeyBinding
+    var bindings: [KeyBinding]
+
+    var binding: KeyBinding {
+        get { bindings.first ?? .unassigned }
+        set { bindings = HotkeyBindingRegistry.canonicalizeBindings([newValue]) }
+    }
+
+    var primaryBinding: KeyBinding {
+        bindings.first ?? .unassigned
+    }
 
     var category: HotkeyCategory {
-        switch command {
-        case .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .moveToWorkspace,
-             .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
-             .switchWorkspace, .switchWorkspaceNext, .switchWorkspacePrevious, .workspaceBackAndForth,
-             .focusWorkspaceAnywhere:
-            .workspace
-        case .focus, .focusColumn, .focusColumnFirst, .focusColumnLast,
-             .focusDownOrLeft, .focusPrevious, .focusUpOrRight,
-             .openCommandPalette, .openMenuAnywhere, .toggleWorkspaceBarVisibility,
-             .toggleHiddenBar, .toggleQuakeTerminal,
-             .toggleOverview:
-            .focus
-        case .move:
-            .move
-        case .focusMonitorLast, .focusMonitorNext, .focusMonitorPrevious,
-             .swapWorkspaceWithMonitor, .moveWindowToWorkspaceOnMonitor:
-            .monitor
-        case .balanceSizes, .moveToRoot, .raiseAllFloatingWindows, .toggleFocusedWindowFloating,
-             .assignFocusedWindowToScratchpad, .toggleScratchpadWindow,
-             .toggleFullscreen, .toggleNativeFullscreen,
-             .toggleSplit, .swapSplit, .resizeInDirection, .preselect, .preselectClear, .toggleWorkspaceLayout:
-            .layout
-        case .cycleColumnWidthBackward, .cycleColumnWidthForward, .moveColumn, .toggleColumnFullWidth,
-             .toggleColumnTabbed:
-            .column
-        }
+        ActionCatalog.category(for: id) ?? .focus
+    }
+
+    init(id: String, command: HotkeyCommand, bindings: [KeyBinding]) {
+        self.id = id
+        self.command = command
+        self.bindings = HotkeyBindingRegistry.canonicalizeBindings(bindings)
+    }
+
+    init(id: String, command: HotkeyCommand, binding: KeyBinding) {
+        self.init(id: id, command: command, bindings: [binding])
     }
 }
 
 extension HotkeyBinding {
     private enum CodingKeys: String, CodingKey {
-        case id, binding
+        case id, bindings, binding
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let id = try container.decode(String.self, forKey: .id)
-        let binding = try container.decode(KeyBinding.self, forKey: .binding)
-        guard let resolved = HotkeyBindingRegistry.makeBinding(id: id, binding: binding) else {
+        let bindings = try container.decodeIfPresent([KeyBinding].self, forKey: .bindings)
+            ?? container.decodeIfPresent(KeyBinding.self, forKey: .binding).map { [$0] }
+            ?? []
+        guard let command = HotkeyBindingRegistry.command(for: id) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .id,
                 in: container,
                 debugDescription: "Unknown hotkey binding id: \(id)"
             )
         }
-        self = resolved
+        self = HotkeyBinding(id: id, command: command, bindings: bindings)
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
-        try container.encode(binding, forKey: .binding)
+        try container.encode(bindings, forKey: .bindings)
     }
 }
 
 struct PersistedHotkeyBinding: Codable, Equatable {
     let id: String
-    let binding: KeyBinding
+    let bindings: [KeyBinding]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, bindings, binding
+    }
+
+    init(id: String, bindings: [KeyBinding]) {
+        self.id = id
+        self.bindings = HotkeyBindingRegistry.canonicalizeBindings(bindings)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        bindings = try container.decodeIfPresent([KeyBinding].self, forKey: .bindings)
+            ?? container.decodeIfPresent(KeyBinding.self, forKey: .binding).map { [$0] }
+            ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(bindings, forKey: .bindings)
+    }
 }
 
 enum HotkeyBindingRegistry {
@@ -142,44 +161,67 @@ enum HotkeyBindingRegistry {
         defaultBindings
     }
 
+    static func command(for id: String) -> HotkeyCommand? {
+        bindingsByID[id]?.command
+    }
+
     static func makeBinding(id: String, binding: KeyBinding) -> HotkeyBinding? {
         guard let defaultBinding = bindingsByID[id] else { return nil }
-        return HotkeyBinding(id: id, command: defaultBinding.command, binding: binding)
+        return HotkeyBinding(id: id, command: defaultBinding.command, bindings: [binding])
     }
 
     static func canonicalize(_ persisted: [PersistedHotkeyBinding]) -> [HotkeyBinding] {
-        var overrides: [String: KeyBinding] = [:]
-        var commandPaletteBinding: KeyBinding?
-        var hasCommandPaletteOverride = false
-        var legacyWindowFinderBinding: KeyBinding?
-        var legacyMenuPaletteBinding: KeyBinding?
+        var overrides: [String: [KeyBinding]] = [:]
+        var explicitOverrideIDs: Set<String> = []
+        var commandPaletteOverridePresent = false
+        var legacyWindowFinderBindings: [KeyBinding] = []
+        var legacyMenuPaletteBindings: [KeyBinding] = []
 
         for entry in persisted {
+            let normalizedBindings = canonicalizeBindings(entry.bindings)
+
             switch entry.id {
             case commandPaletteID:
-                hasCommandPaletteOverride = true
-                commandPaletteBinding = entry.binding
+                commandPaletteOverridePresent = true
+                explicitOverrideIDs.insert(commandPaletteID)
+                overrides[commandPaletteID] = mergeBindings(
+                    overrides[commandPaletteID],
+                    with: normalizedBindings
+                )
             case legacyCommandPaletteIDs.windowFinder:
-                legacyWindowFinderBinding = entry.binding
+                legacyWindowFinderBindings = mergeBindings(
+                    legacyWindowFinderBindings,
+                    with: normalizedBindings
+                )
             case legacyCommandPaletteIDs.menuPalette:
-                legacyMenuPaletteBinding = entry.binding
+                legacyMenuPaletteBindings = mergeBindings(
+                    legacyMenuPaletteBindings,
+                    with: normalizedBindings
+                )
             default:
                 guard bindingsByID[entry.id] != nil else { continue }
-                overrides[entry.id] = entry.binding
+                explicitOverrideIDs.insert(entry.id)
+                overrides[entry.id] = mergeBindings(overrides[entry.id], with: normalizedBindings)
             }
         }
 
-        if hasCommandPaletteOverride {
-            overrides[commandPaletteID] = commandPaletteBinding ?? .unassigned
-        } else if let legacyWindowFinderBinding, !legacyWindowFinderBinding.isUnassigned {
-            overrides[commandPaletteID] = legacyWindowFinderBinding
-        } else if let legacyMenuPaletteBinding, !legacyMenuPaletteBinding.isUnassigned {
-            overrides[commandPaletteID] = legacyMenuPaletteBinding
+        if !commandPaletteOverridePresent, !legacyWindowFinderBindings.isEmpty || !legacyMenuPaletteBindings.isEmpty {
+            explicitOverrideIDs.insert(commandPaletteID)
+            overrides[commandPaletteID] = canonicalizeBindings(legacyWindowFinderBindings + legacyMenuPaletteBindings)
         }
 
         return defaultBindings.map { binding in
-            guard let override = overrides[binding.id] else { return binding }
-            return HotkeyBinding(id: binding.id, command: binding.command, binding: override)
+            guard explicitOverrideIDs.contains(binding.id) else { return binding }
+            let override = overrides[binding.id] ?? []
+            return HotkeyBinding(id: binding.id, command: binding.command, bindings: override)
+        }
+    }
+
+    static func canonicalizeBindings(_ bindings: [KeyBinding]) -> [KeyBinding] {
+        var seen: Set<KeyBinding> = []
+        return bindings.compactMap { binding in
+            guard !binding.isUnassigned, seen.insert(binding).inserted else { return nil }
+            return binding
         }
     }
 
@@ -230,6 +272,10 @@ enum HotkeyBindingRegistry {
             return []
         }
         return json
+    }
+
+    private static func mergeBindings(_ current: [KeyBinding]?, with additions: [KeyBinding]) -> [KeyBinding] {
+        canonicalizeBindings((current ?? []) + additions)
     }
 }
 

@@ -391,6 +391,10 @@ public enum IPCAutomationManifest {
             name: .focusedWindowDecision,
             summary: "Return the focused window rule/debug decision snapshot."
         ),
+        IPCQueryDescriptor(
+            name: .reconcileDebug,
+            summary: "Return the reconcile snapshot and recent trace for debugging."
+        ),
     ]
 
     public static let commandDescriptors: [IPCCommandDescriptor] = [
@@ -432,6 +436,7 @@ public enum IPCAutomationManifest {
         command(["preselect", "clear"], name: .preselectClear, summary: "Clear the Dwindle preselection.", layoutCompatibility: .dwindle),
         command(["open-command-palette"], name: .openCommandPalette, summary: "Toggle the command palette."),
         command(["raise-all-floating-windows"], name: .raiseAllFloatingWindows, summary: "Raise all visible floating windows."),
+        command(["rescue-offscreen-windows"], name: .rescueOffscreenWindows, summary: "Clamp tracked floating windows back onto their visible monitors."),
         command(["toggle-focused-window-floating"], name: .toggleFocusedWindowFloating, summary: "Toggle the focused managed window between tiled and floating."),
         command(["scratchpad", "assign"], name: .scratchpadAssign, summary: "Assign the focused managed window to the scratchpad."),
         command(["scratchpad", "toggle"], name: .scratchpadToggle, summary: "Show or hide the scratchpad window."),

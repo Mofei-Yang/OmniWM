@@ -9,6 +9,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
     private weak var currentApp: NSRunningApplication?
     private var activeMenu: NSMenu?
     private let axFetchQueue = DispatchQueue(label: "com.omniwm.menufetch", qos: .userInitiated)
+    var onMenuTrackingChanged: ((Bool) -> Void)?
 
     private static let kAXPressAction = "AXPress" as CFString
     private static let appActivationDelay: TimeInterval = 0.1
@@ -38,6 +39,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
         items.forEach(menu.addItem)
         activeMenu = menu
 
+        onMenuTrackingChanged?(true)
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
@@ -47,6 +49,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
         cleanupMenuItems(menu.items)
         menu.removeAllItems()
         activeMenu = nil
+        onMenuTrackingChanged?(false)
     }
 
     private func cleanupMenuItems(_ items: [NSMenuItem]) {

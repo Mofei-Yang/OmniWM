@@ -349,6 +349,33 @@ private func prepareIPCNiriState(
         #expect(result == .notFound)
     }
 
+    @Test func rescueOffscreenWindowsRoutesThroughControllerAndReturnsNotFoundWhenSettled() throws {
+        let controller = makeLayoutPlanTestController(
+            workspaceConfigurations: [
+                WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+            ]
+        )
+        let router = makeIPCCommandRouter(for: controller)
+        let workspaceId = try #require(controller.workspaceManager.workspaceId(for: "1", createIfMissing: false))
+        let monitor = try #require(controller.workspaceManager.monitor(for: workspaceId))
+        let token = controller.workspaceManager.addWindow(
+            makeLayoutPlanTestWindow(windowId: 2401),
+            pid: 2401,
+            windowId: 2401,
+            to: workspaceId,
+            mode: .floating
+        )
+        controller.workspaceManager.updateFloatingGeometry(
+            frame: CGRect(x: monitor.visibleFrame.minX - 1600, y: monitor.visibleFrame.minY - 1200, width: 320, height: 200),
+            for: token,
+            referenceMonitor: monitor
+        )
+
+        #expect(router.handle(.rescueOffscreenWindows) == .executed)
+        #expect(monitor.visibleFrame.contains(try #require(controller.axManager.lastAppliedFrame(for: token.windowId))))
+        #expect(router.handle(.rescueOffscreenWindows) == .notFound)
+    }
+
     @Test func workspaceFocusNameReturnsNotFoundForUnknownWorkspace() {
         let controller = makeLayoutPlanTestController()
         let router = makeIPCCommandRouter(for: controller)

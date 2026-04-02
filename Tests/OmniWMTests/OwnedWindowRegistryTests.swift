@@ -73,4 +73,71 @@ private func closeOwnedUtilityWindowsForTests() async {
         #expect(registry.contains(windowNumber: appRulesWindow.windowNumber) == false)
         #expect(registry.contains(windowNumber: sponsorsWindow.windowNumber) == false)
     }
+
+    @Test @MainActor func workspaceBarSurfaceRemainsHitTestableWithoutSuppressingManagedFocusRecovery() {
+        let registry = OwnedWindowRegistry.shared
+        registry.resetForTests()
+        defer { registry.resetForTests() }
+
+        let panel = WorkspaceBarPanel(
+            contentRect: CGRect(x: 120, y: 90, width: 280, height: 36),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.setFrame(CGRect(x: 120, y: 90, width: 280, height: 36), display: false)
+        panel.orderFrontRegardless()
+
+        registry.register(
+            panel,
+            surfaceId: "workspace-bar-test",
+            policy: SurfacePolicy(
+                kind: .workspaceBar,
+                hitTestPolicy: .interactive,
+                capturePolicy: .included,
+                suppressesManagedFocusRecovery: false
+            )
+        )
+
+        #expect(registry.contains(window: panel))
+        #expect(registry.contains(windowNumber: panel.windowNumber))
+        #expect(registry.contains(point: CGPoint(x: 160, y: 110)))
+        #expect(registry.hasVisibleWindow == false)
+
+        panel.close()
+        registry.unregister(surfaceId: "workspace-bar-test")
+    }
+
+    @Test @MainActor func borderSurfaceRegistersWindowNumberButStaysPassthrough() {
+        let registry = OwnedWindowRegistry.shared
+        registry.resetForTests()
+        defer { registry.resetForTests() }
+
+        registry.registerWindowNumber(
+            surfaceId: "border-test",
+            policy: SurfacePolicy(
+                kind: .border,
+                hitTestPolicy: .passthrough,
+                capturePolicy: .excluded,
+                suppressesManagedFocusRecovery: false
+            ),
+            windowNumber: 424242,
+            frameProvider: { CGRect(x: 60, y: 50, width: 400, height: 300) },
+            visibilityProvider: { true }
+        )
+
+        #expect(registry.contains(windowNumber: 424242))
+        #expect(registry.contains(point: CGPoint(x: 120, y: 90)) == false)
+        #expect(registry.hasVisibleWindow == false)
+        #expect(registry.isCaptureEligible(windowNumber: 424242) == false)
+        #expect(registry.visibleSurfaceIDs(kind: .border, capturePolicy: .excluded) == ["border-test"])
+    }
+
+    @Test @MainActor func captureEligibleQueriesTreatUnregisteredWindowsAsEligible() {
+        let registry = OwnedWindowRegistry.shared
+        registry.resetForTests()
+        defer { registry.resetForTests() }
+
+        #expect(registry.isCaptureEligible(windowNumber: 777_777))
+    }
 }

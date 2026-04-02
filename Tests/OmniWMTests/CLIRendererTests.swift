@@ -226,4 +226,26 @@ import OmniWMIPC
         #expect(text.contains("server protocol 3"))
         #expect(text.contains("1.2.3"))
     }
+
+    @Test func reconcileDebugOutputRendersSnapshotAndTraceSections() throws {
+        let response = IPCResponse.success(
+            id: "reconcile-debug",
+            kind: .query,
+            result: IPCResult(
+                reconcileDebug: IPCReconcileDebugQueryResult(
+                    snapshot: "focused=nil",
+                    trace: "#1 event=system-wake",
+                    traceLimit: 25
+                )
+            )
+        )
+
+        let output = try CLIRenderer.responseOutput(response, format: .text)
+        let text = String(decoding: output.data, as: UTF8.self)
+
+        #expect(text.contains("SNAPSHOT"))
+        #expect(text.contains("TRACE (last 25)"))
+        #expect(text.contains("focused=nil"))
+        #expect(text.contains("#1 event=system-wake"))
+    }
 }

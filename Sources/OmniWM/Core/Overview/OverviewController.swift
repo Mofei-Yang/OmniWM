@@ -373,12 +373,30 @@ final class OverviewController {
 
         if let primaryWindow {
             primaryWindow.show(asKeyWindow: true)
-            ownedWindowRegistry.register(primaryWindow)
+            ownedWindowRegistry.register(
+                primaryWindow,
+                surfaceId: "overview-\(String(describing: primaryWindow.monitorId))",
+                policy: SurfacePolicy(
+                    kind: .overview,
+                    hitTestPolicy: .interactive,
+                    capturePolicy: .included,
+                    suppressesManagedFocusRecovery: true
+                )
+            )
         }
 
         for window in windows where primaryWindow == nil || window !== primaryWindow {
             window.show(asKeyWindow: false)
-            ownedWindowRegistry.register(window)
+            ownedWindowRegistry.register(
+                window,
+                surfaceId: "overview-\(String(describing: window.monitorId))",
+                policy: SurfacePolicy(
+                    kind: .overview,
+                    hitTestPolicy: .interactive,
+                    capturePolicy: .included,
+                    suppressesManagedFocusRecovery: true
+                )
+            )
         }
     }
 
@@ -389,7 +407,7 @@ final class OverviewController {
 
     private func closeWindows() {
         for window in windows {
-            ownedWindowRegistry.unregister(window)
+            ownedWindowRegistry.unregister(surfaceId: "overview-\(String(describing: window.monitorId))")
             window.hide()
             window.close()
         }
@@ -426,7 +444,12 @@ final class OverviewController {
 
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            let windowMap = Dictionary(uniqueKeysWithValues: content.windows.map { ($0.windowID, $0) })
+            let eligibleWindows = content.windows.compactMap { scWindow -> (CGWindowID, SCWindow)? in
+                let windowNumber = Int(scWindow.windowID)
+                guard ownedWindowRegistry.isCaptureEligible(windowNumber: windowNumber) else { return nil }
+                return (scWindow.windowID, scWindow)
+            }
+            let windowMap = Dictionary(uniqueKeysWithValues: eligibleWindows)
 
             for request in requests {
                 guard !Task.isCancelled else { return }

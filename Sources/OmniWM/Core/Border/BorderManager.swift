@@ -7,6 +7,7 @@ final class BorderManager {
     private var config: BorderConfig
     private var lastAppliedFrame: CGRect?
     private var lastAppliedWindowId: Int?
+    private let surfaceCoordinator = SurfaceCoordinator.shared
 
     init(config: BorderConfig = BorderConfig()) {
         self.config = config
@@ -59,12 +60,14 @@ final class BorderManager {
         borderWindow?.update(frame: frame, targetWid: targetWid)
         lastAppliedFrame = frame
         lastAppliedWindowId = windowId
+        syncSurfaceRegistration()
     }
 
     func hideBorder() {
         borderWindow?.hide()
         lastAppliedFrame = nil
         lastAppliedWindowId = nil
+        surfaceCoordinator.unregister(id: surfaceID)
     }
 
     var lastAppliedFocusedWindowIdForTests: Int? {
@@ -79,5 +82,34 @@ final class BorderManager {
         hideBorder()
         borderWindow?.destroy()
         borderWindow = nil
+        surfaceCoordinator.unregister(id: surfaceID)
+    }
+
+    private func syncSurfaceRegistration() {
+        guard let borderWindow, let windowNumber = borderWindow.windowId.map(Int.init) else {
+            surfaceCoordinator.unregister(id: surfaceID)
+            return
+        }
+
+        surfaceCoordinator.registerWindowNumber(
+            id: surfaceID,
+            windowNumber: windowNumber,
+            frameProvider: { [weak self] in
+                self?.lastAppliedFrame
+            },
+            visibilityProvider: { [weak self] in
+                self?.lastAppliedFrame != nil && self?.config.enabled == true
+            },
+            policy: SurfacePolicy(
+                kind: .border,
+                hitTestPolicy: .passthrough,
+                capturePolicy: .excluded,
+                suppressesManagedFocusRecovery: false
+            )
+        )
+    }
+
+    private var surfaceID: String {
+        "border-surface"
     }
 }

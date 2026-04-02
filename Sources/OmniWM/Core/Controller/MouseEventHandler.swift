@@ -849,6 +849,9 @@ final class MouseEventHandler {
 
     private func handleFocusFollowsMouse(at location: CGPoint) {
         guard let controller else { return }
+        guard controller.focusPolicyEngine.evaluate(.focusFollowsMouse).allowsFocusChange else {
+            return
+        }
         guard !controller.workspaceManager.isNonManagedFocusActive,
               !controller.workspaceManager.hasPendingNativeFullscreenTransition,
               !controller.workspaceManager.isAppFullscreenActive else {

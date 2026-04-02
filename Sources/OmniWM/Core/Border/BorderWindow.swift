@@ -208,4 +208,8 @@ final class BorderWindow {
             }
         }
     }
+
+    var windowId: UInt32? {
+        wid == 0 ? nil : wid
+    }
 }

@@ -112,6 +112,8 @@ final class IPCCommandRouter {
             return controller.commandHandler.performCommand(.openCommandPalette)
         case .raiseAllFloatingWindows:
             return raiseAllFloatingWindows()
+        case .rescueOffscreenWindows:
+            return rescueOffscreenWindows()
         case .toggleWorkspaceLayout:
             return controller.commandHandler.performCommand(.toggleWorkspaceLayout)
         case let .setWorkspaceLayout(layout):
@@ -275,6 +277,13 @@ final class IPCCommandRouter {
             return .notFound
         }
         return controller.commandHandler.performCommand(.raiseAllFloatingWindows)
+    }
+
+    private func rescueOffscreenWindows() -> ExternalCommandResult {
+        if let guardResult = validateControllerState() {
+            return guardResult
+        }
+        return controller.rescueOffscreenWindows() > 0 ? .executed : .notFound
     }
 
     private func toggleFocusedWindowFloating() -> ExternalCommandResult {

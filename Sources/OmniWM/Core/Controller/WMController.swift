@@ -61,6 +61,8 @@ final class WMController {
     let axManager = AXManager()
     let appInfoCache = AppInfoCache()
     let focusBridge: FocusBridgeCoordinator
+    let focusPolicyEngine: FocusPolicyEngine
+    private let restorePlanner = RestorePlanner()
     let windowRuleEngine = WindowRuleEngine()
 
     var niriEngine: NiriLayoutEngine?
@@ -134,6 +136,7 @@ final class WMController {
         self.windowFocusOperations = windowFocusOperations
         workspaceManager = WorkspaceManager(settings: settings)
         focusBridge = FocusBridgeCoordinator()
+        focusPolicyEngine = FocusPolicyEngine()
         workspaceManager.updateAnimationClock(animationClock)
         hotkeys.onCommand = { [weak self] command in
             self?.commandHandler.handleCommand(command)
@@ -147,6 +150,27 @@ final class WMController {
         }
         workspaceManager.onSessionStateChanged = { [weak self] in
             self?.handleSessionStateChanged()
+        }
+        focusPolicyEngine.onLeaseChanged = { [weak self] lease in
+            self?.workspaceManager.recordReconcileEvent(
+                .focusLeaseChanged(
+                    lease: lease,
+                    source: .focusPolicy
+                )
+            )
+        }
+        MenuAnywhereController.shared.onMenuTrackingChanged = { [weak self] isTracking in
+            guard let self else { return }
+            if isTracking {
+                self.focusPolicyEngine.beginLease(
+                    owner: .nativeMenu,
+                    reason: "menu_anywhere",
+                    suppressesFocusFollowsMouse: true,
+                    duration: nil
+                )
+            } else {
+                self.focusPolicyEngine.endLease(owner: .nativeMenu)
+            }
         }
     }
 
@@ -1449,16 +1473,19 @@ final class WMController {
             }
 
             if let updatedEntry = workspaceManager.entry(for: token) {
-                updatedEntry.managedReplacementMetadata = ManagedReplacementMetadata(
-                    bundleId: evaluation.facts.ax.bundleId ?? updatedEntry.managedReplacementMetadata?.bundleId,
-                    workspaceId: updatedEntry.workspaceId,
-                    mode: updatedEntry.mode,
-                    role: evaluation.facts.ax.role ?? updatedEntry.managedReplacementMetadata?.role,
-                    subrole: evaluation.facts.ax.subrole ?? updatedEntry.managedReplacementMetadata?.subrole,
-                    title: evaluation.facts.ax.title ?? updatedEntry.managedReplacementMetadata?.title,
-                    windowLevel: evaluation.facts.windowServer?.level ?? updatedEntry.managedReplacementMetadata?.windowLevel,
-                    parentWindowId: evaluation.facts.windowServer?.parentId ?? updatedEntry.managedReplacementMetadata?.parentWindowId,
-                    frame: evaluation.facts.windowServer?.frame ?? updatedEntry.managedReplacementMetadata?.frame
+                _ = workspaceManager.setManagedReplacementMetadata(
+                    ManagedReplacementMetadata(
+                        bundleId: evaluation.facts.ax.bundleId ?? updatedEntry.managedReplacementMetadata?.bundleId,
+                        workspaceId: updatedEntry.workspaceId,
+                        mode: updatedEntry.mode,
+                        role: evaluation.facts.ax.role ?? updatedEntry.managedReplacementMetadata?.role,
+                        subrole: evaluation.facts.ax.subrole ?? updatedEntry.managedReplacementMetadata?.subrole,
+                        title: evaluation.facts.ax.title ?? updatedEntry.managedReplacementMetadata?.title,
+                        windowLevel: evaluation.facts.windowServer?.level ?? updatedEntry.managedReplacementMetadata?.windowLevel,
+                        parentWindowId: evaluation.facts.windowServer?.parentId ?? updatedEntry.managedReplacementMetadata?.parentWindowId,
+                        frame: evaluation.facts.windowServer?.frame ?? updatedEntry.managedReplacementMetadata?.frame
+                    ),
+                    for: token
                 )
             }
 
@@ -1638,6 +1665,67 @@ final class WMController {
     }
     func toggleOverview() { windowActionHandler.toggleOverview() }
     func raiseAllFloatingWindows() { windowActionHandler.raiseAllFloatingWindows() }
+    @discardableResult
+    func rescueOffscreenWindows() -> Int {
+        guard !isLockScreenActive else { return 0 }
+
+        var candidates: [RestorePlanner.FloatingRescueCandidate] = []
+
+        for entry in workspaceManager.allFloatingEntries() {
+            guard entry.layoutReason == .standard else { continue }
+            guard let targetMonitor = workspaceManager.monitor(for: entry.workspaceId)
+                ?? monitorForInteraction()
+                ?? workspaceManager.monitors.first
+            else {
+                continue
+            }
+
+            guard let targetFrame = workspaceManager.resolvedFloatingFrame(
+                for: entry.token,
+                preferredMonitor: targetMonitor
+            ) else {
+                continue
+            }
+
+            candidates.append(
+                .init(
+                    token: entry.token,
+                    pid: entry.pid,
+                    windowId: entry.windowId,
+                    workspaceId: entry.workspaceId,
+                    targetMonitor: targetMonitor,
+                    currentFrame: liveFrame(for: entry) ?? workspaceManager.floatingState(for: entry.token)?.lastFrame,
+                    targetFrame: targetFrame,
+                    hiddenState: workspaceManager.hiddenState(for: entry.token)
+                )
+            )
+        }
+
+        let rescuePlan = restorePlanner.planFloatingRescue(candidates)
+        var frameUpdates: [(pid: pid_t, windowId: Int, frame: CGRect)] = []
+
+        for operation in rescuePlan.operations {
+            guard let entry = workspaceManager.entry(for: operation.token) else { continue }
+            if operation.shouldUnhideWorkspaceInactiveWindow {
+                layoutRefreshController.unhideWindow(entry, monitor: operation.targetMonitor)
+            }
+
+            workspaceManager.updateFloatingGeometry(
+                frame: operation.targetFrame,
+                for: operation.token,
+                referenceMonitor: operation.targetMonitor,
+                restoreToFloating: true
+            )
+            axManager.forceApplyNextFrame(for: operation.windowId)
+            frameUpdates.append((operation.pid, operation.windowId, operation.targetFrame))
+        }
+
+        if !frameUpdates.isEmpty {
+            axManager.applyFramesParallel(frameUpdates)
+        }
+
+        return rescuePlan.rescuedCount
+    }
     func isOverviewOpen() -> Bool { windowActionHandler.isOverviewOpen() }
 
     @discardableResult
@@ -1789,9 +1877,7 @@ extension WMController {
     }
 
     func isPointInOwnWindow(_ point: CGPoint) -> Bool {
-        if isPointInQuakeTerminal(point) { return true }
-        if windowActionHandler.isPointInOverview(point) { return true }
-        return ownedWindowRegistry.contains(point: point)
+        ownedWindowRegistry.contains(point: point)
     }
 
     var hasFrontmostOwnedWindow: Bool {
