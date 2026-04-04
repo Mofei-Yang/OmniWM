@@ -2,6 +2,38 @@ import AppKit
 import GhosttyKit
 import QuartzCore
 
+struct GhosttySurfaceResizeEdgeClassifier {
+    private static let perimeterTolerance: CGFloat = 0.5
+
+    static func classifyEdges(
+        at point: CGPoint,
+        localBounds: CGRect,
+        paneFrame: CGRect,
+        containerBounds: CGRect,
+        threshold: CGFloat
+    ) -> ResizeEdge {
+        var edges: ResizeEdge = []
+
+        if point.x <= threshold,
+           abs(paneFrame.minX - containerBounds.minX) <= perimeterTolerance {
+            edges.insert(.left)
+        } else if point.x >= localBounds.width - threshold,
+                  abs(paneFrame.maxX - containerBounds.maxX) <= perimeterTolerance {
+            edges.insert(.right)
+        }
+
+        if point.y <= threshold,
+           abs(paneFrame.minY - containerBounds.minY) <= perimeterTolerance {
+            edges.insert(.bottom)
+        } else if point.y >= localBounds.height - threshold,
+                  abs(paneFrame.maxY - containerBounds.maxY) <= perimeterTolerance {
+            edges.insert(.top)
+        }
+
+        return edges
+    }
+}
+
 @MainActor
 final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private(set) var ghosttySurface: ghostty_surface_t?
@@ -23,6 +55,12 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
+
+    init(testFrame: NSRect = NSRect(x: 0, y: 0, width: 800, height: 400)) {
+        super.init(frame: testFrame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .duringViewResize
+    }
 
     init(ghosttyApp: ghostty_app_t, userdata: UnsafeMutableRawPointer) {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
@@ -376,12 +414,13 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func detectResizeEdges(at point: CGPoint) -> ResizeEdge {
-        var edges: ResizeEdge = []
-        if point.x <= resizeEdgeThreshold { edges.insert(.left) }
-        else if point.x >= bounds.width - resizeEdgeThreshold { edges.insert(.right) }
-        if point.y <= resizeEdgeThreshold { edges.insert(.bottom) }
-        else if point.y >= bounds.height - resizeEdgeThreshold { edges.insert(.top) }
-        return edges
+        GhosttySurfaceResizeEdgeClassifier.classifyEdges(
+            at: point,
+            localBounds: bounds,
+            paneFrame: frame,
+            containerBounds: superview?.bounds ?? frame,
+            threshold: resizeEdgeThreshold
+        )
     }
 
     private func calculateResizedFrame(startFrame: NSRect, edges: ResizeEdge, delta: CGPoint) -> NSRect {

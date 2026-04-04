@@ -7,6 +7,13 @@ enum SplitDirection {
 }
 
 indirect enum SplitNode {
+    enum AddressStep {
+        case left
+        case right
+    }
+
+    typealias SplitAddress = [AddressStep]
+
     case leaf(GhosttySurfaceView)
     case split(SplitDirection, Double, SplitNode, SplitNode)
 
@@ -74,27 +81,6 @@ indirect enum SplitNode {
         }
     }
 
-    func withRatio(_ newRatio: Double, at targetLeft: GhosttySurfaceView) -> SplitNode {
-        switch self {
-        case .leaf:
-            return self
-        case let .split(dir, ratio, left, right):
-            if left.contains(targetLeft), case .leaf = left {
-                return .split(dir, newRatio, left, right)
-            }
-            if left.contains(targetLeft) {
-                if case .split = left {
-                    return .split(dir, newRatio, left, right)
-                }
-            }
-            let newLeft = left.withRatio(newRatio, at: targetLeft)
-            if !areIdentical(newLeft, left) {
-                return .split(dir, ratio, newLeft, right)
-            }
-            return .split(dir, ratio, left, right.withRatio(newRatio, at: targetLeft))
-        }
-    }
-
     func contains(_ view: GhosttySurfaceView) -> Bool {
         switch self {
         case let .leaf(v): return v === view
@@ -132,14 +118,18 @@ indirect enum SplitNode {
     }
 
     struct DividerInfo {
+        let address: SplitAddress
         let direction: SplitDirection
-        let rect: NSRect
-        let leftViews: [GhosttySurfaceView]
-        let rightViews: [GhosttySurfaceView]
-        let currentRatio: Double
+        let visibleRect: NSRect
+        let hitRect: NSRect
     }
 
-    func calculateDividers(in rect: NSRect, thickness: CGFloat) -> [DividerInfo] {
+    func calculateDividers(
+        in rect: NSRect,
+        visibleThickness: CGFloat,
+        hitThickness: CGFloat,
+        address: SplitAddress = []
+    ) -> [DividerInfo] {
         switch self {
         case .leaf:
             return []
@@ -151,44 +141,75 @@ indirect enum SplitNode {
             switch direction {
             case .horizontal:
                 let leftWidth = rect.width * clampedRatio
-                let dividerRect = NSRect(
-                    x: rect.minX + leftWidth - thickness / 2,
+                let dividerX = rect.minX + leftWidth
+                let visibleRect = NSRect(
+                    x: dividerX - visibleThickness / 2,
                     y: rect.minY,
-                    width: thickness,
+                    width: visibleThickness,
+                    height: rect.height
+                )
+                let hitRect = NSRect(
+                    x: dividerX - hitThickness / 2,
+                    y: rect.minY,
+                    width: hitThickness,
                     height: rect.height
                 )
                 result.append(DividerInfo(
+                    address: address,
                     direction: direction,
-                    rect: dividerRect,
-                    leftViews: left.allSurfaceViews(),
-                    rightViews: right.allSurfaceViews(),
-                    currentRatio: clampedRatio
+                    visibleRect: visibleRect,
+                    hitRect: hitRect
                 ))
                 let leftRect = NSRect(x: rect.minX, y: rect.minY, width: leftWidth, height: rect.height)
                 let rightRect = NSRect(x: rect.minX + leftWidth, y: rect.minY, width: rect.width - leftWidth, height: rect.height)
-                result += left.calculateDividers(in: leftRect, thickness: thickness)
-                result += right.calculateDividers(in: rightRect, thickness: thickness)
+                result += left.calculateDividers(
+                    in: leftRect,
+                    visibleThickness: visibleThickness,
+                    hitThickness: hitThickness,
+                    address: address + [.left]
+                )
+                result += right.calculateDividers(
+                    in: rightRect,
+                    visibleThickness: visibleThickness,
+                    hitThickness: hitThickness,
+                    address: address + [.right]
+                )
 
             case .vertical:
                 let topHeight = rect.height * clampedRatio
-                let dividerY = rect.minY + rect.height - topHeight - thickness / 2
-                let dividerRect = NSRect(
+                let dividerY = rect.minY + rect.height - topHeight
+                let visibleRect = NSRect(
                     x: rect.minX,
-                    y: dividerY,
+                    y: dividerY - visibleThickness / 2,
                     width: rect.width,
-                    height: thickness
+                    height: visibleThickness
+                )
+                let hitRect = NSRect(
+                    x: rect.minX,
+                    y: dividerY - hitThickness / 2,
+                    width: rect.width,
+                    height: hitThickness
                 )
                 result.append(DividerInfo(
+                    address: address,
                     direction: direction,
-                    rect: dividerRect,
-                    leftViews: left.allSurfaceViews(),
-                    rightViews: right.allSurfaceViews(),
-                    currentRatio: clampedRatio
+                    visibleRect: visibleRect,
+                    hitRect: hitRect
                 ))
                 let topRect = NSRect(x: rect.minX, y: rect.minY + rect.height - topHeight, width: rect.width, height: topHeight)
                 let bottomRect = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - topHeight)
-                result += left.calculateDividers(in: topRect, thickness: thickness)
-                result += right.calculateDividers(in: bottomRect, thickness: thickness)
+                result += left.calculateDividers(
+                    in: topRect,
+                    visibleThickness: visibleThickness,
+                    hitThickness: hitThickness,
+                    address: address + [.left]
+                )
+                result += right.calculateDividers(
+                    in: bottomRect,
+                    visibleThickness: visibleThickness,
+                    hitThickness: hitThickness,
+                    address: address + [.right]
+                )
             }
 
             return result
@@ -235,31 +256,57 @@ indirect enum SplitNode {
         }
     }
 
-    func findParentSplit(containing view: GhosttySurfaceView) -> (SplitDirection, Double)? {
+    func ratio(at address: SplitAddress) -> Double? {
         switch self {
-        case .leaf: return nil
-        case let .split(dir, ratio, left, right):
-            if left.contains(view) || right.contains(view) {
-                return (dir, ratio)
+        case .leaf:
+            return nil
+
+        case let .split(_, ratio, left, right):
+            guard let step = address.first else {
+                return ratio
             }
-            return left.findParentSplit(containing: view) ?? right.findParentSplit(containing: view)
+
+            switch step {
+            case .left:
+                return left.ratio(at: Array(address.dropFirst()))
+            case .right:
+                return right.ratio(at: Array(address.dropFirst()))
+            }
         }
     }
 
-    func updatingRatioForSplit(containing view: GhosttySurfaceView, newRatio: Double) -> SplitNode {
+    func updatingRatio(at address: SplitAddress, newRatio: Double) -> SplitNode {
         switch self {
-        case .leaf: return self
+        case .leaf:
+            return self
+
+        case let .split(dir, _, left, right) where address.isEmpty:
+            return .split(dir, newRatio, left, right)
+
         case let .split(dir, ratio, left, right):
-            if left.contains(view) || right.contains(view) {
-                return .split(dir, newRatio, left, right)
+            guard let step = address.first else {
+                return self
             }
-            let newLeft = left.updatingRatioForSplit(containing: view, newRatio: newRatio)
-            if !areIdentical(newLeft, left) {
-                return .split(dir, ratio, newLeft, right)
+
+            switch step {
+            case .left:
+                return .split(
+                    dir,
+                    ratio,
+                    left.updatingRatio(at: Array(address.dropFirst()), newRatio: newRatio),
+                    right
+                )
+            case .right:
+                return .split(
+                    dir,
+                    ratio,
+                    left,
+                    right.updatingRatio(at: Array(address.dropFirst()), newRatio: newRatio)
+                )
             }
-            return .split(dir, ratio, left, right.updatingRatioForSplit(containing: view, newRatio: newRatio))
         }
     }
+
 }
 
 enum NavigationDirection {

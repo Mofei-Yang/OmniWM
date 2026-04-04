@@ -1,13 +1,16 @@
 import Cocoa
 import GhosttyKit
 
+enum QuakeSplitDividerMetrics {
+    static let visibleThickness: CGFloat = 2
+    static let hitThickness: CGFloat = 12
+}
+
 @MainActor
 final class QuakeSplitContainer: NSView {
     private(set) var root: SplitNode
     private(set) var focusedView: GhosttySurfaceView?
     private var dividerViews: [SplitDividerView] = []
-
-    private let dividerThickness: CGFloat = 4
 
     var onFocusChanged: ((GhosttySurfaceView) -> Void)?
 
@@ -33,7 +36,7 @@ final class QuakeSplitContainer: NSView {
         root = root.inserting(at: view, direction: direction, newView: newView)
         addSubview(newView)
         focusedView = newView
-        relayout()
+        relayout(rebuildDividers: true)
     }
 
     func remove(view: GhosttySurfaceView) -> Bool {
@@ -47,7 +50,7 @@ final class QuakeSplitContainer: NSView {
             focusedView = root.allSurfaceViews().first
         }
 
-        relayout()
+        relayout(rebuildDividers: true)
         return true
     }
 
@@ -70,39 +73,74 @@ final class QuakeSplitContainer: NSView {
 
     func equalize() {
         root = root.equalized()
-        relayout()
+        relayout(rebuildDividers: true)
     }
 
-    func relayout() {
+    func relayout(rebuildDividers: Bool = false) {
+        layoutPanes()
+        reconcileDividerViews(rebuild: rebuildDividers)
+    }
+
+    private func layoutPanes() {
         let leafBounds = root.calculateBounds(in: bounds)
         for lb in leafBounds {
             lb.view.frame = lb.rect
         }
 
+        updateSurfaceSizes()
+    }
+
+    private func reconcileDividerViews(rebuild: Bool) {
+        let dividerInfos = root.calculateDividers(
+            in: bounds,
+            visibleThickness: QuakeSplitDividerMetrics.visibleThickness,
+            hitThickness: QuakeSplitDividerMetrics.hitThickness
+        )
+
+        if rebuild || dividerViewAddresses() != dividerInfos.map(\.address) {
+            rebuildDividerViews(with: dividerInfos)
+        } else {
+            updateDividerViews(with: dividerInfos)
+        }
+    }
+
+    private func rebuildDividerViews(with dividerInfos: [SplitNode.DividerInfo]) {
         for dv in dividerViews {
             dv.removeFromSuperview()
         }
         dividerViews.removeAll()
 
-        let dividerInfos = root.calculateDividers(in: bounds, thickness: dividerThickness)
         for info in dividerInfos {
             let dv = SplitDividerView(info: info, container: self)
-            dv.frame = info.rect
+            dv.frame = info.hitRect
             addSubview(dv)
             dividerViews.append(dv)
         }
+    }
 
-        updateSurfaceSizes()
+    private func updateDividerViews(with dividerInfos: [SplitNode.DividerInfo]) {
+        guard dividerViews.count == dividerInfos.count else {
+            rebuildDividerViews(with: dividerInfos)
+            return
+        }
+
+        for (view, info) in zip(dividerViews, dividerInfos) {
+            view.update(with: info)
+        }
+    }
+
+    private func dividerViewAddresses() -> [SplitNode.SplitAddress] {
+        dividerViews.map(\.address)
     }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
-        relayout()
+        relayout(rebuildDividers: true)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        relayout()
+        relayout(rebuildDividers: true)
     }
 
     private func updateSurfaceSizes() {
@@ -116,8 +154,6 @@ final class QuakeSplitContainer: NSView {
     }
 
     func handleDividerDrag(info: SplitNode.DividerInfo, delta: CGFloat) {
-        guard let leftView = info.leftViews.first else { return }
-
         let totalSize: CGFloat
         switch info.direction {
         case .horizontal: totalSize = bounds.width
@@ -126,31 +162,58 @@ final class QuakeSplitContainer: NSView {
 
         guard totalSize > 0 else { return }
         let ratioDelta = delta / totalSize
-        let newRatio = min(max(info.currentRatio + ratioDelta, 0.1), 0.9)
+        guard let currentRatio = root.ratio(at: info.address) else { return }
+        let newRatio = min(max(currentRatio + ratioDelta, 0.1), 0.9)
 
-        root = root.updatingRatioForSplit(containing: leftView, newRatio: newRatio)
+        root = root.updatingRatio(at: info.address, newRatio: newRatio)
         relayout()
+    }
+
+    func dividerViewForTesting(at address: SplitNode.SplitAddress) -> NSView? {
+        dividerViews.first(where: { $0.address == address })
     }
 }
 
 @MainActor
 private final class SplitDividerView: NSView {
-    private let info: SplitNode.DividerInfo
+    private var info: SplitNode.DividerInfo
     private weak var container: QuakeSplitContainer?
+    private let visibleDividerLayer = CALayer()
     private var dragStart: NSPoint?
 
     override var isFlipped: Bool { false }
+
+    var address: SplitNode.SplitAddress { info.address }
 
     init(info: SplitNode.DividerInfo, container: QuakeSplitContainer) {
         self.info = info
         self.container = container
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 0.3, alpha: 1).cgColor
+        layer = CALayer()
+        layer?.backgroundColor = NSColor.clear.cgColor
+        visibleDividerLayer.backgroundColor = NSColor(white: 0.3, alpha: 1).cgColor
+        layer?.addSublayer(visibleDividerLayer)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    func update(with info: SplitNode.DividerInfo) {
+        self.info = info
+        frame = info.hitRect
+        needsLayout = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func layout() {
+        super.layout()
+        visibleDividerLayer.frame = info.visibleRect.offsetBy(dx: -frame.minX, dy: -frame.minY)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
     override func resetCursorRects() {
