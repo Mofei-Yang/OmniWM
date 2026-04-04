@@ -3,13 +3,61 @@ import Foundation
 
 @MainActor
 final class WindowActionHandler {
-    struct FloatingWindowRaisePlan {
-        let orderedEntries: [WindowModel.Entry]
-        let batches: [[WindowModel.Entry]]
+    private enum RaisableSurfaceBatchKey: Hashable {
+        case application(pid_t)
+        case ownedApplication
+    }
+
+    @MainActor
+    private enum RaisableSurface {
+        case managed(WindowModel.Entry)
+        case external(pid: pid_t, windowId: Int, axRef: AXWindowRef)
+        case owned(NSWindow)
+
+        var windowId: Int {
+            switch self {
+            case let .managed(entry):
+                entry.windowId
+            case let .external(_, windowId, _):
+                windowId
+            case let .owned(window):
+                window.windowNumber
+            }
+        }
+
+        var sortPid: pid_t {
+            switch self {
+            case let .managed(entry):
+                entry.pid
+            case let .external(pid, _, _):
+                pid
+            case .owned:
+                getpid()
+            }
+        }
+
+        var batchKey: RaisableSurfaceBatchKey {
+            switch self {
+            case let .managed(entry):
+                .application(entry.pid)
+            case let .external(pid, _, _):
+                .application(pid)
+            case .owned:
+                .ownedApplication
+            }
+        }
+    }
+
+    private struct FloatingWindowRaisePlan {
+        let batches: [[RaisableSurface]]
     }
 
     weak var controller: WMController?
     private let orderWindow: (UInt32) -> Void
+    private let visibleWindowInfoProvider: () -> [WindowServerInfo]
+    private let axWindowRefProvider: (UInt32, pid_t) -> AXWindowRef?
+    private let visibleOwnedWindowsProvider: () -> [NSWindow]
+    private let frontOwnedWindow: (NSWindow) -> Void
 
     @ObservationIgnored
     private lazy var overviewController: OverviewController = {
@@ -28,10 +76,27 @@ final class WindowActionHandler {
         controller: WMController,
         orderWindow: @escaping (UInt32) -> Void = {
             SkyLight.shared.orderWindow($0, relativeTo: 0, order: .above)
+        },
+        visibleWindowInfoProvider: @escaping () -> [WindowServerInfo] = {
+            SkyLight.shared.queryAllVisibleWindows()
+        },
+        axWindowRefProvider: @escaping (UInt32, pid_t) -> AXWindowRef? = { windowId, pid in
+            AXWindowService.axWindowRef(for: windowId, pid: pid)
+        },
+        visibleOwnedWindowsProvider: @escaping () -> [NSWindow] = {
+            OwnedWindowRegistry.shared.visibleWindows(kind: .utility)
+        },
+        frontOwnedWindow: @escaping (NSWindow) -> Void = { window in
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
         }
     ) {
         self.controller = controller
         self.orderWindow = orderWindow
+        self.visibleWindowInfoProvider = visibleWindowInfoProvider
+        self.axWindowRefProvider = axWindowRefProvider
+        self.visibleOwnedWindowsProvider = visibleOwnedWindowsProvider
+        self.frontOwnedWindow = frontOwnedWindow
     }
 
     func openMenuAnywhere() {
@@ -64,8 +129,11 @@ final class WindowActionHandler {
         let element = entry.axRef.element
         AXUIElementPerformAction(element, kAXRaiseAction as CFString)
 
-        var closeButton: AnyObject?
-        if AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &closeButton) == .success {
+        var closeButton: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &closeButton) == .success,
+           let closeButton,
+           CFGetTypeID(closeButton) == AXUIElementGetTypeID()
+        {
             AXUIElementPerformAction(closeButton as! AXUIElement, kAXPressAction as CFString)
         }
     }
@@ -80,83 +148,160 @@ final class WindowActionHandler {
         guard let plan = makeRaiseAllFloatingPlan() else { return }
 
         for batch in plan.batches {
-            for entry in batch {
-                orderWindow(UInt32(entry.windowId))
+            for surface in batch {
+                orderWindow(UInt32(surface.windowId))
             }
             guard let anchor = batch.last else { continue }
-            controller.performWindowFronting(
-                pid: anchor.pid,
-                windowId: anchor.windowId,
-                axRef: anchor.axRef
-            )
+            front(surface: anchor)
         }
     }
 
-    func makeRaiseAllFloatingPlan() -> FloatingWindowRaisePlan? {
+    func hasRaisableFloatingWindows() -> Bool {
+        makeRaiseAllFloatingPlan() != nil
+    }
+
+    private func makeRaiseAllFloatingPlan() -> FloatingWindowRaisePlan? {
         guard let controller else { return nil }
 
-        let floatingEntries = controller.workspaceManager.visibleWorkspaceIds()
+        let managedSurfaces = controller.workspaceManager.visibleWorkspaceIds()
             .flatMap { workspaceId in
                 controller.workspaceManager.floatingEntries(in: workspaceId)
             }
             .filter { entry in
                 entry.layoutReason == .standard && !controller.workspaceManager.isHiddenInCorner(entry.token)
             }
-        guard !floatingEntries.isEmpty else { return nil }
+            .map(RaisableSurface.managed)
+        let ownedSurfaces = visibleOwnedWindowsProvider()
+            .filter { $0.windowNumber > 0 }
+            .map(RaisableSurface.owned)
+        var excludedWindowIds = Set(managedSurfaces.map(\.windowId))
+        excludedWindowIds.formUnion(ownedSurfaces.map(\.windowId))
+        let externalSurfaces = visibleExternalFloatingSurfaces(excludingWindowIds: excludedWindowIds)
+        let surfaces = managedSurfaces + ownedSurfaces + externalSurfaces
+        guard !surfaces.isEmpty else { return nil }
 
-        let candidateTokens = Set(floatingEntries.map(\.token))
-        let interactionWorkspaceId = controller.activeWorkspace()?.id
-        let preferredFocusToken: WindowToken? = {
-            if let focusedToken = controller.workspaceManager.focusedToken,
-               candidateTokens.contains(focusedToken)
-            {
-                return focusedToken
-            }
-
-            guard let interactionWorkspaceId else { return nil }
-            let lastFloatingFocusedToken = controller.workspaceManager.lastFloatingFocusedToken(
-                in: interactionWorkspaceId
-            )
-            guard let lastFloatingFocusedToken, candidateTokens.contains(lastFloatingFocusedToken) else {
-                return nil
-            }
-            return lastFloatingFocusedToken
-        }()
-
-        let orderedEntries = floatingEntries.sorted { lhs, rhs in
-            switch (lhs.token == preferredFocusToken, rhs.token == preferredFocusToken) {
+        let preferredWindowId = preferredWindowId(in: surfaces)
+        let orderedSurfaces = surfaces.sorted { lhs, rhs in
+            switch (lhs.windowId == preferredWindowId, rhs.windowId == preferredWindowId) {
             case (true, false):
                 return false
             case (false, true):
                 return true
             default:
-                if lhs.pid != rhs.pid {
-                    return lhs.pid < rhs.pid
+                if lhs.sortPid != rhs.sortPid {
+                    return lhs.sortPid < rhs.sortPid
                 }
                 return lhs.windowId < rhs.windowId
             }
         }
 
-        var entriesByPid: [pid_t: [WindowModel.Entry]] = [:]
-        var pidOrder: [pid_t] = []
+        var surfacesByBatchKey: [RaisableSurfaceBatchKey: [RaisableSurface]] = [:]
+        var batchOrder: [RaisableSurfaceBatchKey] = []
 
-        for entry in orderedEntries {
-            if entriesByPid[entry.pid] == nil {
-                pidOrder.append(entry.pid)
-                entriesByPid[entry.pid] = []
+        for surface in orderedSurfaces {
+            if surfacesByBatchKey[surface.batchKey] == nil {
+                batchOrder.append(surface.batchKey)
+                surfacesByBatchKey[surface.batchKey] = []
             }
-            entriesByPid[entry.pid, default: []].append(entry)
+            surfacesByBatchKey[surface.batchKey, default: []].append(surface)
         }
 
-        if let focusPid = orderedEntries.last?.pid,
-           let focusIndex = pidOrder.firstIndex(of: focusPid)
+        if let preferredBatchKey = orderedSurfaces.last?.batchKey,
+           let focusIndex = batchOrder.firstIndex(of: preferredBatchKey)
         {
-            let focusPid = pidOrder.remove(at: focusIndex)
-            pidOrder.append(focusPid)
+            let preferredBatchKey = batchOrder.remove(at: focusIndex)
+            batchOrder.append(preferredBatchKey)
         }
 
-        let batches = pidOrder.compactMap { entriesByPid[$0] }
-        return FloatingWindowRaisePlan(orderedEntries: orderedEntries, batches: batches)
+        let batches = batchOrder.compactMap { surfacesByBatchKey[$0] }
+        return FloatingWindowRaisePlan(batches: batches)
+    }
+
+    private func visibleExternalFloatingSurfaces(excludingWindowIds: Set<Int>) -> [RaisableSurface] {
+        guard let controller else { return [] }
+
+        var seenWindowIds = excludingWindowIds
+        return visibleWindowInfoProvider().compactMap { windowInfo in
+            let windowId = Int(windowInfo.id)
+            guard seenWindowIds.insert(windowId).inserted else { return nil }
+            guard !controller.isOwnedWindow(windowNumber: windowId) else { return nil }
+
+            let pid = pid_t(windowInfo.pid)
+            guard controller.workspaceManager.entry(forPid: pid, windowId: windowId) == nil else { return nil }
+            guard let axRef = axWindowRefProvider(windowInfo.id, pid) else { return nil }
+
+            let evaluation = controller.evaluateWindowDisposition(
+                axRef: axRef,
+                pid: pid,
+                windowInfo: windowInfo
+            )
+            guard evaluation.decision.trackedMode == .floating || isWindowServerModalFloating(windowInfo) else {
+                return nil
+            }
+
+            return .external(pid: pid, windowId: windowId, axRef: axRef)
+        }
+    }
+
+    private func preferredWindowId(in surfaces: [RaisableSurface]) -> Int? {
+        guard let controller else { return nil }
+
+        let candidateWindowIds = Set(surfaces.map(\.windowId))
+        let preferredOwnedWindowId = (NSApp?.orderedWindows ?? [])
+            .map(\.windowNumber)
+            .first(where: candidateWindowIds.contains)
+            ?? [NSApp?.keyWindow, NSApp?.mainWindow]
+            .compactMap { $0?.windowNumber }
+            .first(where: candidateWindowIds.contains)
+        if let preferredOwnedWindowId {
+            return preferredOwnedWindowId
+        }
+
+        if let focusedToken = controller.focusedOrFrontmostWindowTokenForAutomation(
+            preferFrontmostWhenNonManagedFocusActive: true
+        ),
+           candidateWindowIds.contains(focusedToken.windowId)
+        {
+            return focusedToken.windowId
+        }
+
+        guard let interactionWorkspaceId = controller.activeWorkspace()?.id else { return nil }
+        let lastFloatingFocusedToken = controller.workspaceManager.lastFloatingFocusedToken(
+            in: interactionWorkspaceId
+        )
+        guard let lastFloatingFocusedToken,
+              candidateWindowIds.contains(lastFloatingFocusedToken.windowId)
+        else {
+            return nil
+        }
+        return lastFloatingFocusedToken.windowId
+    }
+
+    private func isWindowServerModalFloating(_ windowInfo: WindowServerInfo) -> Bool {
+        let isFloating = (windowInfo.tags & 0x2) != 0
+        let isModal = (windowInfo.tags & 0x8000_0000) != 0
+        return isFloating && isModal
+    }
+
+    private func front(surface: RaisableSurface) {
+        guard let controller else { return }
+
+        switch surface {
+        case let .managed(entry):
+            controller.performWindowFronting(
+                pid: entry.pid,
+                windowId: entry.windowId,
+                axRef: entry.axRef
+            )
+        case let .external(pid, windowId, axRef):
+            controller.performWindowFronting(
+                pid: pid,
+                windowId: windowId,
+                axRef: axRef
+            )
+        case let .owned(window):
+            frontOwnedWindow(window)
+        }
     }
 
     @discardableResult

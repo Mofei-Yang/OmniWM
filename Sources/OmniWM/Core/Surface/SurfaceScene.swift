@@ -127,15 +127,29 @@ final class SurfaceScene {
         capturePolicy: CapturePolicy? = nil,
         suppressesManagedFocusRecovery: Bool? = nil
     ) -> [String] {
-        visibleNodes
-            .filter { node in
-                guard kind.map({ $0 == node.policy.kind }) ?? true else { return false }
-                guard capturePolicy.map({ $0 == node.policy.capturePolicy }) ?? true else { return false }
-                guard suppressesManagedFocusRecovery.map({ $0 == node.policy.suppressesManagedFocusRecovery }) ?? true else { return false }
-                return true
-            }
+        matchingVisibleNodes(
+            kind: kind,
+            capturePolicy: capturePolicy,
+            suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+        )
             .map(\.id)
             .sorted()
+    }
+
+    func visibleWindows(
+        kind: SurfaceKind? = nil,
+        capturePolicy: CapturePolicy? = nil,
+        suppressesManagedFocusRecovery: Bool? = nil
+    ) -> [NSWindow] {
+        matchingVisibleNodes(
+            kind: kind,
+            capturePolicy: capturePolicy,
+            suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+        )
+        .compactMap(\.window)
+        .sorted { lhs, rhs in
+            lhs.windowNumber < rhs.windowNumber
+        }
     }
 
     func reset() {
@@ -151,6 +165,21 @@ final class SurfaceScene {
 
     private var visibleNodes: [SurfaceNode] {
         nodesByID.values.filter(isVisible)
+    }
+
+    private func matchingVisibleNodes(
+        kind: SurfaceKind?,
+        capturePolicy: CapturePolicy?,
+        suppressesManagedFocusRecovery: Bool?
+    ) -> [SurfaceNode] {
+        visibleNodes.filter { node in
+            guard kind.map({ $0 == node.policy.kind }) ?? true else { return false }
+            guard capturePolicy.map({ $0 == node.policy.capturePolicy }) ?? true else { return false }
+            guard suppressesManagedFocusRecovery.map({ $0 == node.policy.suppressesManagedFocusRecovery }) ?? true else {
+                return false
+            }
+            return true
+        }
     }
 
     private func isVisible(_ node: SurfaceNode) -> Bool {

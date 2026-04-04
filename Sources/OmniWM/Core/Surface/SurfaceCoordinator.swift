@@ -88,6 +88,18 @@ final class SurfaceCoordinator {
         )
     }
 
+    func visibleWindows(
+        kind: SurfaceKind? = nil,
+        capturePolicy: CapturePolicy? = nil,
+        suppressesManagedFocusRecovery: Bool? = nil
+    ) -> [NSWindow] {
+        scene.visibleWindows(
+            kind: kind,
+            capturePolicy: capturePolicy,
+            suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+        )
+    }
+
     func resetForTests() {
         scene.reset()
     }

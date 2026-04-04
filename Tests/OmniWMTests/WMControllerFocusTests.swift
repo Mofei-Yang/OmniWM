@@ -17,6 +17,7 @@ private enum RaiseAllFloatingEvent: Equatable {
     case activate(pid_t)
     case focus(pid_t, UInt32)
     case raise
+    case frontOwned(Int)
 }
 
 private final class RaiseAllFloatingRecorder {
@@ -76,6 +77,11 @@ private func makeRaiseAllFloatingHandler(
         controller: controller,
         orderWindow: { windowId in
             recorder.events.append(.order(Int(windowId)))
+        },
+        visibleWindowInfoProvider: { [] },
+        visibleOwnedWindowsProvider: { [] },
+        frontOwnedWindow: { window in
+            recorder.events.append(.frontOwned(window.windowNumber))
         }
     )
 }
@@ -1013,6 +1019,171 @@ private func waitForFocusRefresh(on controller: WMController) async {
         )
         controller.isLockScreenActive = true
         let handler = makeRaiseAllFloatingHandler(controller: controller, recorder: recorder)
+
+        handler.raiseAllFloatingWindows()
+
+        #expect(recorder.events.isEmpty)
+    }
+
+    @Test @MainActor func raiseAllFloatingWindowsIncludesVisibleOwnedUtilityWindows() {
+        let recorder = RaiseAllFloatingRecorder()
+        let (controller, _, _) = makeFocusTestController(
+            windowFocusOperations: makeRaiseAllFloatingOperations(recorder: recorder)
+        )
+        let registry = OwnedWindowRegistry.shared
+        registry.resetForTests()
+        let ownedWindow = makeFocusOwnedWindow()
+        registry.register(ownedWindow)
+        defer {
+            registry.unregister(ownedWindow)
+            ownedWindow.close()
+            registry.resetForTests()
+        }
+
+        let handler = WindowActionHandler(
+            controller: controller,
+            orderWindow: { windowId in
+                recorder.events.append(.order(Int(windowId)))
+            },
+            visibleWindowInfoProvider: { [] },
+            frontOwnedWindow: { window in
+                recorder.events.append(.frontOwned(window.windowNumber))
+            }
+        )
+
+        handler.raiseAllFloatingWindows()
+
+        #expect(recorder.events == [
+            .order(ownedWindow.windowNumber),
+            .frontOwned(ownedWindow.windowNumber)
+        ])
+    }
+
+    @Test @MainActor func raiseAllFloatingWindowsPrefersOwnedUtilityWindowLastWhenMixedWithManagedFloaters() {
+        let recorder = RaiseAllFloatingRecorder()
+        let (controller, workspaceId, _) = makeFocusTestController(
+            windowFocusOperations: makeRaiseAllFloatingOperations(recorder: recorder)
+        )
+        _ = addManagedTestWindow(
+            on: controller,
+            pid: getpid() + 1_000,
+            windowId: 751,
+            workspaceId: workspaceId,
+            mode: .floating
+        )
+        let registry = OwnedWindowRegistry.shared
+        registry.resetForTests()
+        let ownedWindow = makeFocusOwnedWindow()
+        registry.register(ownedWindow)
+        defer {
+            registry.unregister(ownedWindow)
+            ownedWindow.close()
+            registry.resetForTests()
+        }
+
+        let handler = WindowActionHandler(
+            controller: controller,
+            orderWindow: { windowId in
+                recorder.events.append(.order(Int(windowId)))
+            },
+            visibleWindowInfoProvider: { [] },
+            frontOwnedWindow: { window in
+                recorder.events.append(.frontOwned(window.windowNumber))
+            }
+        )
+
+        handler.raiseAllFloatingWindows()
+
+        #expect(recorder.events == [
+            .order(751),
+            .activate(getpid() + 1_000),
+            .focus(getpid() + 1_000, 751),
+            .raise,
+            .order(ownedWindow.windowNumber),
+            .frontOwned(ownedWindow.windowNumber)
+        ])
+    }
+
+    @Test @MainActor func raiseAllFloatingWindowsIncludesVisibleUntrackedModalFloatingWindows() {
+        let recorder = RaiseAllFloatingRecorder()
+        let (controller, _, _) = makeFocusTestController(
+            windowFocusOperations: makeRaiseAllFloatingOperations(recorder: recorder)
+        )
+        let windowInfo = WindowServerInfo(
+            id: 761,
+            pid: 90,
+            level: 8,
+            frame: .zero,
+            tags: 0x8000_0002,
+            attributes: 0,
+            parentId: 0
+        )
+        let handler = WindowActionHandler(
+            controller: controller,
+            orderWindow: { windowId in
+                recorder.events.append(.order(Int(windowId)))
+            },
+            visibleWindowInfoProvider: { [windowInfo] },
+            axWindowRefProvider: { windowId, pid in
+                guard windowId == 761, pid == 90 else { return nil }
+                return AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: Int(windowId))
+            },
+            visibleOwnedWindowsProvider: { [] },
+            frontOwnedWindow: { window in
+                recorder.events.append(.frontOwned(window.windowNumber))
+            }
+        )
+
+        handler.raiseAllFloatingWindows()
+
+        #expect(recorder.events == [
+            .order(761),
+            .activate(90),
+            .focus(90, 761),
+            .raise
+        ])
+    }
+
+    @Test @MainActor func raiseAllFloatingWindowsIgnoresNonUtilityOwnedSurfaces() {
+        let recorder = RaiseAllFloatingRecorder()
+        let (controller, _, _) = makeFocusTestController(
+            windowFocusOperations: makeRaiseAllFloatingOperations(recorder: recorder)
+        )
+        let registry = OwnedWindowRegistry.shared
+        registry.resetForTests()
+        let panel = NSPanel(
+            contentRect: CGRect(x: 120, y: 90, width: 280, height: 36),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.orderFrontRegardless()
+        registry.register(
+            panel,
+            surfaceId: "raise-all-workspace-bar-test",
+            policy: SurfacePolicy(
+                kind: .workspaceBar,
+                hitTestPolicy: .interactive,
+                capturePolicy: .included,
+                suppressesManagedFocusRecovery: false
+            )
+        )
+        defer {
+            registry.unregister(surfaceId: "raise-all-workspace-bar-test")
+            panel.close()
+            registry.resetForTests()
+        }
+
+        let handler = WindowActionHandler(
+            controller: controller,
+            orderWindow: { windowId in
+                recorder.events.append(.order(Int(windowId)))
+            },
+            visibleWindowInfoProvider: { [] },
+            frontOwnedWindow: { window in
+                recorder.events.append(.frontOwned(window.windowNumber))
+            }
+        )
 
         handler.raiseAllFloatingWindows()
 

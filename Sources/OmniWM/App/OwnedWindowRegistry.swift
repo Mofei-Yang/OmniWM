@@ -136,6 +136,18 @@ final class OwnedWindowRegistry {
         )
     }
 
+    func visibleWindows(
+        kind: SurfaceKind? = nil,
+        capturePolicy: CapturePolicy? = nil,
+        suppressesManagedFocusRecovery: Bool? = nil
+    ) -> [NSWindow] {
+        surfaceCoordinator.visibleWindows(
+            kind: kind,
+            capturePolicy: capturePolicy,
+            suppressesManagedFocusRecovery: suppressesManagedFocusRecovery
+        )
+    }
+
     func resetForTests() {
         surfaceCoordinator.resetForTests()
     }

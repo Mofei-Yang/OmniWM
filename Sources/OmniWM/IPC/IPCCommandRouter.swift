@@ -273,7 +273,7 @@ final class IPCCommandRouter {
         if let guardResult = validateControllerState() {
             return guardResult
         }
-        guard controller.windowActionHandler.makeRaiseAllFloatingPlan() != nil else {
+        guard controller.windowActionHandler.hasRaisableFloatingWindows() else {
             return .notFound
         }
         return controller.commandHandler.performCommand(.raiseAllFloatingWindows)
