@@ -109,7 +109,7 @@
 
 Small demo, not fully showing everything, gif recorded at 30fps due to size, some stuff is now more refined and better as soem gifs might be outdated, features shown:
 - Real quake/sticky terminal using ghostty's libghostty
-- Ghostty tabs supported
+- Best-effort macOS native-tab replacement support
 - IPC/CLI
 - Scrathpad/Sticky windows of any app
 - Niri Overview
