@@ -1,9 +1,12 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import OmniWMIPC
 import Testing
 
 @testable import OmniWM
+
+private let lifecycleIPCCommandRouterSessionToken = "service-lifecycle-tests"
 
 private func makeLifecycleTestDefaults() -> UserDefaults {
     let suiteName = "com.omniwm.lifecycle.test.\(UUID().uuidString)"
@@ -33,7 +36,236 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
     AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: windowId)
 }
 
+private func makeLifecyclePermissionStream(
+    initial: Bool
+) -> (stream: AsyncStream<Bool>, continuation: AsyncStream<Bool>.Continuation) {
+    var continuation: AsyncStream<Bool>.Continuation!
+    let stream = AsyncStream<Bool> { streamContinuation in
+        continuation = streamContinuation
+        continuation.yield(initial)
+    }
+    return (stream, continuation)
+}
+
+@MainActor
+private func makeLifecycleIPCCommandRouter(for controller: WMController) -> IPCCommandRouter {
+    IPCCommandRouter(
+        controller: controller,
+        sessionToken: lifecycleIPCCommandRouterSessionToken
+    )
+}
+
+@MainActor
+private func waitUntilServiceLifecycleTest(
+    iterations: Int = 100,
+    condition: () -> Bool
+) async {
+    for _ in 0..<iterations where !condition() {
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+
+    if !condition() {
+        Issue.record("Timed out waiting for service lifecycle condition")
+    }
+}
+
 @Suite struct ServiceLifecycleManagerTests {
+    @Test @MainActor func accessibilityGrantStartsServicesAfterDeniedStartup() async {
+        let defaults = makeLifecycleTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        let controller = WMController(settings: settings)
+        let lifecycleManager = controller.serviceLifecycleManager
+        var currentPermissionGranted = false
+        let permissionStream = makeLifecyclePermissionStream(initial: false)
+
+        lifecycleManager.accessibilityPermissionStateProviderForTests = {
+            currentPermissionGranted
+        }
+        lifecycleManager.accessibilityPermissionStreamProviderForTests = { _ in
+            permissionStream.stream
+        }
+        lifecycleManager.accessibilityPermissionRequestHandlerForTests = { false }
+        defer {
+            permissionStream.continuation.finish()
+            controller.setEnabled(false)
+        }
+
+        controller.setEnabled(true)
+
+        await waitUntilServiceLifecycleTest {
+            !controller.hasStartedServices && !controller.isEnabled && !controller.hotkeysEnabled
+        }
+
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+        #expect(!controller.hasStartedServices)
+
+        currentPermissionGranted = true
+        permissionStream.continuation.yield(true)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices && controller.isEnabled && controller.hotkeysEnabled
+        }
+
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+        #expect(controller.hasStartedServices)
+        #expect(controller.isEnabled)
+        #expect(controller.hotkeysEnabled)
+    }
+
+    @Test @MainActor func accessibilityGrantRestoresEffectiveStateAfterTemporaryLoss() async {
+        let defaults = makeLifecycleTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+            WorkspaceConfiguration(name: "2", monitorAssignment: .main)
+        ]
+        let controller = WMController(settings: settings)
+        let lifecycleManager = controller.serviceLifecycleManager
+        let router = makeLifecycleIPCCommandRouter(for: controller)
+        var currentPermissionGranted = true
+        let permissionStream = makeLifecyclePermissionStream(initial: true)
+        let monitor = makeLifecycleMonitor(displayId: 100, name: "Main", x: 0, y: 0)
+
+        controller.workspaceManager.applyMonitorConfigurationChange([monitor])
+        guard let workspaceOne = controller.workspaceManager.workspaceId(for: "1", createIfMissing: true),
+              let workspaceTwo = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Failed to create expected lifecycle workspaces")
+            return
+        }
+        #expect(controller.workspaceManager.setActiveWorkspace(workspaceOne, on: monitor.id))
+
+        lifecycleManager.accessibilityPermissionStateProviderForTests = {
+            currentPermissionGranted
+        }
+        lifecycleManager.accessibilityPermissionStreamProviderForTests = { _ in
+            permissionStream.stream
+        }
+        lifecycleManager.accessibilityPermissionRequestHandlerForTests = { false }
+        defer {
+            permissionStream.continuation.finish()
+            controller.setEnabled(false)
+        }
+
+        controller.setEnabled(true)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices && controller.isEnabled && controller.hotkeysEnabled
+        }
+
+        #expect(controller.commandHandler.performCommand(.focus(.left)) == .executed)
+        #expect(router.handle(.setWorkspaceLayout(layout: .dwindle)) == .executed)
+        #expect(settings.layoutType(for: "1") == .dwindle)
+
+        currentPermissionGranted = false
+        permissionStream.continuation.yield(false)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices && !controller.isEnabled && !controller.hotkeysEnabled
+        }
+
+        #expect(controller.commandHandler.performCommand(.focus(.left)) == .ignoredDisabled)
+        #expect(router.handle(.setWorkspaceLayout(layout: .dwindle)) == .ignoredDisabled)
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+
+        currentPermissionGranted = true
+        permissionStream.continuation.yield(true)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices && controller.isEnabled && controller.hotkeysEnabled
+        }
+
+        #expect(controller.workspaceManager.setActiveWorkspace(workspaceTwo, on: monitor.id))
+        #expect(controller.commandHandler.performCommand(.focus(.left)) == .executed)
+        #expect(router.handle(.setWorkspaceLayout(layout: .dwindle)) == .executed)
+        #expect(settings.layoutType(for: "2") == .dwindle)
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+        #expect(controller.isEnabled)
+        #expect(controller.hotkeysEnabled)
+    }
+
+    @Test @MainActor func secureInputSuppressionPersistsAcrossPermissionRestoreUntilSecureInputEnds() async {
+        let defaults = makeLifecycleTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        let controller = WMController(settings: settings)
+        let lifecycleManager = controller.serviceLifecycleManager
+        var currentPermissionGranted = true
+        let permissionStream = makeLifecyclePermissionStream(initial: true)
+
+        lifecycleManager.accessibilityPermissionStateProviderForTests = {
+            currentPermissionGranted
+        }
+        lifecycleManager.accessibilityPermissionStreamProviderForTests = { _ in
+            permissionStream.stream
+        }
+        lifecycleManager.accessibilityPermissionRequestHandlerForTests = { false }
+        defer {
+            permissionStream.continuation.finish()
+            controller.setEnabled(false)
+        }
+
+        controller.setEnabled(true)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices && controller.isEnabled && controller.hotkeysEnabled
+        }
+
+        lifecycleManager.handleSecureInputChangeForTests(true)
+
+        await waitUntilServiceLifecycleTest {
+            lifecycleManager.isSecureInputActive && controller.isEnabled && !controller.hotkeysEnabled
+        }
+
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+
+        currentPermissionGranted = false
+        permissionStream.continuation.yield(false)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices &&
+                !controller.isEnabled &&
+                !controller.hotkeysEnabled &&
+                lifecycleManager.isSecureInputActive
+        }
+
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+
+        currentPermissionGranted = true
+        permissionStream.continuation.yield(true)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices &&
+                controller.isEnabled &&
+                !controller.hotkeysEnabled &&
+                lifecycleManager.isSecureInputActive
+        }
+
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+        #expect(controller.isEnabled)
+        #expect(!controller.hotkeysEnabled)
+
+        lifecycleManager.handleSecureInputChangeForTests(false)
+
+        await waitUntilServiceLifecycleTest {
+            controller.hasStartedServices &&
+                controller.isEnabled &&
+                controller.hotkeysEnabled &&
+                !lifecycleManager.isSecureInputActive
+        }
+
+        #expect(controller.desiredEnabled)
+        #expect(controller.desiredHotkeysEnabled)
+        #expect(controller.isEnabled)
+        #expect(controller.hotkeysEnabled)
+    }
+
     @Test @MainActor func monitorChangeKeepsForcedWorkspaceAuthoritativeAfterRestore() {
         let defaults = makeLifecycleTestDefaults()
         let settings = SettingsStore(defaults: defaults)
@@ -113,6 +345,16 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         _ = controller.workspaceManager.setManagedFocus(handle1, in: ws1, onMonitor: monitor.id)
         #expect(controller.workspaceManager.setActiveWorkspace(ws2, on: monitor.id))
         _ = controller.workspaceManager.setManagedFocus(handle2, in: ws2, onMonitor: monitor.id)
+        _ = controller.workspaceManager.beginManagedFocusRequest(
+            handle1,
+            in: ws1,
+            onMonitor: monitor.id
+        )
+        _ = controller.focusBridge.beginManagedRequest(token: handle1, workspaceId: ws1)
+        controller.focusBridge.setFocusedTarget(
+            controller.keyboardFocusTarget(for: handle2, axRef: makeLifecycleWindow(windowId: 7103))
+        )
+        controller.hasStartedServices = true
 
         lifecycleManager.handleAppTerminated(pid: pid)
 
@@ -120,11 +362,33 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         #expect(controller.workspaceManager.focusedHandle == nil)
         #expect(controller.workspaceManager.lastFocusedHandle(in: ws1) == nil)
         #expect(controller.workspaceManager.lastFocusedHandle(in: ws2) == nil)
+        #expect(controller.focusBridge.activeManagedRequest == nil)
+        #expect(controller.focusBridge.focusedTarget == nil)
 
         #expect(controller.workspaceManager.setActiveWorkspace(ws1, on: monitor.id))
         #expect(controller.workspaceManager.resolveWorkspaceFocus(in: ws1) == nil)
         #expect(controller.workspaceManager.setActiveWorkspace(ws2, on: monitor.id))
         #expect(controller.workspaceManager.resolveWorkspaceFocus(in: ws2) == nil)
+
+        let survivingPid: pid_t = 7201
+        let survivingToken = controller.workspaceManager.addWindow(
+            makeLifecycleWindow(windowId: 7202),
+            pid: survivingPid,
+            windowId: 7202,
+            to: ws1
+        )
+        controller.axEventHandler.focusedWindowRefProvider = { incomingPid in
+            guard incomingPid == survivingPid else { return nil }
+            return AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: survivingToken.windowId)
+        }
+
+        controller.axEventHandler.handleAppActivation(
+            pid: survivingPid,
+            source: .focusedWindowChanged
+        )
+
+        #expect(controller.workspaceManager.focusedToken == survivingToken)
+        #expect(controller.focusBridge.activeManagedRequest == nil)
     }
 
     @Test @MainActor func monitorReconnectRestorePreservesViewportState() {

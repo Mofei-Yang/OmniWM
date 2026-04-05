@@ -1106,6 +1106,238 @@ private func waitUntilAXEventTest(
         #expect(controller.workspaceManager.pendingFocusedToken == nil)
     }
 
+    @Test @MainActor func externalFocusedWindowChangeCancelsConflictingPendingRequestAndAdoptsObservedManagedWindow() {
+        let controller = makeAXEventTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing managed activation fixture")
+            return
+        }
+
+        controller.hasStartedServices = true
+
+        let oldToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 973),
+            pid: getpid(),
+            windowId: 973,
+            to: workspaceId
+        )
+        let pendingToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 974),
+            pid: getpid(),
+            windowId: 974,
+            to: workspaceId
+        )
+        let observedToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 975),
+            pid: getpid(),
+            windowId: 975,
+            to: workspaceId
+        )
+
+        _ = controller.workspaceManager.setManagedFocus(
+            oldToken,
+            in: workspaceId,
+            onMonitor: monitor.id
+        )
+        _ = controller.workspaceManager.beginManagedFocusRequest(
+            pendingToken,
+            in: workspaceId,
+            onMonitor: monitor.id
+        )
+        _ = controller.focusBridge.beginManagedRequest(
+            token: pendingToken,
+            workspaceId: workspaceId
+        )
+        controller.focusBridge.setFocusedTarget(
+            controller.keyboardFocusTarget(
+                for: oldToken,
+                axRef: AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: oldToken.windowId)
+            )
+        )
+        controller.axEventHandler.focusedWindowRefProvider = { pid in
+            guard pid == getpid() else { return nil }
+            return AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: observedToken.windowId)
+        }
+
+        controller.axEventHandler.handleAppActivation(
+            pid: getpid(),
+            source: .focusedWindowChanged
+        )
+
+        let trace = createFocusTraceEvents(on: controller)
+        #expect(controller.focusBridge.activeManagedRequest == nil)
+        #expect(controller.workspaceManager.pendingFocusedToken == nil)
+        #expect(controller.workspaceManager.focusedToken == observedToken)
+        #expect(controller.focusBridge.focusedTarget?.token == observedToken)
+        #expect(!trace.contains { event in
+            if case let .activationDeferred(_, token, source, reason, _) = event.kind {
+                return token == pendingToken &&
+                    source == .focusedWindowChanged &&
+                    reason == .pendingFocusMismatch
+            }
+            return false
+        })
+        #expect(trace.contains { event in
+            if case let .focusConfirmed(token, confirmedWorkspaceId, source) = event.kind {
+                return token == observedToken &&
+                    confirmedWorkspaceId == workspaceId &&
+                    source == .focusedWindowChanged
+            }
+            return false
+        })
+    }
+
+    @Test @MainActor func externalFocusedWindowChangeWithNoObservedWindowCancelsPendingRequestAndFallsBackToNonManaged() {
+        let controller = makeAXEventTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing missing-window fallback fixture")
+            return
+        }
+
+        controller.hasStartedServices = true
+
+        let oldToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 976),
+            pid: getpid(),
+            windowId: 976,
+            to: workspaceId
+        )
+        let pendingToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 977),
+            pid: getpid(),
+            windowId: 977,
+            to: workspaceId
+        )
+
+        _ = controller.workspaceManager.setManagedFocus(
+            oldToken,
+            in: workspaceId,
+            onMonitor: monitor.id
+        )
+        _ = controller.workspaceManager.beginManagedFocusRequest(
+            pendingToken,
+            in: workspaceId,
+            onMonitor: monitor.id
+        )
+        _ = controller.focusBridge.beginManagedRequest(
+            token: pendingToken,
+            workspaceId: workspaceId
+        )
+        controller.focusBridge.setFocusedTarget(
+            controller.keyboardFocusTarget(
+                for: oldToken,
+                axRef: AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: oldToken.windowId)
+            )
+        )
+        controller.axEventHandler.focusedWindowRefProvider = { _ in nil }
+
+        controller.axEventHandler.handleAppActivation(
+            pid: getpid(),
+            source: .focusedWindowChanged
+        )
+
+        let trace = createFocusTraceEvents(on: controller)
+        #expect(controller.focusBridge.activeManagedRequest == nil)
+        #expect(controller.workspaceManager.pendingFocusedToken == nil)
+        #expect(controller.workspaceManager.isNonManagedFocusActive)
+        #expect(controller.focusBridge.focusedTarget == nil)
+        #expect(!trace.contains { event in
+            if case let .activationDeferred(_, token, source, reason, _) = event.kind {
+                return token == pendingToken &&
+                    source == .focusedWindowChanged &&
+                    reason == .missingFocusedWindow
+            }
+            return false
+        })
+        #expect(trace.contains { event in
+            if case let .nonManagedFallbackEntered(pid, source) = event.kind {
+                return pid == getpid() && source == .focusedWindowChanged
+            }
+            return false
+        })
+    }
+
+    @Test @MainActor func externalFocusedWindowChangeWithObservedUnmanagedWindowCancelsPendingRequestAndFallsBackToNonManaged() {
+        let controller = makeAXEventTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing unmanaged-window fallback fixture")
+            return
+        }
+
+        controller.hasStartedServices = true
+
+        let oldToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 978),
+            pid: getpid(),
+            windowId: 978,
+            to: workspaceId
+        )
+        let pendingToken = controller.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 979),
+            pid: getpid(),
+            windowId: 979,
+            to: workspaceId
+        )
+        let observedToken = WindowToken(pid: getpid(), windowId: 980)
+
+        _ = controller.workspaceManager.setManagedFocus(
+            oldToken,
+            in: workspaceId,
+            onMonitor: monitor.id
+        )
+        _ = controller.workspaceManager.beginManagedFocusRequest(
+            pendingToken,
+            in: workspaceId,
+            onMonitor: monitor.id
+        )
+        _ = controller.focusBridge.beginManagedRequest(
+            token: pendingToken,
+            workspaceId: workspaceId
+        )
+        controller.focusBridge.setFocusedTarget(
+            controller.keyboardFocusTarget(
+                for: oldToken,
+                axRef: AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: oldToken.windowId)
+            )
+        )
+        controller.axEventHandler.focusedWindowRefProvider = { pid in
+            guard pid == getpid() else { return nil }
+            return AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: observedToken.windowId)
+        }
+
+        controller.axEventHandler.handleAppActivation(
+            pid: getpid(),
+            source: .focusedWindowChanged
+        )
+
+        let trace = createFocusTraceEvents(on: controller)
+        #expect(controller.focusBridge.activeManagedRequest == nil)
+        #expect(controller.workspaceManager.pendingFocusedToken == nil)
+        #expect(controller.workspaceManager.isNonManagedFocusActive)
+        #expect(controller.focusBridge.focusedTarget?.token == observedToken)
+        #expect(controller.focusBridge.focusedTarget?.isManaged == false)
+        #expect(!trace.contains { event in
+            if case let .activationDeferred(_, token, source, reason, _) = event.kind {
+                return token == pendingToken &&
+                    source == .focusedWindowChanged &&
+                    reason == .pendingFocusUnmanagedToken
+            }
+            return false
+        })
+        #expect(trace.contains { event in
+            if case let .nonManagedFallbackEntered(pid, source) = event.kind {
+                return pid == getpid() && source == .focusedWindowChanged
+            }
+            return false
+        })
+    }
+
     @Test @MainActor func activationRetryExhaustionClearsPendingFocusAndRestoresConfirmedBorder() async throws {
         let controller = makeAXEventTestController()
         guard let monitor = controller.workspaceManager.monitors.first,

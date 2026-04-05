@@ -755,27 +755,7 @@ final class AXEventHandler: CGSEventDelegate {
         guard let controller else { return }
         let entry = controller.workspaceManager.entry(for: token)
         let affectedWorkspaceId = entry?.workspaceId
-        let removedHandle = entry?.handle
-
-        if let removed = removedHandle {
-            controller.focusBridge.discardPendingFocus(removed.id)
-        }
-
-        let canceledRequest = controller.focusBridge.cancelManagedRequest(
-            matching: token,
-            workspaceId: affectedWorkspaceId
-        )
-        _ = controller.workspaceManager.cancelManagedFocusRequest(
-            matching: token,
-            workspaceId: affectedWorkspaceId
-        )
-        if let canceledRequest {
-            cancelActivationRetry(requestId: canceledRequest.requestId)
-        }
-        controller.clearKeyboardFocusTarget(
-            matching: token,
-            restoreCurrentBorder: false
-        )
+        clearManagedFocusState(matching: token, workspaceId: affectedWorkspaceId)
 
         if handleNativeFullscreenDestroy(token) {
             return
@@ -914,6 +894,16 @@ final class AXEventHandler: CGSEventDelegate {
             case .matchesActiveRequest:
                 break
             case let .conflictsWithPendingRequest(request):
+                if shouldHonorObservedFocusOverPendingRequest(
+                    source: source,
+                    origin: origin
+                ) {
+                    clearManagedFocusState(
+                        matching: request.token,
+                        workspaceId: request.workspaceId
+                    )
+                    break
+                }
                 continueManagedFocusRequest(
                     request,
                     source: source,
@@ -955,6 +945,16 @@ final class AXEventHandler: CGSEventDelegate {
             case .matchesActiveRequest:
                 break
             case let .conflictsWithPendingRequest(request):
+                if shouldHonorObservedFocusOverPendingRequest(
+                    source: source,
+                    origin: origin
+                ) {
+                    clearManagedFocusState(
+                        matching: request.token,
+                        workspaceId: request.workspaceId
+                    )
+                    break
+                }
                 continueManagedFocusRequest(
                     request,
                     source: source,
@@ -979,6 +979,16 @@ final class AXEventHandler: CGSEventDelegate {
 
         switch requestDisposition {
         case let .matchesActiveRequest(request), let .conflictsWithPendingRequest(request):
+            if shouldHonorObservedFocusOverPendingRequest(
+                source: source,
+                origin: origin
+            ) {
+                clearManagedFocusState(
+                    matching: request.token,
+                    workspaceId: request.workspaceId
+                )
+                break
+            }
             continueManagedFocusRequest(
                 request,
                 source: source,
@@ -987,14 +997,16 @@ final class AXEventHandler: CGSEventDelegate {
             )
             return
         case .unrelatedNoRequest:
-            let target = controller.keyboardFocusTarget(for: token, axRef: axRef)
-            controller.focusBridge.setFocusedTarget(target)
-            let fallbackFullscreen = appFullscreenForFallbackLifecyclePreservation(
-                observedAppFullscreen: appFullscreen
-            )
-            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: fallbackFullscreen)
-            _ = controller.renderKeyboardFocusBorder(for: target, policy: .direct)
+            break
         }
+
+        let target = controller.keyboardFocusTarget(for: token, axRef: axRef)
+        controller.focusBridge.setFocusedTarget(target)
+        let fallbackFullscreen = appFullscreenForFallbackLifecyclePreservation(
+            observedAppFullscreen: appFullscreen
+        )
+        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: fallbackFullscreen)
+        _ = controller.renderKeyboardFocusBorder(for: target, policy: .direct)
 
         recordNiriCreateFocusTrace(
             .init(
@@ -2059,6 +2071,16 @@ final class AXEventHandler: CGSEventDelegate {
 
         switch requestDisposition {
         case let .matchesActiveRequest(request), let .conflictsWithPendingRequest(request):
+            if shouldHonorObservedFocusOverPendingRequest(
+                source: source,
+                origin: origin
+            ) {
+                clearManagedFocusState(
+                    matching: request.token,
+                    workspaceId: request.workspaceId
+                )
+                break
+            }
             continueManagedFocusRequest(
                 request,
                 source: source,
@@ -2111,6 +2133,61 @@ final class AXEventHandler: CGSEventDelegate {
         return activeRequest.token == token
             ? .matchesActiveRequest(activeRequest)
             : .conflictsWithPendingRequest(activeRequest)
+    }
+
+    private func shouldHonorObservedFocusOverPendingRequest(
+        source: ActivationEventSource,
+        origin: ActivationCallOrigin
+    ) -> Bool {
+        source.isAuthoritative && origin == .external
+    }
+
+    func cleanupFocusStateForTerminatedApp(pid: pid_t) {
+        guard let controller else { return }
+
+        let entries = controller.workspaceManager.entries(forPid: pid)
+        for entry in entries {
+            clearManagedFocusState(
+                matching: entry.token,
+                workspaceId: entry.workspaceId
+            )
+        }
+
+        if let activeRequest = controller.focusBridge.activeManagedRequest,
+           activeRequest.token.pid == pid
+        {
+            clearManagedFocusState(
+                matching: activeRequest.token,
+                workspaceId: activeRequest.workspaceId
+            )
+        }
+
+        controller.clearKeyboardFocusTarget(pid: pid, restoreCurrentBorder: false)
+        controller.focusBridge.clearFocusedTarget(pid: pid)
+    }
+
+    private func clearManagedFocusState(
+        matching token: WindowToken,
+        workspaceId: WorkspaceDescriptor.ID?
+    ) {
+        guard let controller else { return }
+
+        controller.focusBridge.discardPendingFocus(token)
+        let canceledRequest = controller.focusBridge.cancelManagedRequest(
+            matching: token,
+            workspaceId: workspaceId
+        )
+        _ = controller.workspaceManager.cancelManagedFocusRequest(
+            matching: token,
+            workspaceId: workspaceId
+        )
+        if let canceledRequest {
+            cancelActivationRetry(requestId: canceledRequest.requestId)
+        }
+        controller.clearKeyboardFocusTarget(
+            matching: token,
+            restoreCurrentBorder: false
+        )
     }
 
     private func continueManagedFocusRequest(

@@ -23,7 +23,10 @@ final class ServiceLifecycleManager {
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var permissionCheckerTask: Task<Void, Never>?
-    private var wasHotkeysEnabledBeforeSecureInput = true
+    private(set) var isSecureInputActive = false
+    var accessibilityPermissionStreamProviderForTests: ((Bool) -> AsyncStream<Bool>)?
+    var accessibilityPermissionStateProviderForTests: (() -> Bool)?
+    var accessibilityPermissionRequestHandlerForTests: (() -> Bool)?
 
     init(controller: WMController) {
         self.controller = controller
@@ -31,20 +34,28 @@ final class ServiceLifecycleManager {
 
     func start() {
         guard let controller else { return }
+        let initialPermissionGranted = currentAccessibilityPermissionGranted()
+        controller.updateAccessibilityPermissionGranted(initialPermissionGranted)
+        if controller.desiredEnabled,
+           initialPermissionGranted,
+           !controller.hasStartedServices
+        {
+            startServices()
+        }
         permissionCheckerTask?.cancel()
-        permissionCheckerTask = Task { @MainActor [weak controller] in
-            for await granted in AccessibilityPermissionMonitor.shared.stream(initial: true) {
+        permissionCheckerTask = Task { @MainActor [weak self, weak controller] in
+            guard let self else { return }
+            for await granted in self.accessibilityPermissionStream(initial: true) {
                 guard let controller, !Task.isCancelled else { return }
 
                 if granted {
-                    if !controller.hasStartedServices {
-                        controller.serviceLifecycleManager.startServices()
+                    controller.updateAccessibilityPermissionGranted(true)
+                    if controller.desiredEnabled, !controller.hasStartedServices {
+                        self.startServices()
                     }
                 } else {
-                    _ = controller.axManager.requestPermission()
-                    controller.isEnabled = false
-                    controller.hotkeysEnabled = false
-                    controller.setHotkeysEnabled(false)
+                    _ = self.requestAccessibilityPermission()
+                    controller.updateAccessibilityPermissionGranted(false)
                 }
             }
         }
@@ -53,11 +64,9 @@ final class ServiceLifecycleManager {
     private func startServices() {
         guard let controller, !controller.hasStartedServices else { return }
         controller.hasStartedServices = true
+        controller.reconcileEnabledAndHotkeysState()
         controller.layoutRefreshController.setup()
         controller.axEventHandler.setup()
-        if controller.hotkeysEnabled {
-            controller.setHotkeysEnabled(true)
-        }
         controller.axManager.onAppLaunched = { [weak self] _ in
             self?.handleAppLaunched()
         }
@@ -112,18 +121,20 @@ final class ServiceLifecycleManager {
 
     private func handleSecureInputChange(_ isSecure: Bool) {
         guard let controller else { return }
+        let didSuppressActiveHotkeys = isSecure && controller.hotkeysEnabled
+        isSecureInputActive = isSecure
+        controller.reconcileEnabledAndHotkeysState()
         if isSecure {
-            wasHotkeysEnabledBeforeSecureInput = controller.hotkeysEnabled
-            if controller.hotkeysEnabled {
-                controller.setHotkeysEnabled(false)
+            if didSuppressActiveHotkeys {
                 SecureInputIndicatorController.shared.show()
             }
         } else {
             SecureInputIndicatorController.shared.hide()
-            if wasHotkeysEnabledBeforeSecureInput {
-                controller.setHotkeysEnabled(true)
-            }
         }
+    }
+
+    func handleSecureInputChangeForTests(_ isSecure: Bool) {
+        handleSecureInputChange(isSecure)
     }
 
     private func setupDisplayObserver() {
@@ -181,6 +192,7 @@ final class ServiceLifecycleManager {
 
     func handleAppTerminated(pid: pid_t) {
         guard let controller else { return }
+        controller.axEventHandler.cleanupFocusStateForTerminatedApp(pid: pid)
         let affectedWorkspaces = controller.workspaceManager.removeWindowsForApp(pid: pid)
         for workspaceId in affectedWorkspaces {
             if let monitorId = controller.workspaceManager.monitorId(for: workspaceId),
@@ -189,6 +201,7 @@ final class ServiceLifecycleManager {
                 controller.ensureFocusedTokenValid(in: workspaceId)
             }
         }
+        _ = controller.renderKeyboardFocusBorder(policy: .direct)
         controller.appInfoCache.evict(pid: pid)
         controller.layoutRefreshController.requestFullRescan(reason: .appTerminated)
     }
@@ -353,10 +366,25 @@ final class ServiceLifecycleManager {
         }
 
         controller.secureInputMonitor.stop()
+        isSecureInputActive = false
         SecureInputIndicatorController.shared.hide()
         controller.lockScreenObserver.stop()
-        controller.setHotkeysEnabled(false)
         permissionCheckerTask?.cancel()
         permissionCheckerTask = nil
+        controller.reconcileEnabledAndHotkeysState()
+    }
+
+    private func accessibilityPermissionStream(initial: Bool) -> AsyncStream<Bool> {
+        accessibilityPermissionStreamProviderForTests?(initial)
+            ?? AccessibilityPermissionMonitor.shared.stream(initial: initial)
+    }
+
+    private func currentAccessibilityPermissionGranted() -> Bool {
+        accessibilityPermissionStateProviderForTests?() ?? AccessibilityPermissionMonitor.shared.isGranted
+    }
+
+    @discardableResult
+    private func requestAccessibilityPermission() -> Bool {
+        accessibilityPermissionRequestHandlerForTests?() ?? controller?.axManager.requestPermission() ?? false
     }
 }

@@ -49,6 +49,9 @@ final class WMController {
 
     var isEnabled: Bool = true
     var hotkeysEnabled: Bool = true
+    private(set) var desiredEnabled: Bool = true
+    private(set) var desiredHotkeysEnabled: Bool = true
+    private(set) var accessibilityPermissionGranted = AccessibilityPermissionMonitor.shared.isGranted
     private(set) var focusFollowsMouseEnabled: Bool = false
     private(set) var moveMouseToFocusedWindowEnabled: Bool = false
 
@@ -270,17 +273,34 @@ final class WMController {
     }
 
     func setEnabled(_ enabled: Bool) {
-        isEnabled = enabled
+        desiredEnabled = enabled
         if enabled {
             serviceLifecycleManager.start()
         } else {
             serviceLifecycleManager.stop()
         }
+        reconcileEnabledAndHotkeysState()
     }
 
     func setHotkeysEnabled(_ enabled: Bool) {
-        hotkeysEnabled = enabled
-        enabled ? hotkeys.start() : hotkeys.stop()
+        desiredHotkeysEnabled = enabled
+        reconcileEnabledAndHotkeysState()
+    }
+
+    func updateAccessibilityPermissionGranted(_ granted: Bool) {
+        accessibilityPermissionGranted = granted
+        reconcileEnabledAndHotkeysState()
+    }
+
+    func reconcileEnabledAndHotkeysState() {
+        isEnabled = desiredEnabled && accessibilityPermissionGranted
+
+        let shouldEnableHotkeys = desiredHotkeysEnabled
+            && isEnabled
+            && hasStartedServices
+            && !serviceLifecycleManager.isSecureInputActive
+        hotkeysEnabled = shouldEnableHotkeys
+        shouldEnableHotkeys ? hotkeys.start() : hotkeys.stop()
     }
 
     func setGapSize(_ size: Double) {
