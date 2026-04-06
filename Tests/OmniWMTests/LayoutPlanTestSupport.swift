@@ -110,6 +110,22 @@ func installSynchronousFrameApplySuccessOverride(on controller: WMController) {
 }
 
 @MainActor
+func installAsynchronousFrameApplyContextForLayoutPlanTests(
+    on controller: WMController,
+    entry: WindowModel.Entry
+) async throws -> AppAXContext? {
+    controller.axManager.frameApplyOverrideForTests = nil
+
+    guard let context = await AppAXContext.makeForTests(processIdentifier: entry.pid) else {
+        return nil
+    }
+
+    AppAXContext.contexts[entry.pid] = context
+    try await context.installWindowsForTests([entry.axRef])
+    return context
+}
+
+@MainActor
 func makeLayoutPlanTestController(
     monitors: [Monitor] = [makeLayoutPlanTestMonitor()],
     workspaceConfigurations: [WorkspaceConfiguration] = [
