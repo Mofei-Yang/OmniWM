@@ -194,11 +194,15 @@ final class BorderCoordinator {
 
     private func isManagedWindowFullscreen(_ token: WindowToken) -> Bool {
         guard let controller else { return false }
-        guard let engine = controller.niriEngine,
-              let windowNode = engine.findNode(for: token)
-        else {
-            return false
+
+        if controller.niriEngine?.findNode(for: token)?.isFullscreen == true {
+            return true
         }
-        return windowNode.isFullscreen
+
+        if controller.dwindleEngine?.findNode(for: token)?.isFullscreen == true {
+            return true
+        }
+
+        return false
     }
 }

@@ -373,6 +373,51 @@ private func configureWorkspacesAsDwindle(
         #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 703)
     }
 
+    @Test @MainActor func fullscreenRelayoutSuppressesFocusedBorder() async throws {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or workspace for fullscreen border regression test")
+            return
+        }
+
+        configureWorkspaceAsDwindle(on: controller, workspaceId: workspaceId)
+        controller.enableDwindleLayout()
+        controller.setBordersEnabled(true)
+        await waitForLayoutPlanRefreshWork(on: controller)
+        guard let engine = controller.dwindleEngine else {
+            Issue.record("Missing Dwindle engine for fullscreen border regression test")
+            return
+        }
+
+        let firstToken = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 707)
+        _ = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 708)
+        _ = controller.workspaceManager.setManagedFocus(firstToken, in: workspaceId, onMonitor: monitor.id)
+
+        let initialPlans = try await controller.dwindleLayoutHandler.layoutWithDwindleEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        controller.layoutRefreshController.executeLayoutPlans(initialPlans)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 707)
+
+        guard let fullscreenNode = engine.findNode(for: firstToken) else {
+            Issue.record("Missing Dwindle node for fullscreen border regression test")
+            return
+        }
+
+        engine.setSelectedNode(fullscreenNode, in: workspaceId)
+        #expect(engine.toggleFullscreen(in: workspaceId) == firstToken)
+
+        let fullscreenPlans = try await controller.dwindleLayoutHandler.layoutWithDwindleEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        controller.layoutRefreshController.executeLayoutPlans(fullscreenPlans)
+
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == nil)
+        #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == nil)
+    }
+
     @Test @MainActor func activeAnimationTickKeepsBorderHiddenDuringPreservedNonManagedFocus() async throws {
         let controller = makeLayoutPlanTestController()
         guard let monitor = controller.workspaceManager.monitors.first,
