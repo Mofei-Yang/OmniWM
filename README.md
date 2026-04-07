@@ -111,7 +111,7 @@ Small demo, not fully showing everything, gif recorded at 30fps due to size, som
 - Real quake/sticky terminal using ghostty's libghostty
 - Best-effort macOS native-tab replacement support
 - IPC/CLI
-- Scrathpad/Sticky windows of any app
+- Scratchpad/Sticky windows of any app
 - Niri Overview
 - Unified command palette for windows and app menus
 - App menu anywhere
