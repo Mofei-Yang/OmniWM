@@ -2961,6 +2961,63 @@ private func makeCenteredCrossMonitorFixture(
         #expect(abs(overrideFrame.width - overrideFrame.height) < 0.5)
     }
 
+    @Test @MainActor func globalCenterFocusedColumnUpdatesResolvedMonitorSettingsImmediately() async {
+        let monitor = makeLayoutPlanTestMonitor(name: "CenterFocusTest")
+        let controller = makeLayoutPlanTestController(monitors: [monitor])
+        controller.settings.niriCenterFocusedColumn = .never
+
+        controller.enableNiriLayout(
+            maxWindowsPerColumn: 1,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        await waitForLayoutPlanRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+
+        guard let engine = controller.niriEngine else {
+            Issue.record("Missing Niri engine for global center-focused-column test")
+            return
+        }
+
+        #expect(controller.settings.niriSettings(for: monitor) == nil)
+        #expect(engine.effectiveCenterFocusedColumn(for: monitor.id) == .never)
+
+        controller.settings.niriCenterFocusedColumn = .always
+        controller.updateNiriConfig(centerFocusedColumn: .always)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        #expect(engine.effectiveCenterFocusedColumn(for: monitor.id) == .always)
+    }
+
+    @Test @MainActor func globalSingleWindowAspectRatioUpdatesResolvedMonitorSettingsImmediately() async {
+        let monitor = makeLayoutPlanTestMonitor(name: "AspectRatioTest")
+        let controller = makeLayoutPlanTestController(monitors: [monitor])
+        controller.settings.niriSingleWindowAspectRatio = .ratio4x3
+
+        controller.enableNiriLayout(
+            maxWindowsPerColumn: 1,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        controller.updateNiriConfig(singleWindowAspectRatio: .ratio4x3)
+        await waitForLayoutPlanRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+
+        guard let engine = controller.niriEngine else {
+            Issue.record("Missing Niri engine for global single-window-aspect-ratio test")
+            return
+        }
+
+        #expect(controller.settings.niriSettings(for: monitor) == nil)
+        #expect(engine.effectiveSingleWindowAspectRatio(for: monitor.id) == .ratio4x3)
+
+        controller.settings.niriSingleWindowAspectRatio = .square
+        controller.updateNiriConfig(singleWindowAspectRatio: .square)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        #expect(engine.effectiveSingleWindowAspectRatio(for: monitor.id) == .square)
+    }
+
     @Test @MainActor func snapshotPlanIncludesViewportPatchAndActivationForNewWindow() async throws {
         let controller = makeLayoutPlanTestController()
         guard let monitor = controller.workspaceManager.monitors.first,

@@ -476,11 +476,8 @@ final class WMController {
     }
 
     func updateMonitorNiriSettings() {
-        guard let engine = niriEngine else { return }
-        for monitor in workspaceManager.monitors {
-            let resolved = settings.resolvedNiriSettings(for: monitor)
-            engine.updateMonitorSettings(resolved, for: monitor.id)
-        }
+        guard niriEngine != nil else { return }
+        niriLayoutHandler.refreshResolvedMonitorSettings()
         layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
     }
 
