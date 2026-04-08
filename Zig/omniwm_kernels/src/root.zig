@@ -1,10 +1,12 @@
 const std = @import("std");
 const dwindle_layout = @import("dwindle_layout.zig");
 const niri_layout = @import("niri_layout.zig");
+const reconcile = @import("reconcile.zig");
 
 comptime {
     _ = dwindle_layout;
     _ = niri_layout;
+    _ = reconcile;
 }
 
 const kernel_ok: i32 = 0;

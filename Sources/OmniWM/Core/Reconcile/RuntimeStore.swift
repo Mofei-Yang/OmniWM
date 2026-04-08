@@ -21,6 +21,7 @@ final class RuntimeStore {
         event: WMEvent,
         existingEntry: WindowModel.Entry?,
         monitors: [Monitor],
+        persistedHydration: PersistedHydrationMutation? = nil,
         snapshot: () -> ReconcileSnapshot,
         applyPlan: (ActionPlan, WindowToken?) -> ActionPlan
     ) -> ReconcileTxn {
@@ -34,7 +35,8 @@ final class RuntimeStore {
             event: normalizedEvent,
             existingEntry: existingEntry,
             currentSnapshot: currentSnapshot,
-            monitors: monitors
+            monitors: monitors,
+            persistedHydration: persistedHydration
         )
         let resolvedPlan = applyPlan(plan, normalizedEvent.token)
         return record(

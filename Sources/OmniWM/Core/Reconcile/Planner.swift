@@ -5,13 +5,15 @@ struct Planner {
         event: WMEvent,
         existingEntry: WindowModel.Entry?,
         currentSnapshot: ReconcileSnapshot,
-        monitors: [Monitor]
+        monitors: [Monitor],
+        persistedHydration: PersistedHydrationMutation? = nil
     ) -> ActionPlan {
         StateReducer.reduce(
             event: event,
             existingEntry: existingEntry,
             currentSnapshot: currentSnapshot,
-            monitors: monitors
+            monitors: monitors,
+            persistedHydration: persistedHydration
         )
     }
 }

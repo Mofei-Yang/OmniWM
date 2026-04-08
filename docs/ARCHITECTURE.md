@@ -45,25 +45,30 @@ This document is for contributors who want to understand OmniWM's internals. It 
 
 ### SwiftPM Targets
 
-OmniWM is built with Swift Package Manager (Swift 6.2, strict concurrency). There are five targets with a clear dependency graph:
+OmniWM is built with Swift Package Manager (Swift 6.2, strict concurrency). The package currently ships six build targets plus one test target:
 
 ```
-OmniWMIPC         COmniWMKernels
-    ^                   ^
-    |                    \
-OmniWMCtl      OmniWM + GhosttyKit   (CLI tool)       (main library)
-                   ^
-                   |
-               OmniWMApp              (@main entry point)
+OmniWMIPC         COmniWMKernels      GhosttyKit
+    ^                   ^                 ^
+    |                    \               /
+OmniWMCtl               OmniWM        (binary xcframework)
+    ^                      ^
+    |                      |
+  (CLI)                OmniWMApp
+                            ^
+                            |
+                       OmniWMTests
 ```
 
 | Target | Purpose | Dependencies |
 |--------|---------|--------------|
+| `GhosttyKit` | Local Ghostty terminal binary xcframework | None |
 | `OmniWMIPC` | Shared IPC data models and wire format | None |
 | `OmniWMCtl` | CLI tool (`omniwmctl`) | OmniWMIPC |
 | `COmniWMKernels` | Checked-in C header target for Zig kernel imports | None |
 | `OmniWM` | Core window manager library | OmniWMIPC, GhosttyKit, COmniWMKernels, system frameworks |
 | `OmniWMApp` | Executable wrapper with SwiftUI scene | OmniWM |
+| `OmniWMTests` | Swift test target | OmniWM, OmniWMIPC, OmniWMCtl, COmniWMKernels |
 
 ### Source Directory Map
 
@@ -474,7 +479,7 @@ WorkspaceManager
 └── nativeFullscreenRecords                 Fullscreen transition tracking
 ```
 
-Post-`v0.4.5`, `WorkspaceManager` also owns the reconcile runtime. `RuntimeStore` and `ReconcileTraceRecorder` capture normalized window-management events into a replayable snapshot, exposed through `reconcileSnapshotDump()` and `reconcileTraceDump()` for IPC diagnostics. `PersistedWindowRestoreCatalog` stores relaunch restore intent such as workspace target, preferred monitor, and floating geometry so managed floating windows can be restored or rescued across launches.
+Post-`v0.4.5`, `WorkspaceManager` also owns the reconcile runtime. `RuntimeStore` and `ReconcileTraceRecorder` capture normalized window-management events into a replayable snapshot, exposed through `reconcileSnapshotDump()` and `reconcileTraceDump()` for IPC diagnostics. `PersistedWindowRestoreCatalog` stores relaunch restore intent such as workspace target, preferred monitor, and floating geometry so managed floating windows can be restored or rescued across launches. The pure `StateReducer` decision slice now follows the same leaf-kernel pattern as layout: Swift keeps transaction ownership, trace recording, and runtime-object mutation, while Zig owns the deterministic state-transition solve behind `omniwm_reconcile_plan`.
 
 **WindowModel** (`Sources/OmniWM/Core/Workspace/WindowModel.swift`)
 
@@ -502,7 +507,7 @@ Entries are indexed by both `WindowToken` and raw `windowId` for fast lookup fro
 
 Niri arranges windows in vertical columns that scroll horizontally, inspired by the [Niri](https://github.com/YaLTeR/niri) Wayland compositor.
 
-Five leaf kernels now live in `Zig/omniwm_kernels/src` and are imported through the checked-in `COmniWMKernels` C header target: axis constraint solving, viewport geometry, monitor restore assignment matching, the Niri bulk projection/layout solver, and the Dwindle frame solver. Their Swift counterparts remain thin wrappers so the surrounding layout engine, navigation, and AppKit-facing orchestration stay in Swift.
+Six leaf kernels now live in `Zig/omniwm_kernels/src` and are imported through the checked-in `COmniWMKernels` C header target: axis constraint solving, viewport geometry, monitor restore assignment matching, the Niri bulk projection/layout solver, the Dwindle frame solver, and the Reconcile state-transition kernel. Their Swift counterparts remain thin wrappers so the surrounding layout engine, navigation, Reconcile orchestration, and AppKit-facing policy stay in Swift.
 
 The Niri tree stays Swift-owned. Swift resolves workspace selection, monitor ownership, viewport state, and AppKit policy, then flattens the current columns/windows into compact snapshot arrays for one `omniwm_niri_layout_solve` call. Zig owns the deterministic bulk projection math for canonical/rendered container rects, window frames, resolved spans, and hidden-edge classification before Swift applies those outputs back onto the existing nodes.
 

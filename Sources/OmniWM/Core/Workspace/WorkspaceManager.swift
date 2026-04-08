@@ -208,6 +208,7 @@ final class WorkspaceManager {
             event: event,
             existingEntry: entry,
             monitors: monitors,
+            persistedHydration: persistedHydration,
             snapshot: { self.reconcileSnapshot() },
             applyPlan: { plan, token in
                 var plan = plan
@@ -215,11 +216,8 @@ final class WorkspaceManager {
                     plan.restoreRefresh = restoreRefresh
                 }
                 if let persistedHydration {
-                    plan = self.mergePersistedHydration(
-                        persistedHydration,
-                        into: plan,
-                        existingEntry: entry
-                    )
+                    plan.persistedHydration = persistedHydration
+                    plan.notes.append("persisted_hydration")
                 }
                 if !restoreEventPlan.notes.isEmpty {
                     plan.notes.append(contentsOf: restoreEventPlan.notes)
@@ -310,7 +308,14 @@ final class WorkspaceManager {
         }
 
         if let persistedHydration = plan.persistedHydration {
-            _ = applyPersistedHydrationMutation(persistedHydration, to: token)
+            _ = applyPersistedHydrationMutation(
+                persistedHydration,
+                floatingState: hydratedFloatingState(
+                    for: persistedHydration,
+                    restoreIntent: plan.restoreIntent
+                ),
+                to: token
+            )
         }
 
         if let lifecyclePhase = plan.lifecyclePhase {
@@ -325,8 +330,7 @@ final class WorkspaceManager {
         if let replacementCorrelation = plan.replacementCorrelation {
             windows.setReplacementCorrelation(replacementCorrelation, for: token)
         }
-        if let entry = windows.entry(for: token) {
-            let restoreIntent = StateReducer.restoreIntent(for: entry, monitors: monitors)
+        if let restoreIntent = plan.restoreIntent {
             windows.setRestoreIntent(restoreIntent, for: token)
             resolvedPlan.restoreIntent = restoreIntent
         }
@@ -472,50 +476,26 @@ final class WorkspaceManager {
         )
     }
 
-    private func mergePersistedHydration(
-        _ hydration: PersistedHydrationMutation,
-        into plan: ActionPlan,
-        existingEntry: WindowModel.Entry?
-    ) -> ActionPlan {
-        var mergedPlan = plan
-        let monitorId = hydration.monitorId
-
-        var observedState = mergedPlan.observedState
-            ?? existingEntry?.observedState
-            ?? ObservedWindowState.initial(
-                workspaceId: hydration.workspaceId,
-                monitorId: monitorId
-            )
-        observedState.workspaceId = hydration.workspaceId
-        observedState.monitorId = monitorId ?? observedState.monitorId
-        mergedPlan.observedState = observedState
-
-        var desiredState = mergedPlan.desiredState
-            ?? existingEntry?.desiredState
-            ?? DesiredWindowState.initial(
-                workspaceId: hydration.workspaceId,
-                monitorId: monitorId,
-                disposition: hydration.targetMode
-            )
-        desiredState.workspaceId = hydration.workspaceId
-        desiredState.monitorId = monitorId ?? desiredState.monitorId
-        desiredState.disposition = hydration.targetMode
-        if let floatingFrame = hydration.floatingFrame {
-            desiredState.floatingFrame = floatingFrame
-            desiredState.rescueEligible = true
-        } else if hydration.targetMode == .floating {
-            desiredState.rescueEligible = true
+    private func hydratedFloatingState(
+        for hydration: PersistedHydrationMutation,
+        restoreIntent: RestoreIntent?
+    ) -> WindowModel.FloatingState? {
+        guard let floatingFrame = hydration.floatingFrame else {
+            return nil
         }
-        mergedPlan.desiredState = desiredState
-        mergedPlan.lifecyclePhase = hydration.targetMode == .floating ? .floating : .tiled
-        mergedPlan.persistedHydration = hydration
-        mergedPlan.notes.append("persisted_hydration")
-        return mergedPlan
+
+        return .init(
+            lastFrame: floatingFrame,
+            normalizedOrigin: restoreIntent?.normalizedFloatingOrigin,
+            referenceMonitorId: hydration.monitorId,
+            restoreToFloating: restoreIntent?.restoreToFloating ?? true
+        )
     }
 
     @discardableResult
     private func applyPersistedHydrationMutation(
         _ hydration: PersistedHydrationMutation,
+        floatingState resolvedFloatingState: WindowModel.FloatingState? = nil,
         to token: WindowToken
     ) -> Bool {
         guard let entry = windows.entry(for: token) else {
@@ -532,7 +512,9 @@ final class WorkspaceManager {
             workspaceId: hydration.workspaceId
         )
 
-        if let floatingFrame = hydration.floatingFrame {
+        if let resolvedFloatingState {
+            windows.setFloatingState(resolvedFloatingState, for: token)
+        } else if let floatingFrame = hydration.floatingFrame {
             let referenceMonitor = hydration.monitorId.flatMap(monitor(byId:))
             let referenceVisibleFrame = referenceMonitor?.visibleFrame ?? floatingFrame
             let normalizedOrigin = normalizedFloatingOrigin(
