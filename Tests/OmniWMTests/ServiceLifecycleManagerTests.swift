@@ -350,7 +350,14 @@ private func waitUntilServiceLifecycleTest(
             in: ws1,
             onMonitor: monitor.id
         )
-        _ = controller.focusBridge.beginManagedRequest(token: handle1, workspaceId: ws1)
+        controller.focusBridge.applyOrchestrationState(
+            nextManagedRequestId: 2,
+            activeManagedRequest: ManagedFocusRequest(
+                requestId: 1,
+                token: handle1,
+                workspaceId: ws1
+            )
+        )
         controller.focusBridge.setFocusedTarget(
             controller.keyboardFocusTarget(for: handle2, axRef: makeLifecycleWindow(windowId: 7103))
         )

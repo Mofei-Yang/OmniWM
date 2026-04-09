@@ -2046,7 +2046,6 @@ extension WMController {
             focus: .init(
                 nextManagedRequestId: focusBridge.nextManagedRequestId,
                 activeManagedRequest: focusBridge.activeManagedRequest,
-                focusedTarget: focusBridge.focusedTarget,
                 pendingFocusedToken: workspaceManager.pendingFocusedToken,
                 pendingFocusedWorkspaceId: workspaceManager.pendingFocusedWorkspaceId,
                 isNonManagedFocusActive: workspaceManager.isNonManagedFocusActive,
@@ -2130,6 +2129,12 @@ extension WMController {
             )
         )
 
+        focusBridge.applyOrchestrationState(
+            nextManagedRequestId: result.snapshot.focus.nextManagedRequestId,
+            activeManagedRequest: result.snapshot.focus.activeManagedRequest
+        )
+        _ = workspaceManager.applyOrchestrationFocusState(result.snapshot.focus)
+
         for action in result.plan.actions {
             switch action {
             case let .beginManagedFocusRequest(requestId, token, workspaceId):
@@ -2138,23 +2143,18 @@ extension WMController {
                     in: workspaceId,
                     onMonitor: workspaceManager.monitorId(for: workspaceId)
                 )
-                let request = focusBridge.beginManagedRequest(
-                    token: token,
-                    workspaceId: workspaceId
-                )
-                assert(
-                    request.requestId == requestId || request.token == token,
-                    "Unexpected focus request id drift for \(token)"
-                )
+                let request = focusBridge.activeManagedRequest(requestId: requestId)
+                assert(request?.token == token, "Unexpected focus request id drift for \(token)")
                 recordNiriCreateFocusTrace(
                     .pendingFocusStarted(
-                        requestId: request.requestId,
+                        requestId: requestId,
                         token: token,
                         workspaceId: workspaceId
                     )
                 )
-            case let .clearManagedFocusState(token, workspaceId):
+            case let .clearManagedFocusState(requestId, token, workspaceId):
                 axEventHandler.clearManagedFocusStateForOrchestration(
+                    requestId: requestId,
                     matching: token,
                     workspaceId: workspaceId
                 )
@@ -2177,16 +2177,18 @@ extension WMController {
                         self.focusWindow(deferred)
                     }
                 )
-            case .cancelActiveRefresh,
-                 .startRefresh,
-                 .runPostLayoutAttachments,
+            case .beginNativeFullscreenRestoreActivation,
+                 .cancelActivationRetry,
+                 .cancelActiveRefresh,
+                 .confirmManagedActivation,
+                 .continueManagedFocusRequest,
                  .discardPostLayoutAttachments,
+                 .enterNonManagedFallback,
+                 .enterOwnedApplicationFallback,
                  .performVisibilitySideEffects,
                  .requestWorkspaceBarRefresh,
-                 .continueManagedFocusRequest,
-                 .confirmManagedActivation,
-                 .beginNativeFullscreenRestoreActivation,
-                 .enterNonManagedFallback:
+                 .runPostLayoutAttachments,
+                 .startRefresh:
                 continue
             }
         }

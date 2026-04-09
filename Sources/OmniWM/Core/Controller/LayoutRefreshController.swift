@@ -1476,7 +1476,6 @@ import QuartzCore
                 focus: .init(
                     nextManagedRequestId: 1,
                     activeManagedRequest: nil,
-                    focusedTarget: nil,
                     pendingFocusedToken: nil,
                     pendingFocusedWorkspaceId: nil,
                     isNonManagedFocusActive: false,
@@ -1515,12 +1514,14 @@ import QuartzCore
             case .requestWorkspaceBarRefresh:
                 controller?.requestWorkspaceBarRefresh()
             case .beginManagedFocusRequest,
-                 .frontManagedWindow,
-                 .clearManagedFocusState,
-                 .continueManagedFocusRequest,
-                 .confirmManagedActivation,
                  .beginNativeFullscreenRestoreActivation,
-                 .enterNonManagedFallback:
+                 .cancelActivationRetry,
+                 .clearManagedFocusState,
+                 .confirmManagedActivation,
+                 .continueManagedFocusRequest,
+                 .enterNonManagedFallback,
+                 .enterOwnedApplicationFallback,
+                 .frontManagedWindow:
                 continue
             }
         }

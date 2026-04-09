@@ -19,12 +19,6 @@ struct ManagedFocusRequestEvent: Equatable {
     var workspaceId: WorkspaceDescriptor.ID
 }
 
-enum ManagedActivationRequestDisposition: Equatable {
-    case matchesActiveRequest(ManagedFocusRequest)
-    case conflictsWithPendingRequest(ManagedFocusRequest)
-    case unrelatedNoRequest
-}
-
 enum ManagedActivationMatch: Equatable {
     case missingFocusedWindow(
         pid: pid_t,
@@ -44,15 +38,13 @@ enum ManagedActivationMatch: Equatable {
         appFullscreen: Bool,
         fallbackFullscreen: Bool
     )
+    case ownedApplication(pid: pid_t)
 }
 
 struct ManagedActivationObservation: Equatable {
     var source: ActivationEventSource
     var origin: ActivationCallOrigin
-    var disposition: ManagedActivationRequestDisposition
     var match: ManagedActivationMatch
-    var shouldHonorObservedFocusOverPendingRequest: Bool
-    var shouldHandleManagedActivationWithoutPendingRequest: Bool
 }
 
 enum OrchestrationEvent: Equatable {

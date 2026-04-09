@@ -113,7 +113,7 @@ struct BorderCoordinatorTests {
             )
         )
 
-        let observedRevalidation = await waitForBorderCoordinatorCondition {
+        let observedRevalidation = await waitForBorderCoordinatorCondition(timeout: .seconds(5)) {
             let trace = controller.borderCoordinator.traceSnapshotForTests()
             return lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 901
                 && trace.contains {
@@ -162,7 +162,7 @@ struct BorderCoordinatorTests {
         )
         #expect(controller.borderCoordinator.reconcile(event: .cgsFrameChanged(windowId: 902)))
 
-        let observedLeaseExtension = await waitForBorderCoordinatorCondition {
+        let observedLeaseExtension = await waitForBorderCoordinatorCondition(timeout: .seconds(5)) {
             let trace = controller.borderCoordinator.traceSnapshotForTests()
             return lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 902
                 && trace.contains {

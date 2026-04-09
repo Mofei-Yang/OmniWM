@@ -19,17 +19,11 @@ extension KeyboardFocusTarget: Equatable {
 }
 
 struct ManagedFocusRequest: Equatable {
-    enum Status: Equatable {
-        case pending
-        case confirmed
-    }
-
     let requestId: UInt64
     var token: WindowToken
     var workspaceId: WorkspaceDescriptor.ID
     var retryCount: Int = 0
     var lastActivationSource: ActivationEventSource?
-    var status: Status = .pending
 }
 
 @MainActor
@@ -46,25 +40,12 @@ final class FocusBridgeCoordinator {
         nextRequestId
     }
 
-    func beginManagedRequest(
-        token: WindowToken,
-        workspaceId: WorkspaceDescriptor.ID
-    ) -> ManagedFocusRequest {
-        if let activeManagedRequest,
-           activeManagedRequest.token == token,
-           activeManagedRequest.workspaceId == workspaceId
-        {
-            return activeManagedRequest
-        }
-
-        let request = ManagedFocusRequest(
-            requestId: nextRequestId,
-            token: token,
-            workspaceId: workspaceId
-        )
-        nextRequestId += 1
-        activeManagedRequest = request
-        return request
+    func applyOrchestrationState(
+        nextManagedRequestId: UInt64,
+        activeManagedRequest: ManagedFocusRequest?
+    ) {
+        nextRequestId = nextManagedRequestId
+        self.activeManagedRequest = activeManagedRequest
     }
 
     func activeManagedRequest(for pid: pid_t) -> ManagedFocusRequest? {
@@ -85,42 +66,6 @@ final class FocusBridgeCoordinator {
         guard let activeManagedRequest, activeManagedRequest.requestId == requestId else {
             return nil
         }
-        return activeManagedRequest
-    }
-
-    func recordRetry(
-        requestId: UInt64,
-        source: ActivationEventSource,
-        retryLimit: Int
-    ) -> ManagedFocusRequest? {
-        guard var activeManagedRequest, activeManagedRequest.requestId == requestId else {
-            return nil
-        }
-
-        let retryCount = activeManagedRequest.lastActivationSource == source
-            ? activeManagedRequest.retryCount
-            : 0
-        let nextAttempt = retryCount + 1
-        guard nextAttempt <= retryLimit else { return nil }
-
-        activeManagedRequest.retryCount = nextAttempt
-        activeManagedRequest.lastActivationSource = source
-        self.activeManagedRequest = activeManagedRequest
-        return activeManagedRequest
-    }
-
-    @discardableResult
-    func confirmManagedRequest(
-        token: WindowToken,
-        source: ActivationEventSource
-    ) -> ManagedFocusRequest? {
-        guard var activeManagedRequest, activeManagedRequest.token == token else {
-            return nil
-        }
-
-        activeManagedRequest.lastActivationSource = source
-        activeManagedRequest.status = .confirmed
-        self.activeManagedRequest = nil
         return activeManagedRequest
     }
 

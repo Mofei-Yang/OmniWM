@@ -1249,9 +1249,13 @@ private func waitUntilAXEventTest(
             in: workspaceId,
             onMonitor: monitor.id
         )
-        _ = controller.focusBridge.beginManagedRequest(
-            token: pendingToken,
-            workspaceId: workspaceId
+        controller.focusBridge.applyOrchestrationState(
+            nextManagedRequestId: 2,
+            activeManagedRequest: ManagedFocusRequest(
+                requestId: 1,
+                token: pendingToken,
+                workspaceId: workspaceId
+            )
         )
         controller.focusBridge.setFocusedTarget(
             controller.keyboardFocusTarget(
@@ -1326,9 +1330,13 @@ private func waitUntilAXEventTest(
             in: workspaceId,
             onMonitor: monitor.id
         )
-        _ = controller.focusBridge.beginManagedRequest(
-            token: pendingToken,
-            workspaceId: workspaceId
+        controller.focusBridge.applyOrchestrationState(
+            nextManagedRequestId: 2,
+            activeManagedRequest: ManagedFocusRequest(
+                requestId: 1,
+                token: pendingToken,
+                workspaceId: workspaceId
+            )
         )
         controller.focusBridge.setFocusedTarget(
             controller.keyboardFocusTarget(
@@ -1399,9 +1407,13 @@ private func waitUntilAXEventTest(
             in: workspaceId,
             onMonitor: monitor.id
         )
-        _ = controller.focusBridge.beginManagedRequest(
-            token: pendingToken,
-            workspaceId: workspaceId
+        controller.focusBridge.applyOrchestrationState(
+            nextManagedRequestId: 2,
+            activeManagedRequest: ManagedFocusRequest(
+                requestId: 1,
+                token: pendingToken,
+                workspaceId: workspaceId
+            )
         )
         controller.focusBridge.setFocusedTarget(
             controller.keyboardFocusTarget(
@@ -1664,11 +1676,29 @@ private func waitUntilAXEventTest(
         #expect(registry.contains(window: ownedWindow))
         #expect(controller.hasVisibleOwnedWindow)
 
+        let externalToken = WindowToken(pid: getpid() + 100, windowId: 1802)
+        let externalRequest = ManagedFocusRequest(
+            requestId: 41,
+            token: externalToken,
+            workspaceId: workspaceId
+        )
+        controller.focusBridge.applyOrchestrationState(
+            nextManagedRequestId: 42,
+            activeManagedRequest: externalRequest
+        )
+        _ = controller.workspaceManager.beginManagedFocusRequest(
+            externalToken,
+            in: workspaceId,
+            onMonitor: controller.workspaceManager.monitorId(for: workspaceId)
+        )
+
         controller.axEventHandler.handleAppActivation(pid: getpid())
 
         #expect(controller.workspaceManager.focusedHandle == handle)
         #expect(controller.workspaceManager.isNonManagedFocusActive)
         #expect(controller.workspaceManager.isAppFullscreenActive == false)
+        #expect(controller.focusBridge.activeManagedRequest == externalRequest)
+        #expect(controller.workspaceManager.pendingFocusedToken == externalToken)
     }
 
     @Test @MainActor func ownedUtilityWindowCreateIsSkipped() async {

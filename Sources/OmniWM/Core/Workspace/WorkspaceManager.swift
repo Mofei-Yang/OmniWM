@@ -776,6 +776,40 @@ final class WorkspaceManager {
     }
 
     @discardableResult
+    func applyOrchestrationFocusState(
+        _ focusSnapshot: FocusOrchestrationSnapshot
+    ) -> Bool {
+        var changed = false
+
+        if let token = focusSnapshot.pendingFocusedToken,
+           let workspaceId = focusSnapshot.pendingFocusedWorkspaceId
+        {
+            changed = updatePendingManagedFocusRequest(
+                token,
+                workspaceId: workspaceId,
+                monitorId: monitorId(for: workspaceId),
+                focus: &sessionState.focus
+            ) || changed
+        } else {
+            changed = clearPendingManagedFocusRequest(focus: &sessionState.focus) || changed
+        }
+
+        if sessionState.focus.isNonManagedFocusActive != focusSnapshot.isNonManagedFocusActive {
+            sessionState.focus.isNonManagedFocusActive = focusSnapshot.isNonManagedFocusActive
+            changed = true
+        }
+        if sessionState.focus.isAppFullscreenActive != focusSnapshot.isAppFullscreenActive {
+            sessionState.focus.isAppFullscreenActive = focusSnapshot.isAppFullscreenActive
+            changed = true
+        }
+
+        if changed {
+            notifySessionStateChanged()
+        }
+        return changed
+    }
+
+    @discardableResult
     func setInteractionMonitor(_ monitorId: Monitor.ID?, preservePrevious: Bool = true) -> Bool {
         let normalizedMonitorId = monitorId.flatMap { self.monitor(byId: $0)?.id }
         return updateInteractionMonitor(normalizedMonitorId, preservePrevious: preservePrevious, notify: true)

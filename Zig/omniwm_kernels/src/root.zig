@@ -1,6 +1,7 @@
 const std = @import("std");
 const dwindle_layout = @import("dwindle_layout.zig");
 const niri_layout = @import("niri_layout.zig");
+const orchestration = @import("orchestration.zig");
 const overview_projection = @import("overview_projection.zig");
 const reconcile = @import("reconcile.zig");
 const window_decision = @import("window_decision.zig");
@@ -8,6 +9,7 @@ const window_decision = @import("window_decision.zig");
 comptime {
     _ = dwindle_layout;
     _ = niri_layout;
+    _ = orchestration;
     _ = overview_projection;
     _ = reconcile;
     _ = window_decision;

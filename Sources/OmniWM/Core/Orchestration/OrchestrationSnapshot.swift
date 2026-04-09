@@ -11,7 +11,6 @@ struct RefreshOrchestrationSnapshot: Equatable {
 struct FocusOrchestrationSnapshot: Equatable {
     var nextManagedRequestId: UInt64
     var activeManagedRequest: ManagedFocusRequest?
-    var focusedTarget: KeyboardFocusTarget?
     var pendingFocusedToken: WindowToken?
     var pendingFocusedWorkspaceId: WorkspaceDescriptor.ID?
     var isNonManagedFocusActive: Bool

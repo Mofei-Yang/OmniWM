@@ -87,6 +87,7 @@ struct OrchestrationPlan: Equatable {
             workspaceId: WorkspaceDescriptor.ID
         )
         case clearManagedFocusState(
+            requestId: UInt64,
             token: WindowToken,
             workspaceId: WorkspaceDescriptor.ID?
         )
@@ -117,10 +118,14 @@ struct OrchestrationPlan: Equatable {
             appFullscreen: Bool,
             source: ActivationEventSource
         )
+        case cancelActivationRetry(requestId: UInt64?)
+        case enterOwnedApplicationFallback(
+            pid: pid_t,
+            source: ActivationEventSource
+        )
     }
 
     var actions: [Action] = []
-    var trace: [String] = []
 }
 
 struct OrchestrationResult: Equatable {

@@ -348,7 +348,7 @@ Some apps (Ghostty, Safari, browsers) destroy and recreate windows during intern
 
 ### 3.4 The Refresh Pipeline
 
-`LayoutRefreshController` now acts as a thin adapter around the deterministic orchestration seam in `Sources/OmniWM/Core/Orchestration/`. Raw controller, AX, and timer inputs are normalized into value-typed `OrchestrationEvent`s, projected against an `OrchestrationSnapshot`, reduced by `OrchestrationCore.step`, and then executed by existing Swift runtime/effect code.
+`LayoutRefreshController` now acts as a thin adapter around the deterministic orchestration seam in `Sources/OmniWM/Core/Orchestration/`. Raw controller, AX, and timer inputs are normalized into value-typed `OrchestrationEvent`s, projected against an `OrchestrationSnapshot`, flattened into compact C-compatible buffers, and passed through `omniwm_orchestration_step` in the Zig kernel library. Swift then applies the returned state delta and ordered action plan through the existing runtime/effect code.
 
 **Five Refresh Routes:**
 
@@ -360,9 +360,9 @@ Some apps (Ghostty, Safari, browsers) destroy and recreate windows during intern
 | `visibilityRefresh` | App hidden/unhidden | Show/hide windows, no relayout |
 | `windowRemoval` | Window destroyed | Remove from layout + relayout + focus recovery |
 
-**RefreshReason → Route Mapping:**
+**RefreshReason → Route Mapping Examples:**
 
-Each `RefreshReason` maps to a route and a scheduling policy:
+Each `RefreshReason` maps to a route and a scheduling policy. Representative mappings:
 
 ```
 RefreshReason              → Route              → Scheduling
@@ -383,7 +383,7 @@ RefreshReason              → Route              → Scheduling
 
 1. Adapters gather facts (`AXEventHandler`, `LayoutRefreshController`, `WMController`)
 2. `OrchestrationSnapshot` projects the current refresh/focus runtime state
-3. `OrchestrationCore.step(snapshot:event:)` returns:
+3. `OrchestrationCore.step(snapshot:event:)` marshals one bulk kernel step and returns:
    - updated orchestration state
    - an ordered `OrchestrationPlan`
    - explicit decisions such as queue, merge, defer, cancel, confirm
@@ -393,7 +393,7 @@ RefreshReason              → Route              → Scheduling
    - post-layout actions
    - border / visibility / fullscreen follow-up work
 
-**Coalescing:** Refresh queue policy now lives in the reducer instead of being re-derived across controller branches. Active work can absorb visibility-only updates, queue follow-up relayouts/window-removal work, or cancel/supersede lower-priority refreshes while preserving attachment order and tracked-window/fullscreen state.
+**Coalescing:** Refresh queue policy now lives in the Zig orchestration kernel instead of being re-derived across controller branches. Active work can absorb visibility-only updates, queue follow-up relayouts/window-removal work, or cancel/supersede lower-priority refreshes while preserving attachment order and tracked-window/fullscreen state.
 
 **DisplayLink Integration:** When animations are active (spring-based viewport scrolling, workspace switch effects), a `CADisplayLink` per display fires at the native refresh rate, driving per-frame layout recalculation.
 
@@ -453,8 +453,8 @@ This separation means layout logic can be unit-tested without any macOS UI or ac
 | `settings: SettingsStore` | Persisted user configuration |
 | `workspaceManager: WorkspaceManager` | Workspace definitions, window tracking, session state |
 | `axManager: AXManager` | Per-app accessibility contexts, frame application |
-| `focusBridge: FocusBridgeCoordinator` | Focus state machine with retry logic |
-| `orchestration core` | Pure reducer/planner over normalized events and snapshots; Swift adapters execute the returned plan |
+| `focusBridge: FocusBridgeCoordinator` | Runtime focus adapter: serializes fronting work, caches the focused target, and mirrors kernel-owned managed-request state |
+| `orchestration core` | Zig-owned deterministic reducer/planner behind `omniwm_orchestration_step`; Swift adapters flatten inputs and execute the returned plan |
 | `windowRuleEngine: WindowRuleEngine` | Window rule evaluation |
 | `hotkeys: HotkeyCenter` | Global hotkey registration via Carbon |
 | `borderManager: BorderManager` | Focus border window management |
@@ -522,7 +522,7 @@ Entries are indexed by both `WindowToken` and raw `windowId` for fast lookup fro
 
 Niri arranges windows in vertical columns that scroll horizontally, inspired by the [Niri](https://github.com/YaLTeR/niri) Wayland compositor.
 
-Eight leaf kernels now live in `Zig/omniwm_kernels/src` and are imported through the checked-in `COmniWMKernels` C header target: axis constraint solving, viewport geometry, monitor restore assignment matching, the Niri bulk projection/layout solver, the Overview projection solver, the Dwindle frame solver, the Window Decision kernel, and the Reconcile state-transition kernel. Their Swift counterparts remain thin wrappers so the surrounding layout engine, overview/controller policy, navigation, rule matching, Reconcile orchestration, and AppKit-facing policy stay in Swift.
+Nine leaf kernels now live in `Zig/omniwm_kernels/src` and are imported through the checked-in `COmniWMKernels` C header target: axis constraint solving, viewport geometry, monitor restore assignment matching, the Niri bulk projection/layout solver, the Overview projection solver, the Dwindle frame solver, the Window Decision kernel, the Reconcile state-transition kernel, and the controller orchestration kernel. Their Swift counterparts remain thin wrappers so the surrounding layout engine, overview/controller policy, navigation, rule matching, controller runtime ownership, Reconcile runtime ownership, and AppKit-facing policy stay in Swift.
 
 The Niri tree stays Swift-owned. Swift resolves workspace selection, monitor ownership, viewport state, and AppKit policy, then flattens the current columns/windows into compact snapshot arrays for one `omniwm_niri_layout_solve` call. Zig owns the deterministic bulk projection math for canonical/rendered container rects, window frames, resolved spans, and hidden-edge classification before Swift applies those outputs back onto the existing nodes.
 
@@ -623,23 +623,23 @@ enum DwindleOrientation {
 
 ### 4.5 Focus Lifecycle
 
-**File:** `Sources/OmniWM/Core/Controller/KeyboardFocusLifecycleCoordinator.swift`
+**Files:** `Sources/OmniWM/Core/Controller/KeyboardFocusLifecycleCoordinator.swift`, `Sources/OmniWM/Core/Orchestration/`
 
-Focus management is complex because OmniWM must coordinate its intent with what macOS actually does. The `FocusBridgeCoordinator` manages this:
+Focus management is split between a deterministic reducer and Swift-side effect execution:
+
+- The Zig orchestration kernel owns managed-request ids, retry progression/exhaustion, defer/cancel/confirm decisions, and whether a pending focus should survive into fullscreen-restore relayout.
+- `FocusBridgeCoordinator` is now a runtime adapter. It serializes raw fronting work, keeps the current `KeyboardFocusTarget`, and mirrors the kernel-owned managed-request snapshot back into Swift.
 
 **The Deferred Focus Pattern:**
 
 ```
 1. User presses focus-left
 2. CommandHandler identifies target window
-3. FocusBridgeCoordinator.beginManagedRequest(token, workspaceId)
-   → Creates ManagedFocusRequest with status = .pending
-4. Private APIs activate the target app + window
-   (_SLPSSetFrontProcessWithOptions, makeKeyWindow)
-5. macOS confirms focus via AX callback
-6. FocusBridgeCoordinator.confirmManagedRequest(token, source)
-   → Marks request as .confirmed
-   → If no confirmation within retries, re-attempts activation
+3. Swift flattens the current focus/refresh snapshot plus one normalized focus event
+4. `omniwm_orchestration_step` returns the next managed-focus state and ordered actions
+5. Swift mirrors the returned managed-request snapshot into `FocusBridgeCoordinator` / `WorkspaceManager`
+6. Swift executes the ordered actions (front window, schedule retry, confirm activation, etc.)
+7. macOS later reports the observed activation back through the same reducer boundary
 ```
 
 **Key types:**
@@ -647,10 +647,10 @@ Focus management is complex because OmniWM must coordinate its intent with what 
 | Type | Purpose |
 |------|---------|
 | `KeyboardFocusTarget` | Resolved focus: `token`, `axRef`, `workspaceId`, `isManaged` |
-| `ManagedFocusRequest` | In-flight request with `requestId`, `retryCount`, `status` (`.pending`/`.confirmed`) |
+| `ManagedFocusRequest` | In-flight request with `requestId`, `retryCount`, and the last activation source used for retry budgeting |
 | `ActivationEventSource` | How focus was confirmed: `.focusedWindowChanged` (authoritative), `.workspaceDidActivateApplication`, `.cgsFrontAppChanged` |
 
-**Focus serialization:** `focusWindow(_:performFocus:onDeferredFocus:)` serializes focus operations. If a focus request arrives while one is in-flight, it queues as `pendingFocusToken` and fires after the current request completes or times out.
+**Focus serialization:** `focusWindow(_:performFocus:onDeferredFocus:)` still serializes raw fronting operations. It is not the managed-focus state machine; it only ensures private API fronting work happens in order while the kernel remains the source of truth for request state.
 
 ### 4.6 Input Handling
 
@@ -875,10 +875,12 @@ layoutHandler(as: LayoutFocusable.self)?.focusNeighbor(direction: .left)
     │ e.g., NiriLayoutHandler.focusNeighbor()
     │ determines target window in the Niri tree
     v
-FocusBridgeCoordinator.focusWindow(targetToken)
-    │ activates app + window via private APIs
+WMController.focusWindow(targetToken)
+    │ flattens snapshot + focus request into `omniwm_orchestration_step`
+    │ mirrors returned managed-request state into Swift
+    │ executes fronting action via FocusBridgeCoordinator.focusWindow(...)
     v
-LayoutRefreshController.scheduleRefresh(.immediateRelayout, reason: .layoutCommand)
+LayoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
     │
     v
 NiriLayoutEngine.calculateLayout(...)
@@ -921,7 +923,7 @@ WindowModel.track(handle, axRef, workspaceId, mode)
 NiriLayoutEngine.insertWindow(token, into: workspaceRoot)
     │ creates NiriWindow node, appends to active column or new column
     v
-LayoutRefreshController.scheduleRefresh(.relayout, reason: .axWindowCreated)
+LayoutRefreshController.requestRelayout(reason: .axWindowCreated)
     │ debounced: 4ms
     v
 Layout calculation → AXManager.applyFramesParallel()

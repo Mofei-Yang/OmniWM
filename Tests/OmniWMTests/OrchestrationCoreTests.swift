@@ -37,7 +37,6 @@ private func makeOrchestrationSnapshot(
         focus: .init(
             nextManagedRequestId: nextManagedRequestId,
             activeManagedRequest: activeManagedRequest,
-            focusedTarget: nil,
             pendingFocusedToken: pendingFocusedToken,
             pendingFocusedWorkspaceId: pendingFocusedWorkspaceId,
             isNonManagedFocusActive: false,
@@ -166,6 +165,7 @@ private func makeOrchestrationSnapshot(
     #expect(
         result.plan.actions == [
             .clearManagedFocusState(
+                requestId: 4,
                 token: oldToken,
                 workspaceId: firstWorkspace
             ),
@@ -203,15 +203,12 @@ private func makeOrchestrationSnapshot(
             .init(
                 source: .workspaceDidActivateApplication,
                 origin: .external,
-                disposition: .conflictsWithPendingRequest(activeRequest),
                 match: .unmanaged(
                     pid: observedToken.pid,
                     token: observedToken,
                     appFullscreen: false,
                     fallbackFullscreen: false
-                ),
-                shouldHonorObservedFocusOverPendingRequest: false,
-                shouldHandleManagedActivationWithoutPendingRequest: false
+                )
             )
         )
     )
@@ -229,6 +226,126 @@ private func makeOrchestrationSnapshot(
                 reason: .pendingFocusUnmanagedToken,
                 source: .workspaceDidActivateApplication,
                 origin: .external
+            )
+        ]
+    )
+}
+
+@Test func ownedApplicationActivationPreservesUnrelatedPendingRequest() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let requestedToken = WindowToken(pid: 88, windowId: 3)
+    let ownedPID = pid_t(99)
+    let activeRequest = ManagedFocusRequest(
+        requestId: 7,
+        token: requestedToken,
+        workspaceId: workspaceId
+    )
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            nextManagedRequestId: 8,
+            activeManagedRequest: activeRequest,
+            pendingFocusedToken: requestedToken,
+            pendingFocusedWorkspaceId: workspaceId
+        ),
+        event: .activationObserved(
+            .init(
+                source: .cgsFrontAppChanged,
+                origin: .external,
+                match: .ownedApplication(pid: ownedPID)
+            )
+        )
+    )
+
+    #expect(result.decision == .managedActivationFallback(pid: ownedPID))
+    #expect(result.snapshot.focus.activeManagedRequest == activeRequest)
+    #expect(result.snapshot.focus.pendingFocusedToken == requestedToken)
+    #expect(result.snapshot.focus.isNonManagedFocusActive == true)
+    #expect(
+        result.plan.actions == [
+            .enterOwnedApplicationFallback(
+                pid: ownedPID,
+                source: .cgsFrontAppChanged
+            )
+        ]
+    )
+}
+
+@Test func ownedApplicationActivationClearsSamePIDPendingRequest() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let ownedPID = pid_t(88)
+    let requestedToken = WindowToken(pid: ownedPID, windowId: 3)
+    let activeRequest = ManagedFocusRequest(
+        requestId: 7,
+        token: requestedToken,
+        workspaceId: workspaceId
+    )
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            nextManagedRequestId: 8,
+            activeManagedRequest: activeRequest,
+            pendingFocusedToken: requestedToken,
+            pendingFocusedWorkspaceId: workspaceId
+        ),
+        event: .activationObserved(
+            .init(
+                source: .workspaceDidActivateApplication,
+                origin: .external,
+                match: .ownedApplication(pid: ownedPID)
+            )
+        )
+    )
+
+    #expect(result.decision == .managedActivationFallback(pid: ownedPID))
+    #expect(result.snapshot.focus.activeManagedRequest == nil)
+    #expect(result.snapshot.focus.pendingFocusedToken == nil)
+    #expect(result.snapshot.focus.isNonManagedFocusActive == true)
+    #expect(
+        result.plan.actions == [
+            .clearManagedFocusState(
+                requestId: 7,
+                token: requestedToken,
+                workspaceId: workspaceId
+            ),
+            .enterOwnedApplicationFallback(
+                pid: ownedPID,
+                source: .workspaceDidActivateApplication
+            )
+        ]
+    )
+}
+
+@Test func ownedApplicationActivationCancelsStrayRetryWithoutActiveRequest() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let pendingToken = WindowToken(pid: 88, windowId: 3)
+    let ownedPID = pid_t(99)
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            nextManagedRequestId: 8,
+            pendingFocusedToken: pendingToken,
+            pendingFocusedWorkspaceId: workspaceId
+        ),
+        event: .activationObserved(
+            .init(
+                source: .focusedWindowChanged,
+                origin: .external,
+                match: .ownedApplication(pid: ownedPID)
+            )
+        )
+    )
+
+    #expect(result.decision == .managedActivationFallback(pid: ownedPID))
+    #expect(result.snapshot.focus.activeManagedRequest == nil)
+    #expect(result.snapshot.focus.pendingFocusedToken == nil)
+    #expect(result.snapshot.focus.isNonManagedFocusActive == true)
+    #expect(
+        result.plan.actions == [
+            .cancelActivationRetry(requestId: nil),
+            .enterOwnedApplicationFallback(
+                pid: ownedPID,
+                source: .focusedWindowChanged
             )
         ]
     )
@@ -254,7 +371,6 @@ private func makeOrchestrationSnapshot(
             .init(
                 source: .focusedWindowChanged,
                 origin: .external,
-                disposition: .matchesActiveRequest(activeRequest),
                 match: .managed(
                     token: token,
                     workspaceId: workspaceId,
@@ -262,14 +378,15 @@ private func makeOrchestrationSnapshot(
                     isWorkspaceActive: true,
                     appFullscreen: false,
                     requiresNativeFullscreenRestoreRelayout: true
-                ),
-                shouldHonorObservedFocusOverPendingRequest: false,
-                shouldHandleManagedActivationWithoutPendingRequest: false
+                )
             )
         )
     )
 
     #expect(result.decision == .managedActivationConfirmed(token: token))
+    #expect(result.snapshot.focus.activeManagedRequest == nil)
+    #expect(result.snapshot.focus.pendingFocusedToken == token)
+    #expect(result.snapshot.focus.pendingFocusedWorkspaceId == workspaceId)
     #expect(
         result.plan.actions == [
             .beginNativeFullscreenRestoreActivation(
@@ -281,4 +398,329 @@ private func makeOrchestrationSnapshot(
             )
         ]
     )
+}
+
+@Test func repeatedPendingRelayoutMergesPreserveAffectedWorkspaceSet() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    var snapshot = makeOrchestrationSnapshot(
+        activeRefresh: makeOrchestrationRefresh(
+            cycleId: 1,
+            kind: .immediateRelayout,
+            reason: .workspaceTransition
+        )
+    )
+
+    for cycleId in 2...8 {
+        let result = OrchestrationCore.step(
+            snapshot: snapshot,
+            event: .refreshRequested(
+                .init(
+                    refresh: makeOrchestrationRefresh(
+                        cycleId: UInt64(cycleId),
+                        kind: .relayout,
+                        reason: .workspaceConfigChanged,
+                        affectedWorkspaceIds: [workspaceId]
+                    ),
+                    shouldDropWhileBusy: false,
+                    isIncrementalRefreshInProgress: false,
+                    isImmediateLayoutInProgress: false,
+                    hasActiveAnimationRefreshes: false
+                )
+            )
+        )
+        snapshot = result.snapshot
+    }
+
+    #expect(snapshot.refresh.pendingRefresh?.affectedWorkspaceIds == [workspaceId])
+}
+
+@Test func upgradedPendingRefreshRetainsPreviousAffectedWorkspaceSet() {
+    let firstWorkspaceId = WorkspaceDescriptor.ID()
+    let secondWorkspaceId = WorkspaceDescriptor.ID()
+    let activeRefresh = makeOrchestrationRefresh(
+        cycleId: 1,
+        kind: .fullRescan,
+        reason: .startup
+    )
+    let pendingRefresh = makeOrchestrationRefresh(
+        cycleId: 2,
+        kind: .relayout,
+        reason: .workspaceConfigChanged,
+        affectedWorkspaceIds: [firstWorkspaceId]
+    )
+    let incomingRefresh = makeOrchestrationRefresh(
+        cycleId: 3,
+        kind: .immediateRelayout,
+        reason: .workspaceTransition,
+        affectedWorkspaceIds: [secondWorkspaceId]
+    )
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            activeRefresh: activeRefresh,
+            pendingRefresh: pendingRefresh
+        ),
+        event: .refreshRequested(
+            .init(
+                refresh: incomingRefresh,
+                shouldDropWhileBusy: false,
+                isIncrementalRefreshInProgress: false,
+                isImmediateLayoutInProgress: false,
+                hasActiveAnimationRefreshes: false
+            )
+        )
+    )
+
+    #expect(result.decision == .refreshMerged(cycleId: 2, kind: .immediateRelayout))
+    #expect(
+        result.snapshot.refresh.pendingRefresh?.affectedWorkspaceIds == [
+            firstWorkspaceId,
+            secondWorkspaceId
+        ]
+    )
+}
+
+@Test func windowRemovalRelayoutMergeAllowsWorkspaceInRefreshAndFollowUp() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let activeRefresh = makeOrchestrationRefresh(
+        cycleId: 1,
+        kind: .fullRescan,
+        reason: .startup
+    )
+    let pendingRefresh = makeOrchestrationRefresh(
+        cycleId: 2,
+        kind: .windowRemoval,
+        reason: .windowDestroyed
+    )
+    let relayout = makeOrchestrationRefresh(
+        cycleId: 3,
+        kind: .relayout,
+        reason: .workspaceTransition,
+        affectedWorkspaceIds: [workspaceId]
+    )
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            activeRefresh: activeRefresh,
+            pendingRefresh: pendingRefresh
+        ),
+        event: .refreshRequested(
+            .init(
+                refresh: relayout,
+                shouldDropWhileBusy: false,
+                isIncrementalRefreshInProgress: false,
+                isImmediateLayoutInProgress: false,
+                hasActiveAnimationRefreshes: false
+            )
+        )
+    )
+
+    guard let merged = result.snapshot.refresh.pendingRefresh else {
+        Issue.record("expected relayout to merge into the pending window removal")
+        return
+    }
+
+    #expect(result.decision == .refreshMerged(cycleId: 2, kind: .windowRemoval))
+    #expect(merged.kind == .windowRemoval)
+    #expect(merged.affectedWorkspaceIds == [workspaceId])
+    #expect(merged.followUpRefresh?.kind == .relayout)
+    #expect(merged.followUpRefresh?.affectedWorkspaceIds == [workspaceId])
+}
+
+@Test func repeatedWindowRemovalBurstsPreserveAllPayloads() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    var snapshot = makeOrchestrationSnapshot(
+        activeRefresh: makeOrchestrationRefresh(
+            cycleId: 1,
+            kind: .relayout,
+            reason: .workspaceTransition
+        )
+    )
+
+    for cycleId in 2...40 {
+        let payload = WindowRemovalPayload(
+            workspaceId: workspaceId,
+            layoutType: .niri,
+            removedNodeId: nil,
+            niriOldFrames: [:],
+            shouldRecoverFocus: true
+        )
+        let result = OrchestrationCore.step(
+            snapshot: snapshot,
+            event: .refreshRequested(
+                .init(
+                    refresh: makeOrchestrationRefresh(
+                        cycleId: UInt64(cycleId),
+                        kind: .windowRemoval,
+                        reason: .windowDestroyed,
+                        affectedWorkspaceIds: [workspaceId],
+                        windowRemovalPayload: payload
+                    ),
+                    shouldDropWhileBusy: false,
+                    isIncrementalRefreshInProgress: false,
+                    isImmediateLayoutInProgress: false,
+                    hasActiveAnimationRefreshes: false
+                )
+            )
+        )
+        snapshot = result.snapshot
+    }
+
+    #expect(snapshot.refresh.pendingRefresh?.windowRemovalPayloads.count == 39)
+}
+
+@Test func managedActivationDeferralIncrementsRetryBudgetInsideKernel() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let requestedToken = WindowToken(pid: 55, windowId: 10)
+    let observedToken = WindowToken(pid: 55, windowId: 11)
+    let activeRequest = ManagedFocusRequest(
+        requestId: 3,
+        token: requestedToken,
+        workspaceId: workspaceId
+    )
+
+    let firstResult = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            nextManagedRequestId: 4,
+            activeManagedRequest: activeRequest,
+            pendingFocusedToken: requestedToken,
+            pendingFocusedWorkspaceId: workspaceId
+        ),
+        event: .activationObserved(
+            .init(
+                source: .workspaceDidActivateApplication,
+                origin: .external,
+                match: .unmanaged(
+                    pid: observedToken.pid,
+                    token: observedToken,
+                    appFullscreen: false,
+                    fallbackFullscreen: false
+                )
+            )
+        )
+    )
+
+    #expect(firstResult.snapshot.focus.activeManagedRequest?.retryCount == 1)
+    #expect(
+        firstResult.snapshot.focus.activeManagedRequest?.lastActivationSource
+            == .workspaceDidActivateApplication
+    )
+
+    let secondResult = OrchestrationCore.step(
+        snapshot: firstResult.snapshot,
+        event: .activationObserved(
+            .init(
+                source: .focusedWindowChanged,
+                origin: .retry,
+                match: .unmanaged(
+                    pid: observedToken.pid,
+                    token: observedToken,
+                    appFullscreen: false,
+                    fallbackFullscreen: false
+                )
+            )
+        )
+    )
+
+    #expect(secondResult.snapshot.focus.activeManagedRequest?.retryCount == 1)
+    #expect(
+        secondResult.snapshot.focus.activeManagedRequest?.lastActivationSource
+            == .focusedWindowChanged
+    )
+}
+
+@Test func managedActivationRetryExhaustionCancelsRequestInsideKernel() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let requestedToken = WindowToken(pid: 66, windowId: 12)
+    let observedToken = WindowToken(pid: 66, windowId: 13)
+    let activeRequest = ManagedFocusRequest(
+        requestId: 9,
+        token: requestedToken,
+        workspaceId: workspaceId,
+        retryCount: 5,
+        lastActivationSource: .workspaceDidActivateApplication
+    )
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            nextManagedRequestId: 10,
+            activeManagedRequest: activeRequest,
+            pendingFocusedToken: requestedToken,
+            pendingFocusedWorkspaceId: workspaceId
+        ),
+        event: .activationObserved(
+            .init(
+                source: .workspaceDidActivateApplication,
+                origin: .external,
+                match: .unmanaged(
+                    pid: observedToken.pid,
+                    token: observedToken,
+                    appFullscreen: false,
+                    fallbackFullscreen: false
+                )
+            )
+        )
+    )
+
+    #expect(
+        result.decision == .focusRequestCancelled(
+            requestId: 9,
+            token: requestedToken
+        )
+    )
+    #expect(result.snapshot.focus.activeManagedRequest == nil)
+    #expect(result.snapshot.focus.pendingFocusedToken == nil)
+    #expect(
+        result.plan.actions == [
+            .clearManagedFocusState(
+                requestId: 9,
+                token: requestedToken,
+                workspaceId: workspaceId
+            )
+        ]
+    )
+}
+
+@Test func probeOriginRetryExhaustionLeavesPendingFocusRequestIntact() {
+    let workspaceId = WorkspaceDescriptor.ID()
+    let requestedToken = WindowToken(pid: 67, windowId: 12)
+    let observedToken = WindowToken(pid: 67, windowId: 13)
+    let activeRequest = ManagedFocusRequest(
+        requestId: 10,
+        token: requestedToken,
+        workspaceId: workspaceId,
+        retryCount: 5,
+        lastActivationSource: .focusedWindowChanged
+    )
+
+    let result = OrchestrationCore.step(
+        snapshot: makeOrchestrationSnapshot(
+            nextManagedRequestId: 11,
+            activeManagedRequest: activeRequest,
+            pendingFocusedToken: requestedToken,
+            pendingFocusedWorkspaceId: workspaceId
+        ),
+        event: .activationObserved(
+            .init(
+                source: .focusedWindowChanged,
+                origin: .probe,
+                match: .unmanaged(
+                    pid: observedToken.pid,
+                    token: observedToken,
+                    appFullscreen: false,
+                    fallbackFullscreen: false
+                )
+            )
+        )
+    )
+
+    #expect(
+        result.decision == .managedActivationDeferred(
+            requestId: 10,
+            reason: .pendingFocusUnmanagedToken
+        )
+    )
+    #expect(result.snapshot.focus.activeManagedRequest == activeRequest)
+    #expect(result.snapshot.focus.pendingFocusedToken == requestedToken)
+    #expect(result.plan.actions.isEmpty)
 }

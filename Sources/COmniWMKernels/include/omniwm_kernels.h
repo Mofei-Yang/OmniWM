@@ -12,6 +12,7 @@ enum {
     OMNIWM_KERNELS_STATUS_OK = 0,
     OMNIWM_KERNELS_STATUS_INVALID_ARGUMENT = 1,
     OMNIWM_KERNELS_STATUS_ALLOCATION_FAILED = 2,
+    OMNIWM_KERNELS_STATUS_BUFFER_TOO_SMALL = 3,
 };
 
 enum {
@@ -789,6 +790,364 @@ int32_t omniwm_reconcile_restore_intent(
     const omniwm_reconcile_monitor *monitors,
     size_t monitor_count,
     omniwm_reconcile_restore_intent_output *output
+);
+
+enum {
+    OMNIWM_ORCHESTRATION_LAYOUT_KIND_DEFAULT = 0,
+    OMNIWM_ORCHESTRATION_LAYOUT_KIND_NIRI = 1,
+    OMNIWM_ORCHESTRATION_LAYOUT_KIND_DWINDLE = 2,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_REFRESH_KIND_RELAYOUT = 0,
+    OMNIWM_ORCHESTRATION_REFRESH_KIND_IMMEDIATE_RELAYOUT = 1,
+    OMNIWM_ORCHESTRATION_REFRESH_KIND_VISIBILITY_REFRESH = 2,
+    OMNIWM_ORCHESTRATION_REFRESH_KIND_WINDOW_REMOVAL = 3,
+    OMNIWM_ORCHESTRATION_REFRESH_KIND_FULL_RESCAN = 4,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_STARTUP = 0,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_APP_LAUNCHED = 1,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_UNLOCK = 2,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_ACTIVE_SPACE_CHANGED = 3,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_MONITOR_CONFIGURATION_CHANGED = 4,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_APP_RULES_CHANGED = 5,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_WORKSPACE_CONFIG_CHANGED = 6,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_LAYOUT_CONFIG_CHANGED = 7,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_MONITOR_SETTINGS_CHANGED = 8,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_GAPS_CHANGED = 9,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_WORKSPACE_TRANSITION = 10,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_APP_ACTIVATION_TRANSITION = 11,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_WORKSPACE_LAYOUT_TOGGLED = 12,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_APP_TERMINATED = 13,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_WINDOW_RULE_REEVALUATION = 14,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_LAYOUT_COMMAND = 15,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_INTERACTIVE_GESTURE = 16,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_AX_WINDOW_CREATED = 17,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_AX_WINDOW_CHANGED = 18,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_WINDOW_DESTROYED = 19,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_APP_HIDDEN = 20,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_APP_UNHIDDEN = 21,
+    OMNIWM_ORCHESTRATION_REFRESH_REASON_OVERVIEW_MUTATION = 22,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_EVENT_REFRESH_REQUESTED = 0,
+    OMNIWM_ORCHESTRATION_EVENT_REFRESH_COMPLETED = 1,
+    OMNIWM_ORCHESTRATION_EVENT_FOCUS_REQUESTED = 2,
+    OMNIWM_ORCHESTRATION_EVENT_ACTIVATION_OBSERVED = 3,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_ACTIVATION_SOURCE_FOCUSED_WINDOW_CHANGED = 0,
+    OMNIWM_ORCHESTRATION_ACTIVATION_SOURCE_WORKSPACE_DID_ACTIVATE_APPLICATION = 1,
+    OMNIWM_ORCHESTRATION_ACTIVATION_SOURCE_CGS_FRONT_APP_CHANGED = 2,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_ACTIVATION_ORIGIN_EXTERNAL = 0,
+    OMNIWM_ORCHESTRATION_ACTIVATION_ORIGIN_PROBE = 1,
+    OMNIWM_ORCHESTRATION_ACTIVATION_ORIGIN_RETRY = 2,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_RETRY_REASON_MISSING_FOCUSED_WINDOW = 0,
+    OMNIWM_ORCHESTRATION_RETRY_REASON_PENDING_FOCUS_MISMATCH = 1,
+    OMNIWM_ORCHESTRATION_RETRY_REASON_PENDING_FOCUS_UNMANAGED_TOKEN = 2,
+    OMNIWM_ORCHESTRATION_RETRY_REASON_RETRY_EXHAUSTED = 3,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_ACTIVATION_MATCH_MISSING_FOCUSED_WINDOW = 0,
+    OMNIWM_ORCHESTRATION_ACTIVATION_MATCH_MANAGED = 1,
+    OMNIWM_ORCHESTRATION_ACTIVATION_MATCH_UNMANAGED = 2,
+    OMNIWM_ORCHESTRATION_ACTIVATION_MATCH_OWNED_APPLICATION = 3,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_DECISION_REFRESH_DROPPED = 0,
+    OMNIWM_ORCHESTRATION_DECISION_REFRESH_QUEUED = 1,
+    OMNIWM_ORCHESTRATION_DECISION_REFRESH_MERGED = 2,
+    OMNIWM_ORCHESTRATION_DECISION_REFRESH_SUPERSEDED = 3,
+    OMNIWM_ORCHESTRATION_DECISION_REFRESH_COMPLETED = 4,
+    OMNIWM_ORCHESTRATION_DECISION_FOCUS_REQUEST_ACCEPTED = 5,
+    OMNIWM_ORCHESTRATION_DECISION_FOCUS_REQUEST_SUPERSEDED = 6,
+    OMNIWM_ORCHESTRATION_DECISION_FOCUS_REQUEST_CONTINUED = 7,
+    OMNIWM_ORCHESTRATION_DECISION_FOCUS_REQUEST_CANCELLED = 8,
+    OMNIWM_ORCHESTRATION_DECISION_FOCUS_REQUEST_IGNORED = 9,
+    OMNIWM_ORCHESTRATION_DECISION_MANAGED_ACTIVATION_CONFIRMED = 10,
+    OMNIWM_ORCHESTRATION_DECISION_MANAGED_ACTIVATION_DEFERRED = 11,
+    OMNIWM_ORCHESTRATION_DECISION_MANAGED_ACTIVATION_FALLBACK = 12,
+};
+
+enum {
+    OMNIWM_ORCHESTRATION_ACTION_CANCEL_ACTIVE_REFRESH = 0,
+    OMNIWM_ORCHESTRATION_ACTION_START_REFRESH = 1,
+    OMNIWM_ORCHESTRATION_ACTION_RUN_POST_LAYOUT_ATTACHMENTS = 2,
+    OMNIWM_ORCHESTRATION_ACTION_DISCARD_POST_LAYOUT_ATTACHMENTS = 3,
+    OMNIWM_ORCHESTRATION_ACTION_PERFORM_VISIBILITY_SIDE_EFFECTS = 4,
+    OMNIWM_ORCHESTRATION_ACTION_REQUEST_WORKSPACE_BAR_REFRESH = 5,
+    OMNIWM_ORCHESTRATION_ACTION_BEGIN_MANAGED_FOCUS_REQUEST = 6,
+    OMNIWM_ORCHESTRATION_ACTION_FRONT_MANAGED_WINDOW = 7,
+    OMNIWM_ORCHESTRATION_ACTION_CLEAR_MANAGED_FOCUS_STATE = 8,
+    OMNIWM_ORCHESTRATION_ACTION_CONTINUE_MANAGED_FOCUS_REQUEST = 9,
+    OMNIWM_ORCHESTRATION_ACTION_CONFIRM_MANAGED_ACTIVATION = 10,
+    OMNIWM_ORCHESTRATION_ACTION_BEGIN_NATIVE_FULLSCREEN_RESTORE_ACTIVATION = 11,
+    OMNIWM_ORCHESTRATION_ACTION_ENTER_NON_MANAGED_FALLBACK = 12,
+    OMNIWM_ORCHESTRATION_ACTION_CANCEL_ACTIVATION_RETRY = 13,
+    OMNIWM_ORCHESTRATION_ACTION_ENTER_OWNED_APPLICATION_FALLBACK = 14,
+};
+
+typedef struct {
+    omniwm_window_token token;
+    omniwm_rect frame;
+} omniwm_orchestration_old_frame_record;
+
+typedef struct {
+    omniwm_uuid workspace_id;
+    omniwm_uuid removed_node_id;
+    uint32_t layout_kind;
+    uint8_t has_removed_node_id;
+    uint8_t should_recover_focus;
+    uint8_t reserved0;
+    uint8_t reserved1;
+    size_t old_frame_offset;
+    size_t old_frame_count;
+} omniwm_orchestration_window_removal_payload;
+
+typedef struct {
+    uint32_t kind;
+    uint32_t reason;
+    size_t affected_workspace_offset;
+    size_t affected_workspace_count;
+} omniwm_orchestration_follow_up_refresh;
+
+typedef struct {
+    uint64_t cycle_id;
+    uint32_t kind;
+    uint32_t reason;
+    size_t affected_workspace_offset;
+    size_t affected_workspace_count;
+    size_t post_layout_attachment_offset;
+    size_t post_layout_attachment_count;
+    size_t window_removal_payload_offset;
+    size_t window_removal_payload_count;
+    omniwm_orchestration_follow_up_refresh follow_up_refresh;
+    uint32_t visibility_reason;
+    uint8_t has_follow_up_refresh;
+    uint8_t needs_visibility_reconciliation;
+    uint8_t has_visibility_reason;
+    uint8_t reserved0;
+} omniwm_orchestration_refresh;
+
+typedef struct {
+    uint64_t request_id;
+    omniwm_window_token token;
+    omniwm_uuid workspace_id;
+    uint32_t retry_count;
+    uint32_t last_activation_source;
+    uint8_t has_last_activation_source;
+    uint8_t reserved0;
+    uint8_t reserved1;
+    uint8_t reserved2;
+} omniwm_orchestration_managed_request;
+
+typedef struct {
+    omniwm_orchestration_refresh active_refresh;
+    omniwm_orchestration_refresh pending_refresh;
+    uint8_t has_active_refresh;
+    uint8_t has_pending_refresh;
+    uint8_t reserved0;
+    uint8_t reserved1;
+} omniwm_orchestration_refresh_snapshot;
+
+typedef struct {
+    uint64_t next_managed_request_id;
+    omniwm_orchestration_managed_request active_managed_request;
+    omniwm_window_token pending_focused_token;
+    omniwm_uuid pending_focused_workspace_id;
+    uint8_t has_active_managed_request;
+    uint8_t has_pending_focused_token;
+    uint8_t has_pending_focused_workspace_id;
+    uint8_t is_non_managed_focus_active;
+    uint8_t is_app_fullscreen_active;
+    uint8_t reserved0;
+    uint8_t reserved1;
+    uint8_t reserved2;
+} omniwm_orchestration_focus_snapshot;
+
+typedef struct {
+    omniwm_orchestration_refresh_snapshot refresh;
+    omniwm_orchestration_focus_snapshot focus;
+} omniwm_orchestration_snapshot;
+
+typedef struct {
+    omniwm_orchestration_refresh refresh;
+    uint8_t should_drop_while_busy;
+    uint8_t is_incremental_refresh_in_progress;
+    uint8_t is_immediate_layout_in_progress;
+    uint8_t has_active_animation_refreshes;
+} omniwm_orchestration_refresh_request_event;
+
+typedef struct {
+    omniwm_orchestration_refresh refresh;
+    uint8_t did_complete;
+    uint8_t did_execute_plan;
+    uint8_t reserved0;
+    uint8_t reserved1;
+} omniwm_orchestration_refresh_completion_event;
+
+typedef struct {
+    omniwm_window_token token;
+    omniwm_uuid workspace_id;
+} omniwm_orchestration_focus_request_event;
+
+typedef struct {
+    uint32_t source;
+    uint32_t origin;
+    uint32_t match_kind;
+    int32_t pid;
+    omniwm_window_token token;
+    omniwm_uuid workspace_id;
+    uint32_t monitor_id;
+    uint8_t has_token;
+    uint8_t has_workspace_id;
+    uint8_t has_monitor_id;
+    uint8_t is_workspace_active;
+    uint8_t app_fullscreen;
+    uint8_t fallback_fullscreen;
+    uint8_t requires_native_fullscreen_restore_relayout;
+    uint8_t reserved0;
+    uint8_t reserved1;
+} omniwm_orchestration_activation_observation;
+
+typedef struct {
+    uint32_t kind;
+    omniwm_orchestration_refresh_request_event refresh_request;
+    omniwm_orchestration_refresh_completion_event refresh_completion;
+    omniwm_orchestration_focus_request_event focus_request;
+    omniwm_orchestration_activation_observation activation_observation;
+} omniwm_orchestration_event;
+
+typedef struct {
+    uint32_t kind;
+    uint32_t refresh_kind;
+    uint32_t refresh_reason;
+    uint32_t retry_reason;
+    uint64_t cycle_id;
+    uint64_t secondary_cycle_id;
+    uint64_t request_id;
+    uint64_t secondary_request_id;
+    int32_t pid;
+    omniwm_window_token token;
+    uint8_t has_token;
+    uint8_t did_complete;
+    uint8_t reserved0;
+    uint8_t reserved1;
+} omniwm_orchestration_decision;
+
+typedef struct {
+    uint32_t kind;
+    uint32_t retry_reason;
+    uint32_t activation_source;
+    uint32_t activation_origin;
+    uint64_t cycle_id;
+    uint64_t request_id;
+    int32_t pid;
+    omniwm_window_token token;
+    omniwm_uuid workspace_id;
+    uint32_t monitor_id;
+    size_t attachment_offset;
+    size_t attachment_count;
+    uint8_t has_token;
+    uint8_t has_workspace_id;
+    uint8_t has_monitor_id;
+    uint8_t is_workspace_active;
+    uint8_t app_fullscreen;
+    uint8_t reserved0;
+    uint8_t reserved1;
+    uint8_t reserved2;
+} omniwm_orchestration_action;
+
+typedef struct {
+    omniwm_orchestration_snapshot snapshot;
+    omniwm_orchestration_event event;
+    /* Input side buffers are immutable and caller-owned. Offset/count pairs in
+       snapshot and event records address these arrays. A null pointer is valid
+       only when the matching count is zero. */
+    const omniwm_uuid *workspace_ids;
+    size_t workspace_id_count;
+    const uint64_t *attachment_ids;
+    size_t attachment_id_count;
+    const omniwm_orchestration_window_removal_payload *window_removal_payloads;
+    size_t window_removal_payload_count;
+    const omniwm_orchestration_old_frame_record *old_frame_records;
+    size_t old_frame_record_count;
+} omniwm_orchestration_step_input;
+
+typedef struct {
+    omniwm_orchestration_snapshot snapshot;
+    omniwm_orchestration_decision decision;
+    /* Output side buffers are caller-owned. The kernel writes up to each
+       capacity, sets the matching count fields, and returns
+       OMNIWM_KERNELS_STATUS_BUFFER_TOO_SMALL without allocating when any output
+       buffer is insufficient. A null pointer is valid only for zero capacity. */
+    omniwm_orchestration_action *actions;
+    size_t action_capacity;
+    size_t action_count;
+    omniwm_uuid *snapshot_workspace_ids;
+    size_t snapshot_workspace_id_capacity;
+    size_t snapshot_workspace_id_count;
+    uint64_t *snapshot_attachment_ids;
+    size_t snapshot_attachment_id_capacity;
+    size_t snapshot_attachment_id_count;
+    omniwm_orchestration_window_removal_payload *snapshot_window_removal_payloads;
+    size_t snapshot_window_removal_payload_capacity;
+    size_t snapshot_window_removal_payload_count;
+    omniwm_orchestration_old_frame_record *snapshot_old_frame_records;
+    size_t snapshot_old_frame_record_capacity;
+    size_t snapshot_old_frame_record_count;
+    uint64_t *action_attachment_ids;
+    size_t action_attachment_id_capacity;
+    size_t action_attachment_id_count;
+} omniwm_orchestration_step_output;
+
+typedef struct {
+    size_t step_input_size;
+    size_t step_input_alignment;
+    size_t step_input_snapshot_offset;
+    size_t step_input_event_offset;
+    size_t step_input_workspace_ids_offset;
+    size_t step_input_window_removal_payloads_offset;
+    size_t step_output_size;
+    size_t step_output_alignment;
+    size_t step_output_snapshot_offset;
+    size_t step_output_decision_offset;
+    size_t step_output_actions_offset;
+    size_t step_output_action_count_offset;
+    size_t snapshot_size;
+    size_t snapshot_alignment;
+    size_t event_size;
+    size_t event_alignment;
+    size_t refresh_size;
+    size_t refresh_alignment;
+    size_t managed_request_size;
+    size_t managed_request_alignment;
+    size_t action_size;
+    size_t action_alignment;
+} omniwm_orchestration_abi_layout_info;
+
+/* Runs one deterministic orchestration reducer/planner step. Swift owns object
+   lifetimes, platform effects, and all buffers; Zig only reads the flattened
+   input and writes the next snapshot, decision tag, and ordered actions. */
+int32_t omniwm_orchestration_step(
+    const omniwm_orchestration_step_input *input,
+    omniwm_orchestration_step_output *output
+);
+
+int32_t omniwm_orchestration_get_abi_layout(
+    omniwm_orchestration_abi_layout_info *out_layout
 );
 
 #ifdef __cplusplus
