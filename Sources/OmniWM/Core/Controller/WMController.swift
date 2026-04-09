@@ -2038,6 +2038,23 @@ extension WMController {
         workspaceManager.isNonManagedFocusActive && hasFrontmostOwnedWindow
     }
 
+    func orchestrationSnapshot(
+        refresh: RefreshOrchestrationSnapshot
+    ) -> OrchestrationSnapshot {
+        OrchestrationSnapshot(
+            refresh: refresh,
+            focus: .init(
+                nextManagedRequestId: focusBridge.nextManagedRequestId,
+                activeManagedRequest: focusBridge.activeManagedRequest,
+                focusedTarget: focusBridge.focusedTarget,
+                pendingFocusedToken: workspaceManager.pendingFocusedToken,
+                pendingFocusedWorkspaceId: workspaceManager.pendingFocusedWorkspaceId,
+                isNonManagedFocusActive: workspaceManager.isNonManagedFocusActive,
+                isAppFullscreenActive: workspaceManager.isAppFullscreenActive
+            )
+        )
+    }
+
     func performWindowFronting(
         pid: pid_t,
         windowId: Int,
@@ -2098,42 +2115,81 @@ extension WMController {
             guard !isFrontmostAppLockScreen() else { return }
         }
         guard !isManagedWindowSuspendedForNativeFullscreen(token) else { return }
-
-        _ = workspaceManager.beginManagedFocusRequest(
-            token,
-            in: entry.workspaceId,
-            onMonitor: workspaceManager.monitorId(for: entry.workspaceId)
-        )
-        let request = focusBridge.beginManagedRequest(
-            token: token,
-            workspaceId: entry.workspaceId
-        )
-        recordNiriCreateFocusTrace(
-            .pendingFocusStarted(
-                requestId: request.requestId,
-                token: token,
-                workspaceId: entry.workspaceId
+        let result = OrchestrationCore.step(
+            snapshot: orchestrationSnapshot(
+                refresh: .init(
+                    activeRefresh: layoutRefreshController.layoutState.activeRefresh,
+                    pendingRefresh: layoutRefreshController.layoutState.pendingRefresh
+                )
+            ),
+            event: .focusRequested(
+                .init(
+                    token: token,
+                    workspaceId: entry.workspaceId
+                )
             )
         )
 
-        let axRef = entry.axRef
-        let pid = entry.pid
-        let windowId = entry.windowId
-
-        focusBridge.focusWindow(
-            token,
-            performFocus: {
-                self.performWindowFronting(pid: pid, windowId: windowId, axRef: axRef)
-                self.axEventHandler.probeFocusedWindowAfterFronting(
-                    expectedToken: token,
-                    workspaceId: entry.workspaceId
+        for action in result.plan.actions {
+            switch action {
+            case let .beginManagedFocusRequest(requestId, token, workspaceId):
+                _ = workspaceManager.beginManagedFocusRequest(
+                    token,
+                    in: workspaceId,
+                    onMonitor: workspaceManager.monitorId(for: workspaceId)
                 )
-            },
-            onDeferredFocus: { [weak self] deferred in
-                guard let self, self.workspaceManager.entry(for: deferred) != nil else { return }
-                self.focusWindow(deferred)
+                let request = focusBridge.beginManagedRequest(
+                    token: token,
+                    workspaceId: workspaceId
+                )
+                assert(
+                    request.requestId == requestId || request.token == token,
+                    "Unexpected focus request id drift for \(token)"
+                )
+                recordNiriCreateFocusTrace(
+                    .pendingFocusStarted(
+                        requestId: request.requestId,
+                        token: token,
+                        workspaceId: workspaceId
+                    )
+                )
+            case let .clearManagedFocusState(token, workspaceId):
+                axEventHandler.clearManagedFocusStateForOrchestration(
+                    matching: token,
+                    workspaceId: workspaceId
+                )
+            case let .frontManagedWindow(token, workspaceId):
+                guard let deferredEntry = workspaceManager.entry(for: token) else { continue }
+                let axRef = deferredEntry.axRef
+                let pid = deferredEntry.pid
+                let windowId = deferredEntry.windowId
+                focusBridge.focusWindow(
+                    token,
+                    performFocus: {
+                        self.performWindowFronting(pid: pid, windowId: windowId, axRef: axRef)
+                        self.axEventHandler.probeFocusedWindowAfterFronting(
+                            expectedToken: token,
+                            workspaceId: workspaceId
+                        )
+                    },
+                    onDeferredFocus: { [weak self] deferred in
+                        guard let self, self.workspaceManager.entry(for: deferred) != nil else { return }
+                        self.focusWindow(deferred)
+                    }
+                )
+            case .cancelActiveRefresh,
+                 .startRefresh,
+                 .runPostLayoutAttachments,
+                 .discardPostLayoutAttachments,
+                 .performVisibilitySideEffects,
+                 .requestWorkspaceBarRefresh,
+                 .continueManagedFocusRequest,
+                 .confirmManagedActivation,
+                 .beginNativeFullscreenRestoreActivation,
+                 .enterNonManagedFallback:
+                continue
             }
-        )
+        }
     }
 
     func focusWindow(_ handle: WindowHandle) {

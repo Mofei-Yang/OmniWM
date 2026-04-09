@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-enum ActivationEventSource: String, Sendable {
+enum ActivationEventSource: String, Sendable, Equatable {
     case focusedWindowChanged
     case workspaceDidActivateApplication
     case cgsFrontAppChanged

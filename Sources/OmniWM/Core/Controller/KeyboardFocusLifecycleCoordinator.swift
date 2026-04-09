@@ -42,6 +42,10 @@ final class FocusBridgeCoordinator {
     private var isFocusOperationPending = false
     private var lastFocusTime: Date = .distantPast
 
+    var nextManagedRequestId: UInt64 {
+        nextRequestId
+    }
+
     func beginManagedRequest(
         token: WindowToken,
         workspaceId: WorkspaceDescriptor.ID

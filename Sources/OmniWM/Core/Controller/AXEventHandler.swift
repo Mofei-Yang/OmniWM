@@ -14,7 +14,7 @@ private enum ActivationRequestDisposition {
     case unrelatedNoRequest
 }
 
-enum ActivationCallOrigin: String {
+enum ActivationCallOrigin: String, Equatable {
     case external
     case probe
     case retry
@@ -860,11 +860,35 @@ final class AXEventHandler: CGSEventDelegate {
         )
 
         guard let axRef else {
-            handleMissingFocusedWindow(
-                pid: pid,
-                source: source,
-                origin: origin,
-                requestDisposition: requestDisposition
+            applyActivationOrchestrationResult(
+                OrchestrationCore.step(
+                    snapshot: controller.orchestrationSnapshot(
+                        refresh: .init(
+                            activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,
+                            pendingRefresh: controller.layoutRefreshController.layoutState.pendingRefresh
+                        )
+                    ),
+                    event: .activationObserved(
+                        .init(
+                            source: source,
+                            origin: origin,
+                            disposition: orchestrationDisposition(for: requestDisposition),
+                            match: .missingFocusedWindow(
+                                pid: pid,
+                                fallbackFullscreen: appFullscreenForFallbackLifecyclePreservation(
+                                    observedAppFullscreen: false
+                                )
+                            ),
+                            shouldHonorObservedFocusOverPendingRequest: shouldHonorObservedFocusOverPendingRequest(
+                                source: source,
+                                origin: origin
+                            ),
+                            shouldHandleManagedActivationWithoutPendingRequest: false
+                        )
+                    )
+                ),
+                observedAXRef: nil,
+                managedEntry: nil
             )
             return
         }
@@ -884,43 +908,43 @@ final class AXEventHandler: CGSEventDelegate {
             let isWorkspaceActive = targetMonitor.map { monitor in
                 controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
             } ?? false
-
-            switch requestDisposition {
-            case .matchesActiveRequest:
-                break
-            case let .conflictsWithPendingRequest(request):
-                if shouldHonorObservedFocusOverPendingRequest(
-                    source: source,
-                    origin: origin
-                ) {
-                    clearManagedFocusState(
-                        matching: request.token,
-                        workspaceId: request.workspaceId
+            applyActivationOrchestrationResult(
+                OrchestrationCore.step(
+                    snapshot: controller.orchestrationSnapshot(
+                        refresh: .init(
+                            activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,
+                            pendingRefresh: controller.layoutRefreshController.layoutState.pendingRefresh
+                        )
+                    ),
+                    event: .activationObserved(
+                        .init(
+                            source: source,
+                            origin: origin,
+                            disposition: orchestrationDisposition(for: requestDisposition),
+                            match: .managed(
+                                token: entry.token,
+                                workspaceId: wsId,
+                                monitorId: targetMonitor?.id,
+                                isWorkspaceActive: isWorkspaceActive,
+                                appFullscreen: appFullscreen,
+                                requiresNativeFullscreenRestoreRelayout: controller.workspaceManager
+                                    .nativeFullscreenRestoreContext(for: entry.token) != nil
+                            ),
+                            shouldHonorObservedFocusOverPendingRequest: shouldHonorObservedFocusOverPendingRequest(
+                                source: source,
+                                origin: origin
+                            ),
+                            shouldHandleManagedActivationWithoutPendingRequest:
+                                shouldHandleObservedManagedActivationWithoutPendingRequest(
+                                    source: source,
+                                    origin: origin,
+                                    isWorkspaceActive: isWorkspaceActive
+                                )
+                        )
                     )
-                    break
-                }
-                continueManagedFocusRequest(
-                    request,
-                    source: source,
-                    origin: origin,
-                    reason: .pendingFocusMismatch
-                )
-                return
-            case .unrelatedNoRequest:
-                guard shouldHandleObservedManagedActivationWithoutPendingRequest(
-                    source: source,
-                    origin: origin,
-                    isWorkspaceActive: isWorkspaceActive
-                ) else { return }
-            }
-
-            handleManagedAppActivation(
-                entry: entry,
-                isWorkspaceActive: isWorkspaceActive,
-                appFullscreen: appFullscreen,
-                source: source,
-                confirmRequest: true,
-                origin: origin
+                ),
+                observedAXRef: axRef,
+                managedEntry: entry
             )
             return
         }
@@ -939,89 +963,77 @@ final class AXEventHandler: CGSEventDelegate {
             let isWorkspaceActive = targetMonitor.map { monitor in
                 controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
             } ?? false
-
-            switch requestDisposition {
-            case .matchesActiveRequest:
-                break
-            case let .conflictsWithPendingRequest(request):
-                if shouldHonorObservedFocusOverPendingRequest(
-                    source: source,
-                    origin: origin
-                ) {
-                    clearManagedFocusState(
-                        matching: request.token,
-                        workspaceId: request.workspaceId
+            applyActivationOrchestrationResult(
+                OrchestrationCore.step(
+                    snapshot: controller.orchestrationSnapshot(
+                        refresh: .init(
+                            activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,
+                            pendingRefresh: controller.layoutRefreshController.layoutState.pendingRefresh
+                        )
+                    ),
+                    event: .activationObserved(
+                        .init(
+                            source: source,
+                            origin: origin,
+                            disposition: orchestrationDisposition(for: requestDisposition),
+                            match: .managed(
+                                token: restoredEntry.token,
+                                workspaceId: wsId,
+                                monitorId: targetMonitor?.id,
+                                isWorkspaceActive: isWorkspaceActive,
+                                appFullscreen: appFullscreen,
+                                requiresNativeFullscreenRestoreRelayout: controller.workspaceManager
+                                    .nativeFullscreenRestoreContext(for: restoredEntry.token) != nil
+                            ),
+                            shouldHonorObservedFocusOverPendingRequest: shouldHonorObservedFocusOverPendingRequest(
+                                source: source,
+                                origin: origin
+                            ),
+                            shouldHandleManagedActivationWithoutPendingRequest:
+                                shouldHandleObservedManagedActivationWithoutPendingRequest(
+                                    source: source,
+                                    origin: origin,
+                                    isWorkspaceActive: isWorkspaceActive
+                                )
+                        )
                     )
-                    break
-                }
-                continueManagedFocusRequest(
-                    request,
-                    source: source,
-                    origin: origin,
-                    reason: .pendingFocusMismatch
-                )
-                return
-            case .unrelatedNoRequest:
-                guard shouldHandleObservedManagedActivationWithoutPendingRequest(
-                    source: source,
-                    origin: origin,
-                    isWorkspaceActive: isWorkspaceActive
-                ) else { return }
-            }
-
-            handleManagedAppActivation(
-                entry: restoredEntry,
-                isWorkspaceActive: isWorkspaceActive,
-                appFullscreen: appFullscreen,
-                source: source,
-                confirmRequest: true,
-                origin: origin
+                ),
+                observedAXRef: axRef,
+                managedEntry: restoredEntry
             )
             return
         }
-
-        switch requestDisposition {
-        case let .matchesActiveRequest(request), let .conflictsWithPendingRequest(request):
-            if shouldHonorObservedFocusOverPendingRequest(
-                source: source,
-                origin: origin
-            ) {
-                clearManagedFocusState(
-                    matching: request.token,
-                    workspaceId: request.workspaceId
+        applyActivationOrchestrationResult(
+            OrchestrationCore.step(
+                snapshot: controller.orchestrationSnapshot(
+                    refresh: .init(
+                        activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,
+                        pendingRefresh: controller.layoutRefreshController.layoutState.pendingRefresh
+                    )
+                ),
+                event: .activationObserved(
+                    .init(
+                        source: source,
+                        origin: origin,
+                        disposition: orchestrationDisposition(for: requestDisposition),
+                        match: .unmanaged(
+                            pid: pid,
+                            token: token,
+                            appFullscreen: appFullscreen,
+                            fallbackFullscreen: appFullscreenForFallbackLifecyclePreservation(
+                                observedAppFullscreen: appFullscreen
+                            )
+                        ),
+                        shouldHonorObservedFocusOverPendingRequest: shouldHonorObservedFocusOverPendingRequest(
+                            source: source,
+                            origin: origin
+                        ),
+                        shouldHandleManagedActivationWithoutPendingRequest: false
+                    )
                 )
-                break
-            }
-            continueManagedFocusRequest(
-                request,
-                source: source,
-                origin: origin,
-                reason: .pendingFocusUnmanagedToken
-            )
-            return
-        case .unrelatedNoRequest:
-            break
-        }
-
-        let target = controller.keyboardFocusTarget(for: token, axRef: axRef)
-        controller.focusBridge.setFocusedTarget(target)
-        let fallbackFullscreen = appFullscreenForFallbackLifecyclePreservation(
-            observedAppFullscreen: appFullscreen
-        )
-        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: fallbackFullscreen)
-        _ = controller.renderKeyboardFocusBorder(
-            for: target,
-            policy: .direct,
-            source: borderReconcileSource(for: source)
-        )
-
-        recordNiriCreateFocusTrace(
-            .init(
-                kind: .nonManagedFallbackEntered(
-                    pid: pid,
-                    source: source
-                )
-            )
+            ),
+            observedAXRef: axRef,
+            managedEntry: nil
         )
     }
 
@@ -2129,56 +2141,110 @@ final class AXEventHandler: CGSEventDelegate {
         createdWindowRetryCountById.removeAll()
     }
 
-    private func handleMissingFocusedWindow(
-        pid: pid_t,
-        source: ActivationEventSource,
-        origin: ActivationCallOrigin,
-        requestDisposition: ActivationRequestDisposition
+    private func orchestrationDisposition(
+        for disposition: ActivationRequestDisposition
+    ) -> ManagedActivationRequestDisposition {
+        switch disposition {
+        case let .matchesActiveRequest(request):
+            .matchesActiveRequest(request)
+        case let .conflictsWithPendingRequest(request):
+            .conflictsWithPendingRequest(request)
+        case .unrelatedNoRequest:
+            .unrelatedNoRequest
+        }
+    }
+
+    private func applyActivationOrchestrationResult(
+        _ result: OrchestrationResult,
+        observedAXRef: AXWindowRef?,
+        managedEntry: WindowModel.Entry?
     ) {
         guard let controller else { return }
 
-        switch requestDisposition {
-        case let .matchesActiveRequest(request), let .conflictsWithPendingRequest(request):
-            if shouldHonorObservedFocusOverPendingRequest(
-                source: source,
-                origin: origin
-            ) {
+        for action in result.plan.actions {
+            switch action {
+            case let .clearManagedFocusState(token, workspaceId):
                 clearManagedFocusState(
-                    matching: request.token,
-                    workspaceId: request.workspaceId
+                    matching: token,
+                    workspaceId: workspaceId
                 )
-                break
-            }
-            continueManagedFocusRequest(
-                request,
-                source: source,
-                origin: origin,
-                reason: .missingFocusedWindow
-            )
-            return
-        case .unrelatedNoRequest:
-            break
-        }
+            case let .continueManagedFocusRequest(requestId, reason, source, origin):
+                guard let request = controller.focusBridge.activeManagedRequest(requestId: requestId) else {
+                    continue
+                }
+                continueManagedFocusRequest(
+                    request,
+                    source: source,
+                    origin: origin,
+                    reason: reason
+                )
+            case let .confirmManagedActivation(token, _, _, isWorkspaceActive, appFullscreen, source):
+                guard let entry = managedEntry ?? controller.workspaceManager.entry(for: token) else {
+                    continue
+                }
+                handleManagedAppActivation(
+                    entry: entry,
+                    isWorkspaceActive: isWorkspaceActive,
+                    appFullscreen: appFullscreen,
+                    source: source,
+                    confirmRequest: true,
+                    origin: .external
+                )
+            case let .beginNativeFullscreenRestoreActivation(token, _, _, isWorkspaceActive, source):
+                guard let entry = managedEntry ?? controller.workspaceManager.entry(for: token) else {
+                    continue
+                }
+                handleManagedAppActivation(
+                    entry: entry,
+                    isWorkspaceActive: isWorkspaceActive,
+                    appFullscreen: false,
+                    source: source,
+                    confirmRequest: true,
+                    origin: .external
+                )
+            case let .enterNonManagedFallback(pid, token, appFullscreen, source):
+                if let token {
+                    let resolvedAXRef = observedAXRef ?? resolveFocusedAXWindowRef(pid: pid)
+                    if let resolvedAXRef {
+                        let target = controller.keyboardFocusTarget(for: token, axRef: resolvedAXRef)
+                        controller.focusBridge.setFocusedTarget(target)
+                        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: appFullscreen)
+                        _ = controller.renderKeyboardFocusBorder(
+                            for: target,
+                            policy: .direct,
+                            source: borderReconcileSource(for: source)
+                        )
+                    }
+                } else {
+                    cancelActivationRetry()
+                    controller.focusBridge.setFocusedTarget(nil)
+                    _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: appFullscreen)
+                    controller.hideKeyboardFocusBorder(
+                        source: borderReconcileSource(for: source),
+                        reason: "missing focused window during fallback transition",
+                        matchingPid: pid
+                    )
+                }
 
-        cancelActivationRetry()
-        controller.focusBridge.setFocusedTarget(nil)
-        let fallbackFullscreen = appFullscreenForFallbackLifecyclePreservation(
-            observedAppFullscreen: false
-        )
-        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: fallbackFullscreen)
-        recordNiriCreateFocusTrace(
-            .init(
-                kind: .nonManagedFallbackEntered(
-                    pid: pid,
-                    source: source
+                recordNiriCreateFocusTrace(
+                    .init(
+                        kind: .nonManagedFallbackEntered(
+                            pid: pid,
+                            source: source
+                        )
+                    )
                 )
-            )
-        )
-        controller.hideKeyboardFocusBorder(
-            source: borderReconcileSource(for: source),
-            reason: "missing focused window during fallback transition",
-            matchingPid: pid
-        )
+            case .cancelActiveRefresh,
+                 .startRefresh,
+                 .runPostLayoutAttachments,
+                 .discardPostLayoutAttachments,
+                 .performVisibilitySideEffects,
+                 .requestWorkspaceBarRefresh,
+                 .beginManagedFocusRequest,
+                 .frontManagedWindow:
+                continue
+            }
+        }
     }
 
     private func appFullscreenForFallbackLifecyclePreservation(
@@ -2285,6 +2351,16 @@ final class AXEventHandler: CGSEventDelegate {
         controller.clearKeyboardFocusTarget(
             matching: token,
             restoreCurrentBorder: false
+        )
+    }
+
+    func clearManagedFocusStateForOrchestration(
+        matching token: WindowToken,
+        workspaceId: WorkspaceDescriptor.ID?
+    ) {
+        clearManagedFocusState(
+            matching: token,
+            workspaceId: workspaceId
         )
     }
 

@@ -348,7 +348,7 @@ Some apps (Ghostty, Safari, browsers) destroy and recreate windows during intern
 
 ### 3.4 The Refresh Pipeline
 
-`LayoutRefreshController` is the central coordination point between events and window frame application. It manages scheduling, debouncing, and coalescing of layout refreshes.
+`LayoutRefreshController` now acts as a thin adapter around the deterministic orchestration seam in `Sources/OmniWM/Core/Orchestration/`. Raw controller, AX, and timer inputs are normalized into value-typed `OrchestrationEvent`s, projected against an `OrchestrationSnapshot`, reduced by `OrchestrationCore.step`, and then executed by existing Swift runtime/effect code.
 
 **Five Refresh Routes:**
 
@@ -379,7 +379,21 @@ RefreshReason              → Route              → Scheduling
 .appHidden / .appUnhidden  → visibilityRefresh   → plain
 ```
 
-**Coalescing:** If a refresh is already in progress, incoming requests are merged into a `pendingRefresh`. When the active refresh completes, the pending refresh fires. This prevents redundant layout calculations during bursts of events.
+**Deterministic orchestration seam:**
+
+1. Adapters gather facts (`AXEventHandler`, `LayoutRefreshController`, `WMController`)
+2. `OrchestrationSnapshot` projects the current refresh/focus runtime state
+3. `OrchestrationCore.step(snapshot:event:)` returns:
+   - updated orchestration state
+   - an ordered `OrchestrationPlan`
+   - explicit decisions such as queue, merge, defer, cancel, confirm
+4. Swift executors perform the effects:
+   - refresh task start/cancel
+   - focus request start/clear/retry
+   - post-layout actions
+   - border / visibility / fullscreen follow-up work
+
+**Coalescing:** Refresh queue policy now lives in the reducer instead of being re-derived across controller branches. Active work can absorb visibility-only updates, queue follow-up relayouts/window-removal work, or cancel/supersede lower-priority refreshes while preserving attachment order and tracked-window/fullscreen state.
 
 **DisplayLink Integration:** When animations are active (spring-based viewport scrolling, workspace switch effects), a `CADisplayLink` per display fires at the native refresh rate, driving per-frame layout recalculation.
 
@@ -440,6 +454,7 @@ This separation means layout logic can be unit-tested without any macOS UI or ac
 | `workspaceManager: WorkspaceManager` | Workspace definitions, window tracking, session state |
 | `axManager: AXManager` | Per-app accessibility contexts, frame application |
 | `focusBridge: FocusBridgeCoordinator` | Focus state machine with retry logic |
+| `orchestration core` | Pure reducer/planner over normalized events and snapshots; Swift adapters execute the returned plan |
 | `windowRuleEngine: WindowRuleEngine` | Window rule evaluation |
 | `hotkeys: HotkeyCenter` | Global hotkey registration via Carbon |
 | `borderManager: BorderManager` | Focus border window management |
