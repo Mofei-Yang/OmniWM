@@ -36,6 +36,7 @@ const focus_workspace_handoff: u32 = 1;
 const focus_resolve_target_if_present: u32 = 2;
 const focus_subject: u32 = 3;
 const focus_recover_source: u32 = 4;
+const focus_clear_managed_focus: u32 = 5;
 
 const direction_left: u32 = 0;
 const direction_right: u32 = 1;
@@ -58,19 +59,37 @@ const Input = extern struct {
     current_workspace_id: UUID,
     source_workspace_id: UUID,
     target_workspace_id: UUID,
+    adjacent_fallback_workspace_number: u32,
     current_monitor_id: u32,
     previous_monitor_id: u32,
     subject_token: WindowToken,
     focused_token: WindowToken,
-    selected_token: WindowToken,
+    pending_managed_tiled_focus_token: WindowToken,
+    pending_managed_tiled_focus_workspace_id: UUID,
+    confirmed_tiled_focus_token: WindowToken,
+    confirmed_tiled_focus_workspace_id: UUID,
+    confirmed_floating_focus_token: WindowToken,
+    confirmed_floating_focus_workspace_id: UUID,
+    active_column_subject_token: WindowToken,
+    selected_column_subject_token: WindowToken,
     has_current_workspace_id: u8,
     has_source_workspace_id: u8,
     has_target_workspace_id: u8,
+    has_adjacent_fallback_workspace_number: u8,
     has_current_monitor_id: u8,
     has_previous_monitor_id: u8,
     has_subject_token: u8,
     has_focused_token: u8,
-    has_selected_token: u8,
+    has_pending_managed_tiled_focus_token: u8,
+    has_pending_managed_tiled_focus_workspace_id: u8,
+    has_confirmed_tiled_focus_token: u8,
+    has_confirmed_tiled_focus_workspace_id: u8,
+    has_confirmed_floating_focus_token: u8,
+    has_confirmed_floating_focus_workspace_id: u8,
+    has_active_column_subject_token: u8,
+    has_selected_column_subject_token: u8,
+    is_non_managed_focus_active: u8,
+    is_app_fullscreen_active: u8,
     wrap_around: u8,
     follow_focus: u8,
 };
@@ -91,10 +110,15 @@ const WorkspaceSnapshot = extern struct {
     workspace_id: UUID,
     monitor_id: u32,
     layout_kind: u32,
-    numeric_name: i32,
+    remembered_tiled_focus_token: WindowToken,
+    first_tiled_focus_token: WindowToken,
+    remembered_floating_focus_token: WindowToken,
+    first_floating_focus_token: WindowToken,
     has_monitor_id: u8,
-    has_numeric_name: u8,
-    is_empty: u8,
+    has_remembered_tiled_focus_token: u8,
+    has_first_tiled_focus_token: u8,
+    has_remembered_floating_focus_token: u8,
+    has_first_floating_focus_token: u8,
 };
 
 const Output = extern struct {
@@ -103,16 +127,18 @@ const Output = extern struct {
     focus_action: u32,
     source_workspace_id: UUID,
     target_workspace_id: UUID,
+    target_workspace_materialization_number: u32,
     source_monitor_id: u32,
     target_monitor_id: u32,
     subject_token: WindowToken,
-    save_workspace_ids: [*]UUID,
+    resolved_focus_token: WindowToken,
+    save_workspace_ids: ?[*]UUID,
     save_workspace_capacity: usize,
     save_workspace_count: usize,
-    affected_workspace_ids: [*]UUID,
+    affected_workspace_ids: ?[*]UUID,
     affected_workspace_capacity: usize,
     affected_workspace_count: usize,
-    affected_monitor_ids: [*]u32,
+    affected_monitor_ids: ?[*]u32,
     affected_monitor_capacity: usize,
     affected_monitor_count: usize,
     has_source_workspace_id: u8,
@@ -120,11 +146,52 @@ const Output = extern struct {
     has_source_monitor_id: u8,
     has_target_monitor_id: u8,
     has_subject_token: u8,
+    has_resolved_focus_token: u8,
+    should_materialize_target_workspace: u8,
     should_activate_target_workspace: u8,
     should_set_interaction_monitor: u8,
     should_sync_monitors_to_niri: u8,
     should_hide_focus_border: u8,
     should_commit_workspace_transition: u8,
+};
+
+const max_planned_workspace_ids: usize = 8;
+const max_planned_monitor_ids: usize = 8;
+
+const UUIDSet = struct {
+    values: [max_planned_workspace_ids]UUID = std.mem.zeroes([max_planned_workspace_ids]UUID),
+    count: usize = 0,
+
+    fn append(self: *UUIDSet, value: UUID) void {
+        if (uuidEq(value, zeroUUID())) return;
+        for (self.values[0..self.count]) |existing| {
+            if (uuidEq(existing, value)) return;
+        }
+        std.debug.assert(self.count < self.values.len);
+        self.values[self.count] = value;
+        self.count += 1;
+    }
+};
+
+const MonitorIdSet = struct {
+    values: [max_planned_monitor_ids]u32 = std.mem.zeroes([max_planned_monitor_ids]u32),
+    count: usize = 0,
+
+    fn append(self: *MonitorIdSet, value: u32) void {
+        if (value == 0) return;
+        for (self.values[0..self.count]) |existing| {
+            if (existing == value) return;
+        }
+        std.debug.assert(self.count < self.values.len);
+        self.values[self.count] = value;
+        self.count += 1;
+    }
+};
+
+const PlannedSets = struct {
+    save_workspaces: UUIDSet = .{},
+    affected_workspaces: UUIDSet = .{},
+    affected_monitors: MonitorIdSet = .{},
 };
 
 const MonitorSelectionMode = enum {
@@ -185,90 +252,37 @@ fn resetOutput(output: *Output) void {
     output.focus_action = focus_none;
     output.source_workspace_id = zeroUUID();
     output.target_workspace_id = zeroUUID();
+    output.target_workspace_materialization_number = 0;
     output.subject_token = zeroToken();
+    output.resolved_focus_token = zeroToken();
 }
 
-fn appendUUID(
-    buffer: [*]UUID,
-    capacity: usize,
-    count: *usize,
-    value: UUID,
-) i32 {
-    if (uuidEq(value, zeroUUID())) return status_ok;
-
-    var index: usize = 0;
-    while (index < count.*) : (index += 1) {
-        if (uuidEq(buffer[index], value)) {
-            return status_ok;
-        }
-    }
-
-    if (count.* >= capacity) {
-        count.* += 1;
-        return status_buffer_too_small;
-    }
-
-    buffer[count.*] = value;
-    count.* += 1;
-    return status_ok;
+fn saveWorkspace(sets: *PlannedSets, workspace_id: UUID) void {
+    sets.save_workspaces.append(workspace_id);
 }
 
-fn appendMonitorId(
-    buffer: [*]u32,
-    capacity: usize,
-    count: *usize,
-    value: u32,
-) i32 {
-    if (value == 0) return status_ok;
-
-    var index: usize = 0;
-    while (index < count.*) : (index += 1) {
-        if (buffer[index] == value) {
-            return status_ok;
-        }
-    }
-
-    if (count.* >= capacity) {
-        count.* += 1;
-        return status_buffer_too_small;
-    }
-
-    buffer[count.*] = value;
-    count.* += 1;
-    return status_ok;
+fn affectWorkspace(sets: *PlannedSets, workspace_id: UUID) void {
+    sets.affected_workspaces.append(workspace_id);
 }
 
-fn saveWorkspace(output: *Output, workspace_id: UUID) i32 {
-    return appendUUID(
-        output.save_workspace_ids,
-        output.save_workspace_capacity,
-        &output.save_workspace_count,
-        workspace_id,
-    );
-}
-
-fn affectWorkspace(output: *Output, workspace_id: UUID) i32 {
-    return appendUUID(
-        output.affected_workspace_ids,
-        output.affected_workspace_capacity,
-        &output.affected_workspace_count,
-        workspace_id,
-    );
-}
-
-fn affectMonitor(output: *Output, monitor_id: u32) i32 {
-    return appendMonitorId(
-        output.affected_monitor_ids,
-        output.affected_monitor_capacity,
-        &output.affected_monitor_count,
-        monitor_id,
-    );
+fn affectMonitor(sets: *PlannedSets, monitor_id: u32) void {
+    sets.affected_monitors.append(monitor_id);
 }
 
 fn setSubject(output: *Output, kind: u32, token: WindowToken) void {
     output.subject_kind = kind;
     output.subject_token = token;
     output.has_subject_token = if (kind == subject_none) 0 else 1;
+}
+
+fn setResolvedFocus(output: *Output, token: ?WindowToken) void {
+    if (token) |resolved| {
+        output.resolved_focus_token = resolved;
+        output.has_resolved_focus_token = 1;
+    } else {
+        output.resolved_focus_token = zeroToken();
+        output.has_resolved_focus_token = 0;
+    }
 }
 
 fn setSourceWorkspace(output: *Output, workspace: *const WorkspaceSnapshot) void {
@@ -287,6 +301,99 @@ fn setTargetWorkspace(output: *Output, workspace: *const WorkspaceSnapshot) void
         output.target_monitor_id = workspace.monitor_id;
         output.has_target_monitor_id = 1;
     }
+}
+
+fn workspaceToken(has_token: u8, token: WindowToken) ?WindowToken {
+    return if (has_token != 0) token else null;
+}
+
+fn inputToken(has_token: u8, token: WindowToken) ?WindowToken {
+    return if (has_token != 0) token else null;
+}
+
+fn resolveWorkspaceFocusToken(
+    input: Input,
+    workspace: *const WorkspaceSnapshot,
+) ?WindowToken {
+    if (workspaceToken(workspace.has_remembered_tiled_focus_token, workspace.remembered_tiled_focus_token)) |token| {
+        return token;
+    }
+    if (input.has_pending_managed_tiled_focus_token != 0 and
+        input.has_pending_managed_tiled_focus_workspace_id != 0 and
+        uuidEq(input.pending_managed_tiled_focus_workspace_id, workspace.workspace_id))
+    {
+        return input.pending_managed_tiled_focus_token;
+    }
+    if (input.has_confirmed_tiled_focus_token != 0 and
+        input.has_confirmed_tiled_focus_workspace_id != 0 and
+        uuidEq(input.confirmed_tiled_focus_workspace_id, workspace.workspace_id))
+    {
+        return input.confirmed_tiled_focus_token;
+    }
+    if (workspaceToken(workspace.has_first_tiled_focus_token, workspace.first_tiled_focus_token)) |token| {
+        return token;
+    }
+    if (workspaceToken(workspace.has_remembered_floating_focus_token, workspace.remembered_floating_focus_token)) |token| {
+        return token;
+    }
+    if (input.has_confirmed_floating_focus_token != 0 and
+        input.has_confirmed_floating_focus_workspace_id != 0 and
+        uuidEq(input.confirmed_floating_focus_workspace_id, workspace.workspace_id))
+    {
+        return input.confirmed_floating_focus_token;
+    }
+    if (workspaceToken(workspace.has_first_floating_focus_token, workspace.first_floating_focus_token)) |token| {
+        return token;
+    }
+    return null;
+}
+
+fn setWorkspaceTransitionFocus(
+    input: Input,
+    output: *Output,
+    workspace: *const WorkspaceSnapshot,
+    execute_action: u32,
+) void {
+    const resolved_focus = resolveWorkspaceFocusToken(input, workspace);
+    output.focus_action = if (resolved_focus == null) focus_clear_managed_focus else execute_action;
+    setResolvedFocus(output, resolved_focus);
+}
+
+fn copyUUIDs(buffer: [*]UUID, values: []const UUID) void {
+    for (values, 0..) |value, index| {
+        buffer[index] = value;
+    }
+}
+
+fn copyMonitorIds(buffer: [*]u32, values: []const u32) void {
+    for (values, 0..) |value, index| {
+        buffer[index] = value;
+    }
+}
+
+fn finalizeSets(output: *Output, sets: PlannedSets) i32 {
+    output.save_workspace_count = sets.save_workspaces.count;
+    output.affected_workspace_count = sets.affected_workspaces.count;
+    output.affected_monitor_count = sets.affected_monitors.count;
+
+    if (sets.save_workspaces.count > output.save_workspace_capacity or
+        sets.affected_workspaces.count > output.affected_workspace_capacity or
+        sets.affected_monitors.count > output.affected_monitor_capacity)
+    {
+        return status_buffer_too_small;
+    }
+
+    if (sets.save_workspaces.count > 0) {
+        copyUUIDs(output.save_workspace_ids.?, sets.save_workspaces.values[0..sets.save_workspaces.count]);
+    }
+    if (sets.affected_workspaces.count > 0) {
+        copyUUIDs(output.affected_workspace_ids.?, sets.affected_workspaces.values[0..sets.affected_workspaces.count]);
+    }
+    if (sets.affected_monitors.count > 0) {
+        copyMonitorIds(output.affected_monitor_ids.?, sets.affected_monitors.values[0..sets.affected_monitors.count]);
+    }
+
+    return status_ok;
 }
 
 fn monitorSortLess(
@@ -573,6 +680,7 @@ fn explicitTargetWorkspaceIndex(input: Input, workspaces: []const WorkspaceSnaps
 
 fn commitTransferPlan(
     output: *Output,
+    sets: *PlannedSets,
     source_workspace: ?*const WorkspaceSnapshot,
     target_workspace: *const WorkspaceSnapshot,
     subject_kind: u32,
@@ -580,8 +688,7 @@ fn commitTransferPlan(
     follow_focus: bool,
     commit_transition: bool,
     save_source_workspace: bool,
-) i32 {
-    var status = status_ok;
+) void {
     output.outcome = outcome_execute;
     output.focus_action = if (follow_focus) focus_subject else focus_recover_source;
     output.should_commit_workspace_transition = @intFromBool(commit_transition);
@@ -589,63 +696,83 @@ fn commitTransferPlan(
     output.should_set_interaction_monitor = @intFromBool(follow_focus);
     setSubject(output, subject_kind, subject_token);
     setTargetWorkspace(output, target_workspace);
-    status = affectWorkspace(output, target_workspace.workspace_id);
+    affectWorkspace(sets, target_workspace.workspace_id);
     if (output.has_target_monitor_id != 0) {
-        const next_status = affectMonitor(output, output.target_monitor_id);
-        if (status == status_ok) status = next_status;
+        affectMonitor(sets, output.target_monitor_id);
     }
 
     if (source_workspace) |source| {
         setSourceWorkspace(output, source);
         if (save_source_workspace) {
-            const next_save = saveWorkspace(output, source.workspace_id);
-            if (status == status_ok) status = next_save;
+            saveWorkspace(sets, source.workspace_id);
         }
-        const next_affect = affectWorkspace(output, source.workspace_id);
-        if (status == status_ok) status = next_affect;
+        affectWorkspace(sets, source.workspace_id);
         if (output.has_source_monitor_id != 0) {
-            const next_monitor = affectMonitor(output, output.source_monitor_id);
-            if (status == status_ok) status = next_monitor;
+            affectMonitor(sets, output.source_monitor_id);
         }
     }
+}
 
-    return status;
+fn commitMaterializedTransferPlan(
+    output: *Output,
+    sets: *PlannedSets,
+    source_workspace: *const WorkspaceSnapshot,
+    target_monitor_id: u32,
+    target_workspace_number: u32,
+    subject_kind: u32,
+    subject_token: WindowToken,
+) void {
+    output.outcome = outcome_execute;
+    output.focus_action = focus_recover_source;
+    output.should_commit_workspace_transition = 1;
+    output.target_workspace_materialization_number = target_workspace_number;
+    output.target_monitor_id = target_monitor_id;
+    output.has_target_monitor_id = 1;
+    output.should_materialize_target_workspace = 1;
+    setSubject(output, subject_kind, subject_token);
+    setSourceWorkspace(output, source_workspace);
+    saveWorkspace(sets, source_workspace.workspace_id);
+    affectWorkspace(sets, source_workspace.workspace_id);
+    if (output.has_source_monitor_id != 0) {
+        affectMonitor(sets, output.source_monitor_id);
+    }
+    affectMonitor(sets, target_monitor_id);
 }
 
 fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const WorkspaceSnapshot, output: *Output) i32 {
+    var sets = PlannedSets{};
     switch (input.operation) {
         op_switch_workspace_explicit => {
-            output.should_hide_focus_border = 1;
             const target_index = explicitTargetWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             if (target.has_monitor_id == 0 or findMonitorIndexById(monitors, target.monitor_id) == null) {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (input.has_current_workspace_id != 0 and uuidEq(input.current_workspace_id, target.workspace_id)) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
 
             output.outcome = outcome_execute;
-            output.focus_action = focus_workspace_handoff;
+            output.should_hide_focus_border = 1;
             output.should_activate_target_workspace = 1;
             output.should_set_interaction_monitor = 1;
             output.should_commit_workspace_transition = 1;
             setTargetWorkspace(output, target);
+            setWorkspaceTransitionFocus(input, output, target, focus_workspace_handoff);
             if (input.has_current_workspace_id != 0) {
-                return saveWorkspace(output, input.current_workspace_id);
+                saveWorkspace(&sets, input.current_workspace_id);
             }
-            return status_ok;
+            return finalizeSets(output, sets);
         },
         op_switch_workspace_relative => {
-            output.should_hide_focus_border = 1;
             if (input.has_current_monitor_id == 0 or input.has_current_workspace_id == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const target_index = relativeWorkspaceOnMonitor(
                 workspaces,
@@ -655,92 +782,91 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 input.wrap_around != 0,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             output.outcome = outcome_execute;
-            output.focus_action = focus_workspace_handoff;
+            output.should_hide_focus_border = 1;
             output.should_activate_target_workspace = 1;
             output.should_set_interaction_monitor = 1;
             output.should_commit_workspace_transition = 1;
             setTargetWorkspace(output, target);
-            return saveWorkspace(output, input.current_workspace_id);
+            setWorkspaceTransitionFocus(input, output, target, focus_workspace_handoff);
+            saveWorkspace(&sets, input.current_workspace_id);
+            return finalizeSets(output, sets);
         },
         op_focus_workspace_anywhere => {
-            output.should_hide_focus_border = 1;
             const target_index = explicitTargetWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             if (target.has_monitor_id == 0 or findMonitorIndexById(monitors, target.monitor_id) == null) {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
 
             output.outcome = outcome_execute;
-            output.focus_action = focus_workspace_handoff;
+            output.should_hide_focus_border = 1;
             output.should_activate_target_workspace = 1;
             output.should_set_interaction_monitor = 1;
             output.should_sync_monitors_to_niri = 1;
             output.should_commit_workspace_transition = 1;
             setTargetWorkspace(output, target);
-
-            var status = status_ok;
+            setWorkspaceTransitionFocus(input, output, target, focus_workspace_handoff);
             if (input.has_current_workspace_id != 0) {
-                status = saveWorkspace(output, input.current_workspace_id);
+                saveWorkspace(&sets, input.current_workspace_id);
             }
             if (input.has_current_monitor_id != 0 and input.current_monitor_id != target.monitor_id) {
                 if (activeOrFirstWorkspaceOnMonitor(monitors, workspaces, target.monitor_id)) |visible_target_index| {
                     const visible_target_workspace = workspaces[visible_target_index];
-                    const next_status = saveWorkspace(output, visible_target_workspace.workspace_id);
-                    if (status == status_ok) status = next_status;
+                    saveWorkspace(&sets, visible_target_workspace.workspace_id);
                 }
             }
-            return status;
+            return finalizeSets(output, sets);
         },
         op_workspace_back_and_forth => {
-            output.should_hide_focus_border = 1;
             if (input.has_current_monitor_id == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const current_monitor_index = findMonitorIndexById(monitors, input.current_monitor_id) orelse {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const current_monitor = monitors[current_monitor_index];
             if (current_monitor.has_previous_workspace_id == 0) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (current_monitor.has_active_workspace_id != 0 and uuidEq(
                 current_monitor.previous_workspace_id,
                 current_monitor.active_workspace_id,
             )) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const target_index = findWorkspaceIndexById(workspaces, current_monitor.previous_workspace_id) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             output.outcome = outcome_execute;
-            output.focus_action = focus_workspace_handoff;
+            output.should_hide_focus_border = 1;
             output.should_activate_target_workspace = 1;
             output.should_set_interaction_monitor = 1;
             output.should_commit_workspace_transition = 1;
             setTargetWorkspace(output, target);
+            setWorkspaceTransitionFocus(input, output, target, focus_workspace_handoff);
             if (input.has_current_workspace_id != 0) {
-                return saveWorkspace(output, input.current_workspace_id);
+                saveWorkspace(&sets, input.current_workspace_id);
             }
-            return status_ok;
+            return finalizeSets(output, sets);
         },
         op_focus_monitor_cyclic => {
             if (input.has_current_monitor_id == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const target_monitor_index = cyclicMonitorIndex(
                 monitors,
@@ -748,7 +874,7 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 input.direction == direction_left or input.direction == direction_up,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target_monitor = monitors[target_monitor_index];
             const target_workspace_index = activeOrFirstWorkspaceOnMonitor(
@@ -757,33 +883,32 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 target_monitor.monitor_id,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target_workspace = &workspaces[target_workspace_index];
 
             output.outcome = outcome_execute;
-            output.focus_action = focus_resolve_target_if_present;
             output.should_activate_target_workspace = 1;
             output.should_set_interaction_monitor = 1;
             output.should_commit_workspace_transition = 1;
             setTargetWorkspace(output, target_workspace);
-            var status = affectWorkspace(output, target_workspace.workspace_id);
-            const next_status = affectMonitor(output, target_monitor.monitor_id);
-            if (status == status_ok) status = next_status;
-            return status;
+            setWorkspaceTransitionFocus(input, output, target_workspace, focus_resolve_target_if_present);
+            affectWorkspace(&sets, target_workspace.workspace_id);
+            affectMonitor(&sets, target_monitor.monitor_id);
+            return finalizeSets(output, sets);
         },
         op_focus_monitor_last => {
             if (input.has_current_monitor_id == 0 or input.has_previous_monitor_id == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (input.current_monitor_id == input.previous_monitor_id) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (findMonitorIndexById(monitors, input.previous_monitor_id) == null) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const target_workspace_index = activeOrFirstWorkspaceOnMonitor(
                 monitors,
@@ -791,29 +916,28 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 input.previous_monitor_id,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target_workspace = &workspaces[target_workspace_index];
 
             output.outcome = outcome_execute;
-            output.focus_action = focus_resolve_target_if_present;
             output.should_activate_target_workspace = 1;
             output.should_set_interaction_monitor = 1;
             output.should_commit_workspace_transition = 1;
             setTargetWorkspace(output, target_workspace);
-            var status = affectWorkspace(output, target_workspace.workspace_id);
-            const next_status = affectMonitor(output, input.previous_monitor_id);
-            if (status == status_ok) status = next_status;
-            return status;
+            setWorkspaceTransitionFocus(input, output, target_workspace, focus_resolve_target_if_present);
+            affectWorkspace(&sets, target_workspace.workspace_id);
+            affectMonitor(&sets, input.previous_monitor_id);
+            return finalizeSets(output, sets);
         },
         op_swap_workspace_with_monitor => {
             if (input.has_current_monitor_id == 0 or input.has_current_workspace_id == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const source_index = findWorkspaceIndexById(workspaces, input.current_workspace_id) orelse {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const source = &workspaces[source_index];
             const target_monitor_index = adjacentMonitorIndex(
@@ -823,7 +947,7 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 false,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target_monitor = monitors[target_monitor_index];
             const target_workspace_index = activeOrFirstWorkspaceOnMonitor(
@@ -832,147 +956,178 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 target_monitor.monitor_id,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_workspace_index];
 
             output.outcome = outcome_execute;
-            output.focus_action = focus_resolve_target_if_present;
             output.should_sync_monitors_to_niri = 1;
             output.should_commit_workspace_transition = 1;
             setSourceWorkspace(output, source);
             setTargetWorkspace(output, target);
+            setWorkspaceTransitionFocus(input, output, target, focus_resolve_target_if_present);
 
-            var status = saveWorkspace(output, source.workspace_id);
-            const next_source_workspace = affectWorkspace(output, source.workspace_id);
-            if (status == status_ok) status = next_source_workspace;
-            const next_target_workspace = affectWorkspace(output, target.workspace_id);
-            if (status == status_ok) status = next_target_workspace;
-            const next_source_monitor = affectMonitor(output, input.current_monitor_id);
-            if (status == status_ok) status = next_source_monitor;
-            const next_target_monitor = affectMonitor(output, target_monitor.monitor_id);
-            if (status == status_ok) status = next_target_monitor;
-            return status;
+            saveWorkspace(&sets, source.workspace_id);
+            affectWorkspace(&sets, source.workspace_id);
+            affectWorkspace(&sets, target.workspace_id);
+            affectMonitor(&sets, input.current_monitor_id);
+            affectMonitor(&sets, target_monitor.monitor_id);
+            return finalizeSets(output, sets);
         },
         op_move_window_adjacent => {
             const source_index = sourceWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_blocked;
-                return status_ok;
-            };
-            if (input.has_focused_token == 0) {
-                output.outcome = outcome_blocked;
-                return status_ok;
-            }
-            if (input.has_current_monitor_id == 0) {
-                output.outcome = outcome_blocked;
-                return status_ok;
-            }
-            const target_index = relativeWorkspaceOnMonitor(
-                workspaces,
-                input.current_monitor_id,
-                workspaces[source_index].workspace_id,
-                movementOffset(input.direction),
-                false,
-            ) orelse {
-                output.outcome = outcome_noop;
-                return status_ok;
-            };
-            return commitTransferPlan(
-                output,
-                &workspaces[source_index],
-                &workspaces[target_index],
-                subject_window,
-                input.focused_token,
-                false,
-                true,
-                true,
-            );
-        },
-        op_move_column_adjacent => {
-            const source_index = sourceWorkspaceIndex(input, workspaces) orelse {
-                output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const source = &workspaces[source_index];
-            if (source.layout_kind != layout_niri or input.has_focused_token == 0) {
+            if (input.has_focused_token == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (input.has_current_monitor_id == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
-            const target_index = relativeWorkspaceOnMonitor(
+            const maybe_target_index = relativeWorkspaceOnMonitor(
                 workspaces,
                 input.current_monitor_id,
                 source.workspace_id,
                 movementOffset(input.direction),
                 false,
-            ) orelse {
-                output.outcome = outcome_noop;
-                return status_ok;
-            };
-            return commitTransferPlan(
-                output,
-                source,
-                &workspaces[target_index],
-                subject_column,
-                input.focused_token,
-                false,
-                true,
-                true,
             );
+            if (maybe_target_index) |target_index| {
+                commitTransferPlan(
+                    output,
+                    &sets,
+                    source,
+                    &workspaces[target_index],
+                    subject_window,
+                    input.focused_token,
+                    false,
+                    true,
+                    true,
+                );
+            } else if (input.has_adjacent_fallback_workspace_number != 0) {
+                commitMaterializedTransferPlan(
+                    output,
+                    &sets,
+                    source,
+                    input.current_monitor_id,
+                    input.adjacent_fallback_workspace_number,
+                    subject_window,
+                    input.focused_token,
+                );
+            } else {
+                output.outcome = outcome_noop;
+            }
+            return finalizeSets(output, sets);
+        },
+        op_move_column_adjacent => {
+            const source_index = sourceWorkspaceIndex(input, workspaces) orelse {
+                output.outcome = outcome_blocked;
+                return finalizeSets(output, sets);
+            };
+            const source = &workspaces[source_index];
+            if (source.layout_kind != layout_niri or input.has_active_column_subject_token == 0) {
+                output.outcome = outcome_blocked;
+                return finalizeSets(output, sets);
+            }
+            if (input.has_current_monitor_id == 0) {
+                output.outcome = outcome_blocked;
+                return finalizeSets(output, sets);
+            }
+            const maybe_target_index = relativeWorkspaceOnMonitor(
+                workspaces,
+                input.current_monitor_id,
+                source.workspace_id,
+                movementOffset(input.direction),
+                false,
+            );
+            if (maybe_target_index) |target_index| {
+                commitTransferPlan(
+                    output,
+                    &sets,
+                    source,
+                    &workspaces[target_index],
+                    subject_column,
+                    input.active_column_subject_token,
+                    false,
+                    true,
+                    true,
+                );
+            } else if (input.has_adjacent_fallback_workspace_number != 0) {
+                commitMaterializedTransferPlan(
+                    output,
+                    &sets,
+                    source,
+                    input.current_monitor_id,
+                    input.adjacent_fallback_workspace_number,
+                    subject_column,
+                    input.active_column_subject_token,
+                );
+            } else {
+                output.outcome = outcome_noop;
+            }
+            return finalizeSets(output, sets);
         },
         op_move_column_explicit => {
             const source_index = sourceWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const source = &workspaces[source_index];
-            if (source.layout_kind != layout_niri or input.has_selected_token == 0) {
+            const subject_token = inputToken(input.has_active_column_subject_token, input.active_column_subject_token) orelse
+                inputToken(input.has_selected_column_subject_token, input.selected_column_subject_token) orelse {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
+            };
+            if (source.layout_kind != layout_niri) {
+                output.outcome = outcome_blocked;
+                return finalizeSets(output, sets);
             }
             const target_index = explicitTargetWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             if (uuidEq(source.workspace_id, target.workspace_id)) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
-            return commitTransferPlan(
+            commitTransferPlan(
                 output,
+                &sets,
                 source,
                 target,
                 subject_column,
-                input.selected_token,
+                subject_token,
                 false,
                 true,
                 true,
             );
+            return finalizeSets(output, sets);
         },
         op_move_window_explicit, op_move_window_handle => {
             const target_index = explicitTargetWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             const source_index = sourceWorkspaceIndex(input, workspaces);
             const subject_token = if (input.has_subject_token != 0) input.subject_token else if (input.has_focused_token != 0) input.focused_token else zeroToken();
             if (tokenEq(subject_token, zeroToken())) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (source_index) |index| {
                 if (uuidEq(workspaces[index].workspace_id, target.workspace_id)) {
                     output.outcome = outcome_noop;
-                    return status_ok;
+                    return finalizeSets(output, sets);
                 }
             }
-            return commitTransferPlan(
+            commitTransferPlan(
                 output,
+                &sets,
                 if (source_index) |index| &workspaces[index] else null,
                 target,
                 subject_window,
@@ -981,15 +1136,16 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 input.operation != op_move_window_handle,
                 false,
             );
+            return finalizeSets(output, sets);
         },
         op_move_window_to_workspace_on_monitor => {
             const source_index = sourceWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             if (input.has_current_monitor_id == 0 or input.has_focused_token == 0) {
                 output.outcome = outcome_blocked;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             const target_monitor_index = adjacentMonitorIndex(
                 monitors,
@@ -998,24 +1154,25 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 false,
             ) orelse {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target_monitor = monitors[target_monitor_index];
             const target_index = explicitTargetWorkspaceIndex(input, workspaces) orelse {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             };
             const target = &workspaces[target_index];
             if (target.has_monitor_id == 0 or target.monitor_id != target_monitor.monitor_id) {
                 output.outcome = outcome_invalid_target;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
             if (uuidEq(workspaces[source_index].workspace_id, target.workspace_id)) {
                 output.outcome = outcome_noop;
-                return status_ok;
+                return finalizeSets(output, sets);
             }
-            return commitTransferPlan(
+            commitTransferPlan(
                 output,
+                &sets,
                 &workspaces[source_index],
                 target,
                 subject_window,
@@ -1024,6 +1181,7 @@ fn plan(input: Input, monitors: []const MonitorSnapshot, workspaces: []const Wor
                 true,
                 false,
             );
+            return finalizeSets(output, sets);
         },
         else => return status_invalid_argument,
     }
@@ -1041,6 +1199,9 @@ pub export fn omniwm_workspace_navigation_plan(
     const output = output_ptr orelse return status_invalid_argument;
     if (monitor_count > 0 and monitors_ptr == null) return status_invalid_argument;
     if (workspace_count > 0 and workspaces_ptr == null) return status_invalid_argument;
+    if (output.save_workspace_capacity > 0 and output.save_workspace_ids == null) return status_invalid_argument;
+    if (output.affected_workspace_capacity > 0 and output.affected_workspace_ids == null) return status_invalid_argument;
+    if (output.affected_monitor_capacity > 0 and output.affected_monitor_ids == null) return status_invalid_argument;
 
     resetOutput(output);
 
@@ -1056,26 +1217,42 @@ pub export fn omniwm_workspace_navigation_plan(
     return plan(input.*, monitors, workspaces, output);
 }
 
-test "explicit switch targets workspace handoff and saves current workspace" {
-    var save_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
-    var affected_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
-    var affected_monitors = [_]u32{0, 0};
-    var output = Output{
+fn makeWorkspaceSnapshot(workspace_id: UUID, monitor_id: u32, layout_kind: u32) WorkspaceSnapshot {
+    return .{
+        .workspace_id = workspace_id,
+        .monitor_id = monitor_id,
+        .layout_kind = layout_kind,
+        .remembered_tiled_focus_token = zeroToken(),
+        .first_tiled_focus_token = zeroToken(),
+        .remembered_floating_focus_token = zeroToken(),
+        .first_floating_focus_token = zeroToken(),
+        .has_monitor_id = 1,
+        .has_remembered_tiled_focus_token = 0,
+        .has_first_tiled_focus_token = 0,
+        .has_remembered_floating_focus_token = 0,
+        .has_first_floating_focus_token = 0,
+    };
+}
+
+fn makeOutput(save_workspaces: []UUID, affected_workspaces: []UUID, affected_monitors: []u32) Output {
+    return .{
         .outcome = 0,
         .subject_kind = 0,
         .focus_action = 0,
         .source_workspace_id = zeroUUID(),
         .target_workspace_id = zeroUUID(),
+        .target_workspace_materialization_number = 0,
         .source_monitor_id = 0,
         .target_monitor_id = 0,
         .subject_token = zeroToken(),
-        .save_workspace_ids = &save_workspaces,
+        .resolved_focus_token = zeroToken(),
+        .save_workspace_ids = if (save_workspaces.len == 0) null else save_workspaces.ptr,
         .save_workspace_capacity = save_workspaces.len,
         .save_workspace_count = 0,
-        .affected_workspace_ids = &affected_workspaces,
+        .affected_workspace_ids = if (affected_workspaces.len == 0) null else affected_workspaces.ptr,
         .affected_workspace_capacity = affected_workspaces.len,
         .affected_workspace_count = 0,
-        .affected_monitor_ids = &affected_monitors,
+        .affected_monitor_ids = if (affected_monitors.len == 0) null else affected_monitors.ptr,
         .affected_monitor_capacity = affected_monitors.len,
         .affected_monitor_count = 0,
         .has_source_workspace_id = 0,
@@ -1083,14 +1260,67 @@ test "explicit switch targets workspace handoff and saves current workspace" {
         .has_source_monitor_id = 0,
         .has_target_monitor_id = 0,
         .has_subject_token = 0,
+        .has_resolved_focus_token = 0,
+        .should_materialize_target_workspace = 0,
         .should_activate_target_workspace = 0,
         .should_set_interaction_monitor = 0,
         .should_sync_monitors_to_niri = 0,
         .should_hide_focus_border = 0,
         .should_commit_workspace_transition = 0,
     };
+}
+
+fn makeInput(operation: u32) Input {
+    return .{
+        .operation = operation,
+        .direction = direction_right,
+        .current_workspace_id = zeroUUID(),
+        .source_workspace_id = zeroUUID(),
+        .target_workspace_id = zeroUUID(),
+        .adjacent_fallback_workspace_number = 0,
+        .current_monitor_id = 0,
+        .previous_monitor_id = 0,
+        .subject_token = zeroToken(),
+        .focused_token = zeroToken(),
+        .pending_managed_tiled_focus_token = zeroToken(),
+        .pending_managed_tiled_focus_workspace_id = zeroUUID(),
+        .confirmed_tiled_focus_token = zeroToken(),
+        .confirmed_tiled_focus_workspace_id = zeroUUID(),
+        .confirmed_floating_focus_token = zeroToken(),
+        .confirmed_floating_focus_workspace_id = zeroUUID(),
+        .active_column_subject_token = zeroToken(),
+        .selected_column_subject_token = zeroToken(),
+        .has_current_workspace_id = 0,
+        .has_source_workspace_id = 0,
+        .has_target_workspace_id = 0,
+        .has_adjacent_fallback_workspace_number = 0,
+        .has_current_monitor_id = 0,
+        .has_previous_monitor_id = 0,
+        .has_subject_token = 0,
+        .has_focused_token = 0,
+        .has_pending_managed_tiled_focus_token = 0,
+        .has_pending_managed_tiled_focus_workspace_id = 0,
+        .has_confirmed_tiled_focus_token = 0,
+        .has_confirmed_tiled_focus_workspace_id = 0,
+        .has_confirmed_floating_focus_token = 0,
+        .has_confirmed_floating_focus_workspace_id = 0,
+        .has_active_column_subject_token = 0,
+        .has_selected_column_subject_token = 0,
+        .is_non_managed_focus_active = 0,
+        .is_app_fullscreen_active = 0,
+        .wrap_around = 0,
+        .follow_focus = 0,
+    };
+}
+
+test "explicit switch targets workspace handoff and saves current workspace" {
+    var save_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
+    var affected_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
+    var affected_monitors = [_]u32{0, 0};
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
     const ws1 = UUID{ .high = 1, .low = 1 };
     const ws2 = UUID{ .high = 2, .low = 2 };
+    const target_token = WindowToken{ .pid = 42, .window_id = 4201 };
     const monitors = [_]MonitorSnapshot{
         .{
             .monitor_id = 11,
@@ -1105,47 +1335,21 @@ test "explicit switch targets workspace handoff and saves current workspace" {
         },
     };
     const workspaces = [_]WorkspaceSnapshot{
-        .{
-            .workspace_id = ws1,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 1,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 0,
-        },
-        .{
-            .workspace_id = ws2,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 2,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 1,
+        makeWorkspaceSnapshot(ws1, 11, layout_niri),
+        blk: {
+            var workspace = makeWorkspaceSnapshot(ws2, 11, layout_niri);
+            workspace.remembered_tiled_focus_token = target_token;
+            workspace.has_remembered_tiled_focus_token = 1;
+            break :blk workspace;
         },
     };
-    const input = Input{
-        .operation = op_switch_workspace_explicit,
-        .direction = direction_right,
-        .current_workspace_id = ws1,
-        .source_workspace_id = zeroUUID(),
-        .target_workspace_id = ws2,
-        .current_monitor_id = 11,
-        .previous_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .focused_token = zeroToken(),
-        .selected_token = zeroToken(),
-        .has_current_workspace_id = 1,
-        .has_source_workspace_id = 0,
-        .has_target_workspace_id = 1,
-        .has_current_monitor_id = 1,
-        .has_previous_monitor_id = 0,
-        .has_subject_token = 0,
-        .has_focused_token = 0,
-        .has_selected_token = 0,
-        .wrap_around = 0,
-        .follow_focus = 0,
-    };
+    var input = makeInput(op_switch_workspace_explicit);
+    input.current_workspace_id = ws1;
+    input.target_workspace_id = ws2;
+    input.current_monitor_id = 11;
+    input.has_current_workspace_id = 1;
+    input.has_target_workspace_id = 1;
+    input.has_current_monitor_id = 1;
 
     const status = omniwm_workspace_navigation_plan(
         &input,
@@ -1161,6 +1365,8 @@ test "explicit switch targets workspace handoff and saves current workspace" {
     try std.testing.expectEqual(focus_workspace_handoff, output.focus_action);
     try std.testing.expectEqual(@as(u8, 1), output.should_hide_focus_border);
     try std.testing.expectEqual(@as(u8, 1), output.should_commit_workspace_transition);
+    try std.testing.expectEqual(@as(u8, 1), output.has_resolved_focus_token);
+    try std.testing.expect(tokenEq(output.resolved_focus_token, target_token));
     try std.testing.expectEqual(@as(usize, 1), output.save_workspace_count);
     try std.testing.expect(uuidEq(save_workspaces[0], ws1));
     try std.testing.expect(uuidEq(output.target_workspace_id, ws2));
@@ -1171,35 +1377,7 @@ test "adjacent window move plans source recovery and both affected workspaces" {
     var save_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
     var affected_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
     var affected_monitors = [_]u32{0, 0};
-    var output = Output{
-        .outcome = 0,
-        .subject_kind = 0,
-        .focus_action = 0,
-        .source_workspace_id = zeroUUID(),
-        .target_workspace_id = zeroUUID(),
-        .source_monitor_id = 0,
-        .target_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .save_workspace_ids = &save_workspaces,
-        .save_workspace_capacity = save_workspaces.len,
-        .save_workspace_count = 0,
-        .affected_workspace_ids = &affected_workspaces,
-        .affected_workspace_capacity = affected_workspaces.len,
-        .affected_workspace_count = 0,
-        .affected_monitor_ids = &affected_monitors,
-        .affected_monitor_capacity = affected_monitors.len,
-        .affected_monitor_count = 0,
-        .has_source_workspace_id = 0,
-        .has_target_workspace_id = 0,
-        .has_source_monitor_id = 0,
-        .has_target_monitor_id = 0,
-        .has_subject_token = 0,
-        .should_activate_target_workspace = 0,
-        .should_set_interaction_monitor = 0,
-        .should_sync_monitors_to_niri = 0,
-        .should_hide_focus_border = 0,
-        .should_commit_workspace_transition = 0,
-    };
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
     const ws1 = UUID{ .high = 1, .low = 1 };
     const ws2 = UUID{ .high = 2, .low = 2 };
     const token = WindowToken{ .pid = 7, .window_id = 99 };
@@ -1217,47 +1395,19 @@ test "adjacent window move plans source recovery and both affected workspaces" {
         },
     };
     const workspaces = [_]WorkspaceSnapshot{
-        .{
-            .workspace_id = ws1,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 1,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 0,
-        },
-        .{
-            .workspace_id = ws2,
-            .monitor_id = 11,
-            .layout_kind = layout_dwindle,
-            .numeric_name = 2,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 1,
-        },
+        makeWorkspaceSnapshot(ws1, 11, layout_niri),
+        makeWorkspaceSnapshot(ws2, 11, layout_dwindle),
     };
-    const input = Input{
-        .operation = op_move_window_adjacent,
-        .direction = direction_down,
-        .current_workspace_id = ws1,
-        .source_workspace_id = ws1,
-        .target_workspace_id = zeroUUID(),
-        .current_monitor_id = 11,
-        .previous_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .focused_token = token,
-        .selected_token = zeroToken(),
-        .has_current_workspace_id = 1,
-        .has_source_workspace_id = 1,
-        .has_target_workspace_id = 0,
-        .has_current_monitor_id = 1,
-        .has_previous_monitor_id = 0,
-        .has_subject_token = 0,
-        .has_focused_token = 1,
-        .has_selected_token = 0,
-        .wrap_around = 0,
-        .follow_focus = 0,
-    };
+    var input = makeInput(op_move_window_adjacent);
+    input.direction = direction_down;
+    input.current_workspace_id = ws1;
+    input.source_workspace_id = ws1;
+    input.current_monitor_id = 11;
+    input.focused_token = token;
+    input.has_current_workspace_id = 1;
+    input.has_source_workspace_id = 1;
+    input.has_current_monitor_id = 1;
+    input.has_focused_token = 1;
 
     const status = omniwm_workspace_navigation_plan(
         &input,
@@ -1279,39 +1429,122 @@ test "adjacent window move plans source recovery and both affected workspaces" {
     try std.testing.expect(uuidEq(output.target_workspace_id, ws2));
 }
 
+test "adjacent window move can request numbered workspace materialization" {
+    var save_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
+    var affected_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
+    var affected_monitors = [_]u32{0, 0};
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
+    const ws1 = UUID{ .high = 1, .low = 1 };
+    const token = WindowToken{ .pid = 7, .window_id = 99 };
+    const monitors = [_]MonitorSnapshot{
+        .{
+            .monitor_id = 11,
+            .frame_min_x = 0,
+            .frame_max_y = 1080,
+            .center_x = 960,
+            .center_y = 540,
+            .active_workspace_id = ws1,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+    };
+    const workspaces = [_]WorkspaceSnapshot{
+        makeWorkspaceSnapshot(ws1, 11, layout_niri),
+    };
+    var input = makeInput(op_move_window_adjacent);
+    input.direction = direction_down;
+    input.current_workspace_id = ws1;
+    input.source_workspace_id = ws1;
+    input.current_monitor_id = 11;
+    input.focused_token = token;
+    input.adjacent_fallback_workspace_number = 2;
+    input.has_current_workspace_id = 1;
+    input.has_source_workspace_id = 1;
+    input.has_current_monitor_id = 1;
+    input.has_focused_token = 1;
+    input.has_adjacent_fallback_workspace_number = 1;
+
+    const status = omniwm_workspace_navigation_plan(
+        &input,
+        &monitors,
+        monitors.len,
+        &workspaces,
+        workspaces.len,
+        &output,
+    );
+
+    try std.testing.expectEqual(status_ok, status);
+    try std.testing.expectEqual(outcome_execute, output.outcome);
+    try std.testing.expectEqual(@as(u8, 1), output.should_materialize_target_workspace);
+    try std.testing.expectEqual(@as(u32, 2), output.target_workspace_materialization_number);
+    try std.testing.expectEqual(@as(u8, 0), output.has_target_workspace_id);
+    try std.testing.expectEqual(@as(u8, 1), output.has_target_monitor_id);
+    try std.testing.expectEqual(@as(u32, 11), output.target_monitor_id);
+    try std.testing.expectEqual(@as(usize, 1), output.affected_workspace_count);
+    try std.testing.expect(uuidEq(affected_workspaces[0], ws1));
+}
+
+test "adjacent column move can request numbered workspace materialization" {
+    var save_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
+    var affected_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
+    var affected_monitors = [_]u32{0, 0};
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
+    const ws1 = UUID{ .high = 11, .low = 11 };
+    const token = WindowToken{ .pid = 17, .window_id = 199 };
+    const monitors = [_]MonitorSnapshot{
+        .{
+            .monitor_id = 21,
+            .frame_min_x = 0,
+            .frame_max_y = 1080,
+            .center_x = 960,
+            .center_y = 540,
+            .active_workspace_id = ws1,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+    };
+    const workspaces = [_]WorkspaceSnapshot{
+        makeWorkspaceSnapshot(ws1, 21, layout_niri),
+    };
+    var input = makeInput(op_move_column_adjacent);
+    input.direction = direction_down;
+    input.current_workspace_id = ws1;
+    input.source_workspace_id = ws1;
+    input.current_monitor_id = 21;
+    input.active_column_subject_token = token;
+    input.adjacent_fallback_workspace_number = 2;
+    input.has_current_workspace_id = 1;
+    input.has_source_workspace_id = 1;
+    input.has_current_monitor_id = 1;
+    input.has_active_column_subject_token = 1;
+    input.has_adjacent_fallback_workspace_number = 1;
+
+    const status = omniwm_workspace_navigation_plan(
+        &input,
+        &monitors,
+        monitors.len,
+        &workspaces,
+        workspaces.len,
+        &output,
+    );
+
+    try std.testing.expectEqual(status_ok, status);
+    try std.testing.expectEqual(outcome_execute, output.outcome);
+    try std.testing.expectEqual(subject_column, output.subject_kind);
+    try std.testing.expectEqual(@as(u8, 1), output.should_materialize_target_workspace);
+    try std.testing.expectEqual(@as(u32, 2), output.target_workspace_materialization_number);
+    try std.testing.expectEqual(@as(u8, 0), output.has_target_workspace_id);
+    try std.testing.expectEqual(@as(u8, 1), output.has_target_monitor_id);
+    try std.testing.expectEqual(@as(u32, 21), output.target_monitor_id);
+}
+
 test "wrong-monitor move target returns invalid target" {
     var save_workspaces = [_]UUID{zeroUUID()};
     var affected_workspaces = [_]UUID{zeroUUID()};
     var affected_monitors = [_]u32{0};
-    var output = Output{
-        .outcome = 0,
-        .subject_kind = 0,
-        .focus_action = 0,
-        .source_workspace_id = zeroUUID(),
-        .target_workspace_id = zeroUUID(),
-        .source_monitor_id = 0,
-        .target_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .save_workspace_ids = &save_workspaces,
-        .save_workspace_capacity = save_workspaces.len,
-        .save_workspace_count = 0,
-        .affected_workspace_ids = &affected_workspaces,
-        .affected_workspace_capacity = affected_workspaces.len,
-        .affected_workspace_count = 0,
-        .affected_monitor_ids = &affected_monitors,
-        .affected_monitor_capacity = affected_monitors.len,
-        .affected_monitor_count = 0,
-        .has_source_workspace_id = 0,
-        .has_target_workspace_id = 0,
-        .has_source_monitor_id = 0,
-        .has_target_monitor_id = 0,
-        .has_subject_token = 0,
-        .should_activate_target_workspace = 0,
-        .should_set_interaction_monitor = 0,
-        .should_sync_monitors_to_niri = 0,
-        .should_hide_focus_border = 0,
-        .should_commit_workspace_transition = 0,
-    };
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
     const ws1 = UUID{ .high = 1, .low = 1 };
     const ws2 = UUID{ .high = 2, .low = 2 };
     const monitors = [_]MonitorSnapshot{
@@ -1339,47 +1572,22 @@ test "wrong-monitor move target returns invalid target" {
         },
     };
     const workspaces = [_]WorkspaceSnapshot{
-        .{
-            .workspace_id = ws1,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 1,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 0,
-        },
-        .{
-            .workspace_id = ws2,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 2,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 1,
-        },
+        makeWorkspaceSnapshot(ws1, 11, layout_niri),
+        makeWorkspaceSnapshot(ws2, 11, layout_niri),
     };
-    const input = Input{
-        .operation = op_move_window_to_workspace_on_monitor,
-        .direction = direction_right,
-        .current_workspace_id = ws1,
-        .source_workspace_id = ws1,
-        .target_workspace_id = ws2,
-        .current_monitor_id = 11,
-        .previous_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .focused_token = WindowToken{ .pid = 9, .window_id = 901 },
-        .selected_token = zeroToken(),
-        .has_current_workspace_id = 1,
-        .has_source_workspace_id = 1,
-        .has_target_workspace_id = 1,
-        .has_current_monitor_id = 1,
-        .has_previous_monitor_id = 0,
-        .has_subject_token = 0,
-        .has_focused_token = 1,
-        .has_selected_token = 0,
-        .wrap_around = 0,
-        .follow_focus = 1,
-    };
+    var input = makeInput(op_move_window_to_workspace_on_monitor);
+    input.direction = direction_right;
+    input.current_workspace_id = ws1;
+    input.source_workspace_id = ws1;
+    input.target_workspace_id = ws2;
+    input.current_monitor_id = 11;
+    input.focused_token = WindowToken{ .pid = 9, .window_id = 901 };
+    input.has_current_workspace_id = 1;
+    input.has_source_workspace_id = 1;
+    input.has_target_workspace_id = 1;
+    input.has_current_monitor_id = 1;
+    input.has_focused_token = 1;
+    input.follow_focus = 1;
 
     const status = omniwm_workspace_navigation_plan(
         &input,
@@ -1394,39 +1602,11 @@ test "wrong-monitor move target returns invalid target" {
     try std.testing.expectEqual(outcome_invalid_target, output.outcome);
 }
 
-test "relative workspace boundary still requests focus border hide" {
+test "relative workspace boundary stays a pure noop" {
     var save_workspaces = [_]UUID{zeroUUID()};
     var affected_workspaces = [_]UUID{zeroUUID()};
     var affected_monitors = [_]u32{0};
-    var output = Output{
-        .outcome = 0,
-        .subject_kind = 0,
-        .focus_action = 0,
-        .source_workspace_id = zeroUUID(),
-        .target_workspace_id = zeroUUID(),
-        .source_monitor_id = 0,
-        .target_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .save_workspace_ids = &save_workspaces,
-        .save_workspace_capacity = save_workspaces.len,
-        .save_workspace_count = 0,
-        .affected_workspace_ids = &affected_workspaces,
-        .affected_workspace_capacity = affected_workspaces.len,
-        .affected_workspace_count = 0,
-        .affected_monitor_ids = &affected_monitors,
-        .affected_monitor_capacity = affected_monitors.len,
-        .affected_monitor_count = 0,
-        .has_source_workspace_id = 0,
-        .has_target_workspace_id = 0,
-        .has_source_monitor_id = 0,
-        .has_target_monitor_id = 0,
-        .has_subject_token = 0,
-        .should_activate_target_workspace = 0,
-        .should_set_interaction_monitor = 0,
-        .should_sync_monitors_to_niri = 0,
-        .should_hide_focus_border = 0,
-        .should_commit_workspace_transition = 0,
-    };
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
     const ws1 = UUID{ .high = 1, .low = 1 };
     const monitors = [_]MonitorSnapshot{
         .{
@@ -1442,38 +1622,14 @@ test "relative workspace boundary still requests focus border hide" {
         },
     };
     const workspaces = [_]WorkspaceSnapshot{
-        .{
-            .workspace_id = ws1,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 1,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 0,
-        },
+        makeWorkspaceSnapshot(ws1, 11, layout_niri),
     };
-    const input = Input{
-        .operation = op_switch_workspace_relative,
-        .direction = direction_right,
-        .current_workspace_id = ws1,
-        .source_workspace_id = zeroUUID(),
-        .target_workspace_id = zeroUUID(),
-        .current_monitor_id = 11,
-        .previous_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .focused_token = zeroToken(),
-        .selected_token = zeroToken(),
-        .has_current_workspace_id = 1,
-        .has_source_workspace_id = 0,
-        .has_target_workspace_id = 0,
-        .has_current_monitor_id = 1,
-        .has_previous_monitor_id = 0,
-        .has_subject_token = 0,
-        .has_focused_token = 0,
-        .has_selected_token = 0,
-        .wrap_around = 0,
-        .follow_focus = 0,
-    };
+    var input = makeInput(op_switch_workspace_relative);
+    input.direction = direction_right;
+    input.current_workspace_id = ws1;
+    input.current_monitor_id = 11;
+    input.has_current_workspace_id = 1;
+    input.has_current_monitor_id = 1;
 
     const status = omniwm_workspace_navigation_plan(
         &input,
@@ -1486,42 +1642,14 @@ test "relative workspace boundary still requests focus border hide" {
 
     try std.testing.expectEqual(status_ok, status);
     try std.testing.expectEqual(outcome_noop, output.outcome);
-    try std.testing.expectEqual(@as(u8, 1), output.should_hide_focus_border);
+    try std.testing.expectEqual(@as(u8, 0), output.should_hide_focus_border);
 }
 
 test "explicit window move does not request source workspace save" {
     var save_workspaces = [_]UUID{zeroUUID()};
     var affected_workspaces = [_]UUID{zeroUUID(), zeroUUID()};
     var affected_monitors = [_]u32{0, 0};
-    var output = Output{
-        .outcome = 0,
-        .subject_kind = 0,
-        .focus_action = 0,
-        .source_workspace_id = zeroUUID(),
-        .target_workspace_id = zeroUUID(),
-        .source_monitor_id = 0,
-        .target_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .save_workspace_ids = &save_workspaces,
-        .save_workspace_capacity = save_workspaces.len,
-        .save_workspace_count = 0,
-        .affected_workspace_ids = &affected_workspaces,
-        .affected_workspace_capacity = affected_workspaces.len,
-        .affected_workspace_count = 0,
-        .affected_monitor_ids = &affected_monitors,
-        .affected_monitor_capacity = affected_monitors.len,
-        .affected_monitor_count = 0,
-        .has_source_workspace_id = 0,
-        .has_target_workspace_id = 0,
-        .has_source_monitor_id = 0,
-        .has_target_monitor_id = 0,
-        .has_subject_token = 0,
-        .should_activate_target_workspace = 0,
-        .should_set_interaction_monitor = 0,
-        .should_sync_monitors_to_niri = 0,
-        .should_hide_focus_border = 0,
-        .should_commit_workspace_transition = 0,
-    };
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
     const ws1 = UUID{ .high = 1, .low = 1 };
     const ws2 = UUID{ .high = 2, .low = 2 };
     const token = WindowToken{ .pid = 7, .window_id = 77 };
@@ -1550,47 +1678,17 @@ test "explicit window move does not request source workspace save" {
         },
     };
     const workspaces = [_]WorkspaceSnapshot{
-        .{
-            .workspace_id = ws1,
-            .monitor_id = 11,
-            .layout_kind = layout_niri,
-            .numeric_name = 1,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 0,
-        },
-        .{
-            .workspace_id = ws2,
-            .monitor_id = 12,
-            .layout_kind = layout_niri,
-            .numeric_name = 2,
-            .has_monitor_id = 1,
-            .has_numeric_name = 1,
-            .is_empty = 0,
-        },
+        makeWorkspaceSnapshot(ws1, 11, layout_niri),
+        makeWorkspaceSnapshot(ws2, 12, layout_niri),
     };
-    const input = Input{
-        .operation = op_move_window_explicit,
-        .direction = direction_right,
-        .current_workspace_id = zeroUUID(),
-        .source_workspace_id = ws1,
-        .target_workspace_id = ws2,
-        .current_monitor_id = 0,
-        .previous_monitor_id = 0,
-        .subject_token = zeroToken(),
-        .focused_token = token,
-        .selected_token = zeroToken(),
-        .has_current_workspace_id = 0,
-        .has_source_workspace_id = 1,
-        .has_target_workspace_id = 1,
-        .has_current_monitor_id = 0,
-        .has_previous_monitor_id = 0,
-        .has_subject_token = 0,
-        .has_focused_token = 1,
-        .has_selected_token = 0,
-        .wrap_around = 0,
-        .follow_focus = 0,
-    };
+    var input = makeInput(op_move_window_explicit);
+    input.direction = direction_right;
+    input.source_workspace_id = ws1;
+    input.target_workspace_id = ws2;
+    input.focused_token = token;
+    input.has_source_workspace_id = 1;
+    input.has_target_workspace_id = 1;
+    input.has_focused_token = 1;
 
     const status = omniwm_workspace_navigation_plan(
         &input,
@@ -1605,4 +1703,235 @@ test "explicit window move does not request source workspace save" {
     try std.testing.expectEqual(outcome_execute, output.outcome);
     try std.testing.expectEqual(@as(usize, 0), output.save_workspace_count);
     try std.testing.expectEqual(@as(usize, 2), output.affected_workspace_count);
+}
+
+test "focus workspace anywhere saves current and visible target workspace" {
+    var save_workspaces = [_]UUID{ zeroUUID(), zeroUUID(), zeroUUID() };
+    var affected_workspaces = [_]UUID{ zeroUUID(), zeroUUID() };
+    var affected_monitors = [_]u32{ 0, 0 };
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
+    const ws1 = UUID{ .high = 71, .low = 71 };
+    const ws2 = UUID{ .high = 72, .low = 72 };
+    const ws3 = UUID{ .high = 73, .low = 73 };
+    const target_token = WindowToken{ .pid = 73, .window_id = 7301 };
+    const monitors = [_]MonitorSnapshot{
+        .{
+            .monitor_id = 1000,
+            .frame_min_x = 0,
+            .frame_max_y = 1080,
+            .center_x = 960,
+            .center_y = 540,
+            .active_workspace_id = ws1,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+        .{
+            .monitor_id = 1001,
+            .frame_min_x = 1920,
+            .frame_max_y = 1080,
+            .center_x = 2880,
+            .center_y = 540,
+            .active_workspace_id = ws2,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+    };
+    const workspaces = [_]WorkspaceSnapshot{
+        makeWorkspaceSnapshot(ws1, 1000, layout_niri),
+        makeWorkspaceSnapshot(ws2, 1001, layout_niri),
+        blk: {
+            var workspace = makeWorkspaceSnapshot(ws3, 1001, layout_niri);
+            workspace.remembered_tiled_focus_token = target_token;
+            workspace.has_remembered_tiled_focus_token = 1;
+            break :blk workspace;
+        },
+    };
+    var input = makeInput(op_focus_workspace_anywhere);
+    input.direction = direction_right;
+    input.current_workspace_id = ws1;
+    input.target_workspace_id = ws3;
+    input.current_monitor_id = 1000;
+    input.has_current_workspace_id = 1;
+    input.has_target_workspace_id = 1;
+    input.has_current_monitor_id = 1;
+
+    const status = omniwm_workspace_navigation_plan(
+        &input,
+        &monitors,
+        monitors.len,
+        &workspaces,
+        workspaces.len,
+        &output,
+    );
+
+    try std.testing.expectEqual(status_ok, status);
+    try std.testing.expectEqual(outcome_execute, output.outcome);
+    try std.testing.expectEqual(focus_workspace_handoff, output.focus_action);
+    try std.testing.expectEqual(@as(u8, 1), output.has_resolved_focus_token);
+    try std.testing.expect(tokenEq(output.resolved_focus_token, target_token));
+    try std.testing.expectEqual(@as(u8, 1), output.should_sync_monitors_to_niri);
+    try std.testing.expectEqual(@as(usize, 2), output.save_workspace_count);
+    try std.testing.expect(
+        (uuidEq(save_workspaces[0], ws1) and uuidEq(save_workspaces[1], ws2)) or
+            (uuidEq(save_workspaces[0], ws2) and uuidEq(save_workspaces[1], ws1)),
+    );
+}
+
+test "follow-focus window move targets subject focus and activation" {
+    var save_workspaces = [_]UUID{zeroUUID()};
+    var affected_workspaces = [_]UUID{ zeroUUID(), zeroUUID() };
+    var affected_monitors = [_]u32{ 0, 0 };
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
+    const ws1 = UUID{ .high = 81, .low = 81 };
+    const ws2 = UUID{ .high = 82, .low = 82 };
+    const token = WindowToken{ .pid = 201, .window_id = 8801 };
+    const monitors = [_]MonitorSnapshot{
+        .{
+            .monitor_id = 1100,
+            .frame_min_x = 0,
+            .frame_max_y = 1080,
+            .center_x = 960,
+            .center_y = 540,
+            .active_workspace_id = ws1,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+        .{
+            .monitor_id = 1101,
+            .frame_min_x = 1920,
+            .frame_max_y = 1080,
+            .center_x = 2880,
+            .center_y = 540,
+            .active_workspace_id = ws2,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+    };
+    const workspaces = [_]WorkspaceSnapshot{
+        makeWorkspaceSnapshot(ws1, 1100, layout_niri),
+        makeWorkspaceSnapshot(ws2, 1101, layout_niri),
+    };
+    var input = makeInput(op_move_window_explicit);
+    input.direction = direction_right;
+    input.source_workspace_id = ws1;
+    input.target_workspace_id = ws2;
+    input.focused_token = token;
+    input.has_source_workspace_id = 1;
+    input.has_target_workspace_id = 1;
+    input.has_focused_token = 1;
+    input.follow_focus = 1;
+
+    const status = omniwm_workspace_navigation_plan(
+        &input,
+        &monitors,
+        monitors.len,
+        &workspaces,
+        workspaces.len,
+        &output,
+    );
+
+    try std.testing.expectEqual(status_ok, status);
+    try std.testing.expectEqual(outcome_execute, output.outcome);
+    try std.testing.expectEqual(subject_window, output.subject_kind);
+    try std.testing.expectEqual(focus_subject, output.focus_action);
+    try std.testing.expectEqual(@as(u8, 1), output.should_activate_target_workspace);
+    try std.testing.expectEqual(@as(u8, 1), output.should_set_interaction_monitor);
+    try std.testing.expectEqual(@as(u8, 1), output.should_commit_workspace_transition);
+    try std.testing.expectEqual(@as(usize, 2), output.affected_monitor_count);
+}
+
+test "explicit column move without selection is blocked" {
+    var save_workspaces = [_]UUID{zeroUUID()};
+    var affected_workspaces = [_]UUID{zeroUUID()};
+    var affected_monitors = [_]u32{0};
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
+    const ws1 = UUID{ .high = 91, .low = 91 };
+    const ws2 = UUID{ .high = 92, .low = 92 };
+    const token = WindowToken{ .pid = 202, .window_id = 9901 };
+    const monitors = [_]MonitorSnapshot{
+        .{
+            .monitor_id = 1200,
+            .frame_min_x = 0,
+            .frame_max_y = 1080,
+            .center_x = 960,
+            .center_y = 540,
+            .active_workspace_id = ws1,
+            .previous_workspace_id = zeroUUID(),
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 0,
+        },
+    };
+    const workspaces = [_]WorkspaceSnapshot{
+        makeWorkspaceSnapshot(ws1, 1200, layout_niri),
+        makeWorkspaceSnapshot(ws2, 1200, layout_niri),
+    };
+    var input = makeInput(op_move_column_explicit);
+    input.direction = direction_right;
+    input.source_workspace_id = ws1;
+    input.target_workspace_id = ws2;
+    input.focused_token = token;
+    input.has_source_workspace_id = 1;
+    input.has_target_workspace_id = 1;
+    input.has_focused_token = 1;
+
+    const status = omniwm_workspace_navigation_plan(
+        &input,
+        &monitors,
+        monitors.len,
+        &workspaces,
+        workspaces.len,
+        &output,
+    );
+
+    try std.testing.expectEqual(status_ok, status);
+    try std.testing.expectEqual(outcome_blocked, output.outcome);
+    try std.testing.expectEqual(@as(u8, 0), output.has_subject_token);
+}
+
+test "workspace back and forth noops when previous matches active" {
+    var save_workspaces = [_]UUID{zeroUUID()};
+    var affected_workspaces = [_]UUID{zeroUUID()};
+    var affected_monitors = [_]u32{0};
+    var output = makeOutput(save_workspaces[0..], affected_workspaces[0..], affected_monitors[0..]);
+    const ws1 = UUID{ .high = 101, .low = 101 };
+    const monitors = [_]MonitorSnapshot{
+        .{
+            .monitor_id = 1300,
+            .frame_min_x = 0,
+            .frame_max_y = 1080,
+            .center_x = 960,
+            .center_y = 540,
+            .active_workspace_id = ws1,
+            .previous_workspace_id = ws1,
+            .has_active_workspace_id = 1,
+            .has_previous_workspace_id = 1,
+        },
+    };
+    const workspaces = [_]WorkspaceSnapshot{
+        makeWorkspaceSnapshot(ws1, 1300, layout_niri),
+    };
+    var input = makeInput(op_workspace_back_and_forth);
+    input.direction = direction_right;
+    input.current_workspace_id = ws1;
+    input.current_monitor_id = 1300;
+    input.has_current_workspace_id = 1;
+    input.has_current_monitor_id = 1;
+
+    const status = omniwm_workspace_navigation_plan(
+        &input,
+        &monitors,
+        monitors.len,
+        &workspaces,
+        workspaces.len,
+        &output,
+    );
+
+    try std.testing.expectEqual(status_ok, status);
+    try std.testing.expectEqual(outcome_noop, output.outcome);
+    try std.testing.expectEqual(@as(u8, 0), output.should_hide_focus_border);
+    try std.testing.expectEqual(@as(usize, 0), output.save_workspace_count);
 }

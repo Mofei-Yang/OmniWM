@@ -119,7 +119,7 @@ Sources/
 └── OmniWMIPC/                       5 files: models, wire format, socket path
 ```
 
-`Zig/omniwm_kernels/` lives at the repository root beside `Sources/`. It contains the leaf kernels that are built into `.build/zig-kernels/lib/libomniwm_kernels.a`.
+`Zig/omniwm_kernels/` lives at the repository root beside `Sources/`. It contains the leaf kernels that `./Scripts/build-zig-kernels.sh` emits under `.build/zig-kernels/<configuration>/lib/libomniwm_kernels.a` when run directly, while the SwiftPM build plugin rebuilds the matching archive into its plugin work directory before OmniWM links.
 
 ### External Dependencies
 
@@ -129,7 +129,7 @@ OmniWM has **zero third-party package dependencies**. All functionality is built
 - **SkyLight**: A private Apple framework for low-latency window server access, linked via `-framework SkyLight` unsafe flag
 - **GhosttyKit**: A local binary xcframework at `Frameworks/GhosttyKit.xcframework`, validated against the pinned path and SHA-256 in `Scripts/build-metadata.env`, providing terminal emulation for the Quake Terminal feature
 - **System libraries**: libz, libc++
-- **Zig kernels**: `Zig/omniwm_kernels/src/`, built into `.build/zig-kernels/lib/libomniwm_kernels.a` by `./Scripts/build-zig-kernels.sh` and statically linked into the `OmniWM` executable, so official releases remain a single signed/notarized app bundle
+- **Zig kernels**: `Zig/omniwm_kernels/src/`, built by `./Scripts/build-zig-kernels.sh` into `.build/zig-kernels/<configuration>/lib/libomniwm_kernels.a` for manual workflows and auto-rebuilt by SwiftPM into its plugin work directory before OmniWM target builds, so official releases remain a single signed/notarized app bundle
 - **Zig toolchain**: required to rebuild the leaf-kernel static library and pinned via `Scripts/build-metadata.env`
 
 ### Building & Running
@@ -137,10 +137,12 @@ OmniWM has **zero third-party package dependencies**. All functionality is built
 ```bash
 # Debug build
 make build
+swift build
 
 # Run tests
 make test
 make kernels-test
+swift test
 
 # Code quality and pre-PR verification
 make lint          # SwiftLint check

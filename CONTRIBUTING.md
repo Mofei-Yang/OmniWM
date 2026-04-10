@@ -34,6 +34,7 @@ Bug fixes, documentation improvements, performance work, focused cleanups, featu
 - Update documentation when behavior, workflows, or interfaces change.
 - Run `make verify` before opening a pull request.
 - When touching `Zig/omniwm_kernels`, run `make kernels-test`.
+- Plain `swift build` and `swift test` now auto-build the matching Zig kernel archive through the local SwiftPM plugin, while `make kernels-build` still emits the manual archive under `.build/zig-kernels/<configuration>/lib/`.
 
 ## Basic Workflow
 

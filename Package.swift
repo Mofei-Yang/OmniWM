@@ -51,7 +51,17 @@ struct BuildMetadata {
 let buildMetadata = BuildMetadata.load(packageDirectory: packageDirectory)
 let ghosttyArchiveURL = URL(fileURLWithPath: packageDirectory).appendingPathComponent(buildMetadata.ghosttyArchiveRelativePath)
 let ghosttyMacOSLibraryDirectory = ghosttyArchiveURL.deletingLastPathComponent().path
-let zigKernelLibraryDirectory = "\(packageDirectory)/.build/zig-kernels/lib"
+
+func zigKernelSwiftPMLibraryDirectory(for configuration: String) -> String {
+    "\(packageDirectory)/.build/plugins/outputs/omniwm/OmniWM/destination/OmniWMKernelsBuildPlugin/zig-kernels/\(configuration)/lib"
+}
+
+let zigKernelDebugLibraryFlags = [
+    "-L\(zigKernelSwiftPMLibraryDirectory(for: "debug"))"
+]
+let zigKernelReleaseLibraryFlags = [
+    "-L\(zigKernelSwiftPMLibraryDirectory(for: "release"))"
+]
 
 let package = Package(
     name: "OmniWM",
@@ -69,6 +79,11 @@ let package = Package(
         )
     ],
     targets: [
+        .plugin(
+            name: "OmniWMKernelsBuildPlugin",
+            capability: .buildTool(),
+            path: "Plugins/OmniWMKernelsBuildPlugin"
+        ),
         .binaryTarget(
             name: "GhosttyKit",
             path: "Frameworks/GhosttyKit.xcframework"
@@ -107,9 +122,13 @@ let package = Package(
                 .linkedLibrary("omniwm_kernels"),
                 .linkedLibrary("z"),
                 .linkedLibrary("c++"),
-                .unsafeFlags(["-L\(zigKernelLibraryDirectory)"]),
+                .unsafeFlags(zigKernelDebugLibraryFlags, .when(configuration: .debug)),
+                .unsafeFlags(zigKernelReleaseLibraryFlags, .when(configuration: .release)),
                 .unsafeFlags(["-L\(ghosttyMacOSLibraryDirectory)"]),
                 .unsafeFlags(["-F/System/Library/PrivateFrameworks", "-framework", "SkyLight"])
+            ],
+            plugins: [
+                .plugin(name: "OmniWMKernelsBuildPlugin")
             ]
         ),
         .executableTarget(

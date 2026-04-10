@@ -922,30 +922,48 @@ private func syncNiriWorkspaceStatesForRefreshTests(
 
     @Test @MainActor func niriConfigAndEnableUseRelayoutOnly() async {
         let controller = makeRefreshTestController()
-        let recorder = RefreshEventRecorder()
-        installRefreshSpies(on: controller, recorder: recorder)
+        var relayoutEvents: [(RefreshReason, LayoutRefreshController.RefreshRoute)] = []
+        var fullRescanReasons: [RefreshReason] = []
+        let installHooks = {
+            controller.layoutRefreshController.resetDebugState()
+            controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+                relayoutEvents.append((reason, route))
+                return false
+            }
+            controller.layoutRefreshController.debugHooks.onFullRescan = { reason in
+                fullRescanReasons.append(reason)
+                return false
+            }
+        }
+        installHooks()
 
         controller.enableNiriLayout()
         await waitForRefreshWork(on: controller)
 
         #expect(controller.layoutRefreshController.debugCounters.relayoutExecutions == 1)
         #expect(controller.layoutRefreshController.debugCounters.fullRescanExecutions == 0)
-        #expect(recorder.relayoutEvents.map(\.0) == [.layoutConfigChanged])
-        #expect(recorder.relayoutEvents.map(\.1) == [.relayout])
-        #expect(recorder.fullRescanReasons.isEmpty)
-        assertNoLegacyReasons(recorder)
+        #expect(relayoutEvents.map(\.0) == [.layoutConfigChanged])
+        #expect(relayoutEvents.map(\.1) == [.relayout])
+        #expect(fullRescanReasons.isEmpty)
+        let observedEnableReasons = relayoutEvents.map(\.0.rawValue) + fullRescanReasons.map(\.rawValue)
+        #expect(!observedEnableReasons.contains("legacyImmediateCallsite"))
+        #expect(!observedEnableReasons.contains("legacyCallsite"))
 
-        resetRefreshSpies(on: controller, recorder: recorder)
+        relayoutEvents.removeAll()
+        fullRescanReasons.removeAll()
+        installHooks()
 
         controller.updateNiriConfig(maxWindowsPerColumn: 4)
         await waitForRefreshWork(on: controller)
 
         #expect(controller.layoutRefreshController.debugCounters.relayoutExecutions == 1)
         #expect(controller.layoutRefreshController.debugCounters.fullRescanExecutions == 0)
-        #expect(recorder.relayoutEvents.map(\.0) == [.layoutConfigChanged])
-        #expect(recorder.relayoutEvents.map(\.1) == [.relayout])
-        #expect(recorder.fullRescanReasons.isEmpty)
-        assertNoLegacyReasons(recorder)
+        #expect(relayoutEvents.map(\.0) == [.layoutConfigChanged])
+        #expect(relayoutEvents.map(\.1) == [.relayout])
+        #expect(fullRescanReasons.isEmpty)
+        let observedUpdateReasons = relayoutEvents.map(\.0.rawValue) + fullRescanReasons.map(\.rawValue)
+        #expect(!observedUpdateReasons.contains("legacyImmediateCallsite"))
+        #expect(!observedUpdateReasons.contains("legacyCallsite"))
     }
 
     @Test @MainActor func dwindleConfigAndEnableUseRelayoutOnly() async {
@@ -1287,6 +1305,31 @@ private func syncNiriWorkspaceStatesForRefreshTests(
         }
     }
 
+    @Test @MainActor func focusLastMonitorClearsManagedFocusForEmptyTargetWorkspace() async {
+        let fixture = makeTwoMonitorRefreshTestController()
+        let controller = fixture.controller
+        controller.setBordersEnabled(true)
+
+        let handle = addFocusedWindow(
+            on: controller,
+            workspaceId: fixture.primaryWorkspaceId,
+            windowId: 3_601
+        )
+        primeFocusedBorder(on: controller, handle: handle)
+
+        _ = controller.workspaceManager.setInteractionMonitor(fixture.secondaryMonitor.id)
+        _ = controller.workspaceManager.setInteractionMonitor(fixture.primaryMonitor.id)
+
+        controller.workspaceNavigationHandler.focusLastMonitor()
+        await waitForRefreshWork(on: controller)
+
+        #expect(controller.workspaceManager.interactionMonitorId == fixture.secondaryMonitor.id)
+        #expect(controller.workspaceManager.focusedToken == nil)
+        #expect(controller.workspaceManager.pendingFocusedToken == nil)
+        #expect(controller.workspaceManager.isNonManagedFocusActive)
+        #expect(lastAppliedBorderWindowId(on: controller) == nil)
+    }
+
     @Test @MainActor func movingFocusedWindowUpdatesCachedFocusTargetWorkspace() async {
         let controller = makeRefreshTestController()
         controller.setBordersEnabled(true)
@@ -1413,6 +1456,48 @@ private func syncNiriWorkspaceStatesForRefreshTests(
         #expect(!observedReasons.contains("legacyCallsite"))
     }
 
+    @Test @MainActor func moveFocusedWindowAdjacentAutoCreatesConfiguredWorkspace() async {
+        let controller = makeRefreshTestController(
+            workspaceConfigurations: [
+                WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+            ]
+        )
+        guard let sourceWorkspaceId = controller.activeWorkspace()?.id,
+              let sourceMonitorId = controller.workspaceManager.monitorId(for: sourceWorkspaceId)
+        else {
+            Issue.record("Missing source workspace for adjacent move auto-create test")
+            return
+        }
+
+        _ = addFocusedWindow(on: controller, workspaceId: sourceWorkspaceId, windowId: 305)
+        controller.settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+            WorkspaceConfiguration(name: "2", layoutType: .dwindle)
+        ]
+        #expect(controller.workspaceManager.workspaceId(named: "2") == nil)
+        controller.enableDwindleLayout()
+        await waitForRefreshWork(on: controller)
+
+        let recorder = RefreshEventRecorder()
+        installRefreshSpies(on: controller, recorder: recorder)
+
+        controller.workspaceNavigationHandler.moveWindowToAdjacentWorkspace(direction: .down)
+        await waitForRefreshWork(on: controller)
+
+        guard let targetWorkspaceId = controller.workspaceManager.workspaceId(named: "2") else {
+            Issue.record("Expected adjacent move to materialize workspace 2")
+            return
+        }
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.workspaceTransition])
+        #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
+        #expect(recorder.fullRescanReasons.isEmpty)
+        #expect(controller.workspaceManager.monitorId(for: targetWorkspaceId) == sourceMonitorId)
+        #expect(controller.workspaceManager.lastFocusedToken(in: targetWorkspaceId) == WindowToken(pid: getpid(), windowId: 305))
+        #expect(controller.activeWorkspace()?.id == sourceWorkspaceId)
+        assertNoLegacyReasons(recorder)
+    }
+
     @Test @MainActor func moveFocusedWindowsToInactiveDwindleWorkspaceBootstrapsRecursiveLayout() async {
         let controller = makeRefreshTestController()
         guard let sourceWorkspaceId = controller.activeWorkspace()?.id,
@@ -1535,6 +1620,212 @@ private func syncNiriWorkspaceStatesForRefreshTests(
         let frames = controller.dwindleEngine?.currentFrames(in: targetWorkspaceId) ?? [:]
         #expect(Set(frames.keys) == Set(movedTokens))
         #expect(frames == expectedFrames)
+    }
+
+    @Test @MainActor func moveColumnToWorkspaceUsesActiveColumnWhenSelectionDiffers() async {
+        let controller = makeRefreshTestController()
+        guard let sourceWorkspaceId = controller.activeWorkspace()?.id,
+              let targetWorkspaceId = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Missing source or target workspace for active-column transfer test")
+            return
+        }
+
+        configureWorkspaceLayouts(
+            on: controller,
+            layoutsByName: [
+                "1": .defaultLayout,
+                "2": .dwindle
+            ]
+        )
+        controller.enableNiriLayout(maxWindowsPerColumn: 3)
+        controller.enableDwindleLayout()
+        await waitForRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+        controller.settings.focusFollowsWindowToMonitor = false
+
+        let windowIds = [3_411, 3_412, 3_413]
+        let handles: [WindowHandle] = windowIds.compactMap { windowId in
+            let token = controller.workspaceManager.addWindow(
+                makeRefreshTestWindow(windowId: windowId),
+                pid: getpid(),
+                windowId: windowId,
+                to: sourceWorkspaceId
+            )
+            guard let handle = controller.workspaceManager.handle(for: token) else {
+                Issue.record("Missing bridge handle for active-column transfer fixture")
+                return nil
+            }
+            return handle
+        }
+        guard handles.count == windowIds.count,
+              let engine = controller.niriEngine,
+              let sourceMonitor = controller.workspaceManager.monitor(for: sourceWorkspaceId)
+        else {
+            Issue.record("Missing Niri engine or source monitor for active-column transfer test")
+            return
+        }
+
+        let sourceRoot = NiriRoot(workspaceId: sourceWorkspaceId)
+        let focusedColumn = NiriContainer()
+        focusedColumn.width = .fixed(420)
+        focusedColumn.cachedWidth = 420
+        let activeColumn = NiriContainer()
+        activeColumn.width = .fixed(460)
+        activeColumn.cachedWidth = 460
+        sourceRoot.appendChild(focusedColumn)
+        sourceRoot.appendChild(activeColumn)
+        engine.roots[sourceWorkspaceId] = sourceRoot
+        engine.ensureMonitor(for: sourceMonitor.id, monitor: sourceMonitor).workspaceRoots[sourceWorkspaceId] = sourceRoot
+
+        let focusedWindow = NiriWindow(token: handles[0].id)
+        focusedColumn.appendChild(focusedWindow)
+        engine.tokenToNode[handles[0].id] = focusedWindow
+
+        for handle in handles.dropFirst() {
+            let window = NiriWindow(token: handle.id)
+            activeColumn.appendChild(window)
+            engine.tokenToNode[handle.id] = window
+        }
+
+        _ = controller.workspaceManager.setManagedFocus(
+            handles[0],
+            in: sourceWorkspaceId,
+            onMonitor: sourceMonitor.id
+        )
+        _ = controller.workspaceManager.commitWorkspaceSelection(
+            nodeId: focusedWindow.id,
+            focusedToken: handles[0].id,
+            in: sourceWorkspaceId,
+            onMonitor: sourceMonitor.id
+        )
+        controller.workspaceManager.withNiriViewportState(for: sourceWorkspaceId) { state in
+            state.selectedNodeId = focusedWindow.id
+            state.activeColumnIndex = 1
+            state.viewOffsetPixels = .static(0)
+        }
+
+        controller.workspaceNavigationHandler.moveColumnToWorkspace(rawWorkspaceID: "2")
+        await waitForRefreshWork(on: controller)
+
+        let movedTokens = Set(handles.dropFirst().map(\.id))
+        #expect(dwindleTokenSet(controller: controller, workspaceId: targetWorkspaceId) == movedTokens)
+        #expect(controller.workspaceManager.focusedToken == handles[0].id)
+        #expect(Set(controller.niriEngine?.root(for: sourceWorkspaceId)?.allWindows.map(\.token) ?? []) == [handles[0].id])
+    }
+
+    @Test @MainActor func moveColumnAdjacentAutoCreatesConfiguredWorkspace() async {
+        let controller = makeRefreshTestController(
+            workspaceConfigurations: [
+                WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+            ]
+        )
+        guard let sourceWorkspaceId = controller.activeWorkspace()?.id,
+              let sourceMonitor = controller.workspaceManager.monitor(for: sourceWorkspaceId)
+        else {
+            Issue.record("Missing source workspace for adjacent column auto-create test")
+            return
+        }
+
+        controller.settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+            WorkspaceConfiguration(name: "2", layoutType: .dwindle)
+        ]
+        #expect(controller.workspaceManager.workspaceId(named: "2") == nil)
+        controller.enableNiriLayout(maxWindowsPerColumn: 3)
+        controller.enableDwindleLayout()
+        await waitForRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+
+        let windowIds = [3_421, 3_422]
+        let handles: [WindowHandle] = windowIds.compactMap { windowId in
+            let token = controller.workspaceManager.addWindow(
+                makeRefreshTestWindow(windowId: windowId),
+                pid: getpid(),
+                windowId: windowId,
+                to: sourceWorkspaceId
+            )
+            guard let handle = controller.workspaceManager.handle(for: token) else {
+                Issue.record("Missing bridge handle for adjacent column auto-create test")
+                return nil
+            }
+            return handle
+        }
+        guard handles.count == windowIds.count,
+              let engine = controller.niriEngine
+        else {
+            Issue.record("Missing Niri engine for adjacent column auto-create test")
+            return
+        }
+
+        let sourceRoot = NiriRoot(workspaceId: sourceWorkspaceId)
+        let activeColumn = NiriContainer()
+        activeColumn.width = .fixed(440)
+        activeColumn.cachedWidth = 440
+        sourceRoot.appendChild(activeColumn)
+        engine.roots[sourceWorkspaceId] = sourceRoot
+        engine.ensureMonitor(for: sourceMonitor.id, monitor: sourceMonitor).workspaceRoots[sourceWorkspaceId] = sourceRoot
+
+        var firstNode: NiriWindow?
+        for handle in handles {
+            let window = NiriWindow(token: handle.id)
+            activeColumn.appendChild(window)
+            engine.tokenToNode[handle.id] = window
+            firstNode = firstNode ?? window
+        }
+
+        guard let focusedHandle = handles.first,
+              let firstNode
+        else {
+            Issue.record("Missing focused source column state")
+            return
+        }
+
+        _ = controller.workspaceManager.setManagedFocus(
+            focusedHandle,
+            in: sourceWorkspaceId,
+            onMonitor: sourceMonitor.id
+        )
+        _ = controller.workspaceManager.commitWorkspaceSelection(
+            nodeId: firstNode.id,
+            focusedToken: focusedHandle.id,
+            in: sourceWorkspaceId,
+            onMonitor: sourceMonitor.id
+        )
+        controller.workspaceManager.withNiriViewportState(for: sourceWorkspaceId) { state in
+            state.selectedNodeId = firstNode.id
+            state.activeColumnIndex = 0
+            state.viewOffsetPixels = .static(0)
+        }
+
+        var relayoutEvents: [(RefreshReason, LayoutRefreshController.RefreshRoute)] = []
+        var fullRescanReasons: [RefreshReason] = []
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
+            relayoutEvents.append((reason, route))
+            return false
+        }
+        controller.layoutRefreshController.debugHooks.onFullRescan = { reason in
+            fullRescanReasons.append(reason)
+            return false
+        }
+
+        controller.workspaceNavigationHandler.moveColumnToAdjacentWorkspace(direction: .down)
+        await waitForRefreshWork(on: controller)
+
+        guard let targetWorkspaceId = controller.workspaceManager.workspaceId(named: "2") else {
+            Issue.record("Expected adjacent column move to materialize workspace 2")
+            return
+        }
+        #expect(relayoutEvents.map(\.0) == [.workspaceTransition])
+        #expect(relayoutEvents.map(\.1) == [.immediateRelayout])
+        #expect(fullRescanReasons.isEmpty)
+        #expect(controller.workspaceManager.monitorId(for: targetWorkspaceId) == sourceMonitor.id)
+        #expect(dwindleTokenSet(controller: controller, workspaceId: targetWorkspaceId) == Set(handles.map(\.id)))
+        #expect(controller.activeWorkspace()?.id == sourceWorkspaceId)
+        let observedReasons = relayoutEvents.map(\.0.rawValue) + fullRescanReasons.map(\.rawValue)
+        #expect(!observedReasons.contains("legacyImmediateCallsite"))
+        #expect(!observedReasons.contains("legacyCallsite"))
     }
 
     @Test @MainActor func summonWindowRightIntoNiriUsesImmediateRelayoutOnly() async {

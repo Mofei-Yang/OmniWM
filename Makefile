@@ -19,12 +19,10 @@ kernels-test:
 
 build:
 	./Scripts/build-preflight.sh build debug
-	$(MAKE) kernels-build
 	$(SWIFT_WITH_GHOSTTY) swift build
 
 test:
 	./Scripts/build-preflight.sh build debug
-	$(MAKE) kernels-build
 	$(SWIFT_WITH_GHOSTTY) swift test
 
 verify:
@@ -35,7 +33,6 @@ verify:
 release-check:
 	./Scripts/build-preflight.sh release-check
 	$(MAKE) verify
-	$(MAKE) kernels-build CONFIG=release
 	$(SWIFT_WITH_GHOSTTY) swift build -c release --arch arm64 --arch x86_64
 	test -x .build/apple/Products/Release/OmniWM
 	test -x .build/apple/Products/Release/omniwmctl

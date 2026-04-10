@@ -810,6 +810,7 @@ enum {
     OMNIWM_WORKSPACE_NAV_FOCUS_RESOLVE_TARGET_IF_PRESENT = 2,
     OMNIWM_WORKSPACE_NAV_FOCUS_SUBJECT = 3,
     OMNIWM_WORKSPACE_NAV_FOCUS_RECOVER_SOURCE = 4,
+    OMNIWM_WORKSPACE_NAV_FOCUS_CLEAR_MANAGED_FOCUS = 5,
 };
 
 typedef struct {
@@ -818,19 +819,37 @@ typedef struct {
     omniwm_uuid current_workspace_id;
     omniwm_uuid source_workspace_id;
     omniwm_uuid target_workspace_id;
+    uint32_t adjacent_fallback_workspace_number;
     uint32_t current_monitor_id;
     uint32_t previous_monitor_id;
     omniwm_window_token subject_token;
     omniwm_window_token focused_token;
-    omniwm_window_token selected_token;
+    omniwm_window_token pending_managed_tiled_focus_token;
+    omniwm_uuid pending_managed_tiled_focus_workspace_id;
+    omniwm_window_token confirmed_tiled_focus_token;
+    omniwm_uuid confirmed_tiled_focus_workspace_id;
+    omniwm_window_token confirmed_floating_focus_token;
+    omniwm_uuid confirmed_floating_focus_workspace_id;
+    omniwm_window_token active_column_subject_token;
+    omniwm_window_token selected_column_subject_token;
     uint8_t has_current_workspace_id;
     uint8_t has_source_workspace_id;
     uint8_t has_target_workspace_id;
+    uint8_t has_adjacent_fallback_workspace_number;
     uint8_t has_current_monitor_id;
     uint8_t has_previous_monitor_id;
     uint8_t has_subject_token;
     uint8_t has_focused_token;
-    uint8_t has_selected_token;
+    uint8_t has_pending_managed_tiled_focus_token;
+    uint8_t has_pending_managed_tiled_focus_workspace_id;
+    uint8_t has_confirmed_tiled_focus_token;
+    uint8_t has_confirmed_tiled_focus_workspace_id;
+    uint8_t has_confirmed_floating_focus_token;
+    uint8_t has_confirmed_floating_focus_workspace_id;
+    uint8_t has_active_column_subject_token;
+    uint8_t has_selected_column_subject_token;
+    uint8_t is_non_managed_focus_active;
+    uint8_t is_app_fullscreen_active;
     uint8_t wrap_around;
     uint8_t follow_focus;
 } omniwm_workspace_navigation_input;
@@ -851,10 +870,15 @@ typedef struct {
     omniwm_uuid workspace_id;
     uint32_t monitor_id;
     uint32_t layout_kind;
-    int32_t numeric_name;
+    omniwm_window_token remembered_tiled_focus_token;
+    omniwm_window_token first_tiled_focus_token;
+    omniwm_window_token remembered_floating_focus_token;
+    omniwm_window_token first_floating_focus_token;
     uint8_t has_monitor_id;
-    uint8_t has_numeric_name;
-    uint8_t is_empty;
+    uint8_t has_remembered_tiled_focus_token;
+    uint8_t has_first_tiled_focus_token;
+    uint8_t has_remembered_floating_focus_token;
+    uint8_t has_first_floating_focus_token;
 } omniwm_workspace_navigation_workspace;
 
 typedef struct {
@@ -863,9 +887,11 @@ typedef struct {
     uint32_t focus_action;
     omniwm_uuid source_workspace_id;
     omniwm_uuid target_workspace_id;
+    uint32_t target_workspace_materialization_number;
     uint32_t source_monitor_id;
     uint32_t target_monitor_id;
     omniwm_window_token subject_token;
+    omniwm_window_token resolved_focus_token;
     omniwm_uuid *save_workspace_ids;
     size_t save_workspace_capacity;
     size_t save_workspace_count;
@@ -880,6 +906,8 @@ typedef struct {
     uint8_t has_source_monitor_id;
     uint8_t has_target_monitor_id;
     uint8_t has_subject_token;
+    uint8_t has_resolved_focus_token;
+    uint8_t should_materialize_target_workspace;
     uint8_t should_activate_target_workspace;
     uint8_t should_set_interaction_monitor;
     uint8_t should_sync_monitors_to_niri;
