@@ -1963,22 +1963,6 @@ final class WorkspaceManager {
         return descriptor(for: prevId)
     }
 
-    func nextWorkspaceInOrder(
-        on monitorId: Monitor.ID,
-        from workspaceId: WorkspaceDescriptor.ID,
-        wrapAround: Bool
-    ) -> WorkspaceDescriptor? {
-        adjacentWorkspaceInOrder(on: monitorId, from: workspaceId, offset: 1, wrapAround: wrapAround)
-    }
-
-    func previousWorkspaceInOrder(
-        on monitorId: Monitor.ID,
-        from workspaceId: WorkspaceDescriptor.ID,
-        wrapAround: Bool
-    ) -> WorkspaceDescriptor? {
-        adjacentWorkspaceInOrder(on: monitorId, from: workspaceId, offset: -1, wrapAround: wrapAround)
-    }
-
     func activeWorkspaceOrFirst(on monitorId: Monitor.ID) -> WorkspaceDescriptor? {
         if let active = activeWorkspace(on: monitorId) {
             return active
@@ -1993,25 +1977,6 @@ final class WorkspaceManager {
             return cached
         }
         return Set(visibleWorkspaceMap().values)
-    }
-
-    private func adjacentWorkspaceInOrder(
-        on monitorId: Monitor.ID,
-        from workspaceId: WorkspaceDescriptor.ID,
-        offset: Int,
-        wrapAround: Bool
-    ) -> WorkspaceDescriptor? {
-        let ordered = workspaces(on: monitorId)
-        guard ordered.count > 1 else { return nil }
-        guard let currentIdx = ordered.firstIndex(where: { $0.id == workspaceId }) else { return nil }
-
-        let targetIdx = currentIdx + offset
-        if wrapAround {
-            let wrappedIdx = (targetIdx % ordered.count + ordered.count) % ordered.count
-            return ordered[wrappedIdx]
-        }
-        guard ordered.indices.contains(targetIdx) else { return nil }
-        return ordered[targetIdx]
     }
 
     func focusWorkspace(named name: String) -> (workspace: WorkspaceDescriptor, monitor: Monitor)? {
@@ -2896,141 +2861,6 @@ final class WorkspaceManager {
                         session.previousVisibleWorkspaceId = nil
                     }
                 }
-            }
-        }
-    }
-
-    func adjacentMonitor(from monitorId: Monitor.ID, direction: Direction, wrapAround: Bool = false) -> Monitor? {
-        guard let current = monitor(byId: monitorId) else { return nil }
-        let others = monitors.filter { $0.id != current.id }
-        guard !others.isEmpty else { return nil }
-
-        let directional = others.filter { candidate in
-            let delta = monitorDelta(from: current, to: candidate)
-            switch direction {
-            case .left: return delta.dx < 0
-            case .right: return delta.dx > 0
-            case .up: return delta.dy > 0
-            case .down: return delta.dy < 0
-            }
-        }
-
-        if let bestDirectional = bestMonitor(in: directional, from: current, direction: direction) {
-            return bestDirectional
-        }
-
-        guard wrapAround else { return nil }
-        return wrappedMonitor(in: others, from: current, direction: direction)
-    }
-
-    func previousMonitor(from monitorId: Monitor.ID) -> Monitor? {
-        guard monitors.count > 1 else { return nil }
-
-        let sorted = Monitor.sortedByPosition(monitors)
-        guard let currentIdx = sorted.firstIndex(where: { $0.id == monitorId }) else { return nil }
-
-        let prevIdx = currentIdx > 0 ? currentIdx - 1 : sorted.count - 1
-        return sorted[prevIdx]
-    }
-
-    func nextMonitor(from monitorId: Monitor.ID) -> Monitor? {
-        guard monitors.count > 1 else { return nil }
-
-        let sorted = Monitor.sortedByPosition(monitors)
-        guard let currentIdx = sorted.firstIndex(where: { $0.id == monitorId }) else { return nil }
-
-        let nextIdx = (currentIdx + 1) % sorted.count
-        return sorted[nextIdx]
-    }
-
-    private func monitorDelta(from source: Monitor, to target: Monitor) -> (dx: CGFloat, dy: CGFloat) {
-        let dx = target.frame.center.x - source.frame.center.x
-        let dy = target.frame.center.y - source.frame.center.y
-        return (dx, dy)
-    }
-
-    private func bestMonitor(in candidates: [Monitor], from current: Monitor, direction: Direction) -> Monitor? {
-        candidates.min(by: {
-            isBetterMonitorCandidate($0, than: $1, from: current, direction: direction, mode: .directional)
-        })
-    }
-
-    private func wrappedMonitor(in candidates: [Monitor], from current: Monitor, direction: Direction) -> Monitor? {
-        candidates.min(by: {
-            isBetterMonitorCandidate($0, than: $1, from: current, direction: direction, mode: .wrapped)
-        })
-    }
-
-    private enum MonitorSelectionMode {
-        case directional
-        case wrapped
-    }
-
-    private struct MonitorSelectionRank {
-        let primary: CGFloat
-        let secondary: CGFloat
-        let distance: CGFloat?
-    }
-
-    private func isBetterMonitorCandidate(
-        _ lhs: Monitor,
-        than rhs: Monitor,
-        from current: Monitor,
-        direction: Direction,
-        mode: MonitorSelectionMode
-    ) -> Bool {
-        let lhsRank = monitorSelectionRank(for: lhs, from: current, direction: direction, mode: mode)
-        let rhsRank = monitorSelectionRank(for: rhs, from: current, direction: direction, mode: mode)
-
-        if lhsRank.primary != rhsRank.primary {
-            return lhsRank.primary < rhsRank.primary
-        }
-        if lhsRank.secondary != rhsRank.secondary {
-            return lhsRank.secondary < rhsRank.secondary
-        }
-        if let lhsDistance = lhsRank.distance,
-           let rhsDistance = rhsRank.distance,
-           lhsDistance != rhsDistance
-        {
-            return lhsDistance < rhsDistance
-        }
-        return monitorSortKey(lhs) < monitorSortKey(rhs)
-    }
-
-    private func monitorSelectionRank(
-        for candidate: Monitor,
-        from current: Monitor,
-        direction: Direction,
-        mode: MonitorSelectionMode
-    ) -> MonitorSelectionRank {
-        let delta = monitorDelta(from: current, to: candidate)
-
-        switch mode {
-        case .directional:
-            switch direction {
-            case .left, .right:
-                return MonitorSelectionRank(
-                    primary: abs(delta.dx),
-                    secondary: abs(delta.dy),
-                    distance: candidate.frame.center.distanceSquared(to: current.frame.center)
-                )
-            case .up, .down:
-                return MonitorSelectionRank(
-                    primary: abs(delta.dy),
-                    secondary: abs(delta.dx),
-                    distance: candidate.frame.center.distanceSquared(to: current.frame.center)
-                )
-            }
-        case .wrapped:
-            switch direction {
-            case .right:
-                return MonitorSelectionRank(primary: candidate.frame.center.x, secondary: abs(delta.dy), distance: nil)
-            case .left:
-                return MonitorSelectionRank(primary: -candidate.frame.center.x, secondary: abs(delta.dy), distance: nil)
-            case .up:
-                return MonitorSelectionRank(primary: candidate.frame.center.y, secondary: abs(delta.dx), distance: nil)
-            case .down:
-                return MonitorSelectionRank(primary: -candidate.frame.center.y, secondary: abs(delta.dx), distance: nil)
             }
         }
     }

@@ -769,6 +769,133 @@ typedef struct {
     int64_t window_id;
 } omniwm_window_token;
 
+enum {
+    OMNIWM_WORKSPACE_NAV_OPERATION_FOCUS_MONITOR_CYCLIC = 0,
+    OMNIWM_WORKSPACE_NAV_OPERATION_FOCUS_MONITOR_LAST = 1,
+    OMNIWM_WORKSPACE_NAV_OPERATION_SWAP_WORKSPACE_WITH_MONITOR = 2,
+    OMNIWM_WORKSPACE_NAV_OPERATION_SWITCH_WORKSPACE_EXPLICIT = 3,
+    OMNIWM_WORKSPACE_NAV_OPERATION_SWITCH_WORKSPACE_RELATIVE = 4,
+    OMNIWM_WORKSPACE_NAV_OPERATION_FOCUS_WORKSPACE_ANYWHERE = 5,
+    OMNIWM_WORKSPACE_NAV_OPERATION_WORKSPACE_BACK_AND_FORTH = 6,
+    OMNIWM_WORKSPACE_NAV_OPERATION_MOVE_WINDOW_ADJACENT = 7,
+    OMNIWM_WORKSPACE_NAV_OPERATION_MOVE_WINDOW_EXPLICIT = 8,
+    OMNIWM_WORKSPACE_NAV_OPERATION_MOVE_COLUMN_ADJACENT = 9,
+    OMNIWM_WORKSPACE_NAV_OPERATION_MOVE_COLUMN_EXPLICIT = 10,
+    OMNIWM_WORKSPACE_NAV_OPERATION_MOVE_WINDOW_TO_WORKSPACE_ON_MONITOR = 11,
+    OMNIWM_WORKSPACE_NAV_OPERATION_MOVE_WINDOW_HANDLE = 12,
+};
+
+enum {
+    OMNIWM_WORKSPACE_NAV_OUTCOME_NOOP = 0,
+    OMNIWM_WORKSPACE_NAV_OUTCOME_EXECUTE = 1,
+    OMNIWM_WORKSPACE_NAV_OUTCOME_INVALID_TARGET = 2,
+    OMNIWM_WORKSPACE_NAV_OUTCOME_BLOCKED = 3,
+};
+
+enum {
+    OMNIWM_WORKSPACE_NAV_LAYOUT_DEFAULT = 0,
+    OMNIWM_WORKSPACE_NAV_LAYOUT_NIRI = 1,
+    OMNIWM_WORKSPACE_NAV_LAYOUT_DWINDLE = 2,
+};
+
+enum {
+    OMNIWM_WORKSPACE_NAV_SUBJECT_NONE = 0,
+    OMNIWM_WORKSPACE_NAV_SUBJECT_WINDOW = 1,
+    OMNIWM_WORKSPACE_NAV_SUBJECT_COLUMN = 2,
+};
+
+enum {
+    OMNIWM_WORKSPACE_NAV_FOCUS_NONE = 0,
+    OMNIWM_WORKSPACE_NAV_FOCUS_WORKSPACE_HANDOFF = 1,
+    OMNIWM_WORKSPACE_NAV_FOCUS_RESOLVE_TARGET_IF_PRESENT = 2,
+    OMNIWM_WORKSPACE_NAV_FOCUS_SUBJECT = 3,
+    OMNIWM_WORKSPACE_NAV_FOCUS_RECOVER_SOURCE = 4,
+};
+
+typedef struct {
+    uint32_t operation;
+    uint32_t direction;
+    omniwm_uuid current_workspace_id;
+    omniwm_uuid source_workspace_id;
+    omniwm_uuid target_workspace_id;
+    uint32_t current_monitor_id;
+    uint32_t previous_monitor_id;
+    omniwm_window_token subject_token;
+    omniwm_window_token focused_token;
+    omniwm_window_token selected_token;
+    uint8_t has_current_workspace_id;
+    uint8_t has_source_workspace_id;
+    uint8_t has_target_workspace_id;
+    uint8_t has_current_monitor_id;
+    uint8_t has_previous_monitor_id;
+    uint8_t has_subject_token;
+    uint8_t has_focused_token;
+    uint8_t has_selected_token;
+    uint8_t wrap_around;
+    uint8_t follow_focus;
+} omniwm_workspace_navigation_input;
+
+typedef struct {
+    uint32_t monitor_id;
+    double frame_min_x;
+    double frame_max_y;
+    double center_x;
+    double center_y;
+    omniwm_uuid active_workspace_id;
+    omniwm_uuid previous_workspace_id;
+    uint8_t has_active_workspace_id;
+    uint8_t has_previous_workspace_id;
+} omniwm_workspace_navigation_monitor;
+
+typedef struct {
+    omniwm_uuid workspace_id;
+    uint32_t monitor_id;
+    uint32_t layout_kind;
+    int32_t numeric_name;
+    uint8_t has_monitor_id;
+    uint8_t has_numeric_name;
+    uint8_t is_empty;
+} omniwm_workspace_navigation_workspace;
+
+typedef struct {
+    uint32_t outcome;
+    uint32_t subject_kind;
+    uint32_t focus_action;
+    omniwm_uuid source_workspace_id;
+    omniwm_uuid target_workspace_id;
+    uint32_t source_monitor_id;
+    uint32_t target_monitor_id;
+    omniwm_window_token subject_token;
+    omniwm_uuid *save_workspace_ids;
+    size_t save_workspace_capacity;
+    size_t save_workspace_count;
+    omniwm_uuid *affected_workspace_ids;
+    size_t affected_workspace_capacity;
+    size_t affected_workspace_count;
+    uint32_t *affected_monitor_ids;
+    size_t affected_monitor_capacity;
+    size_t affected_monitor_count;
+    uint8_t has_source_workspace_id;
+    uint8_t has_target_workspace_id;
+    uint8_t has_source_monitor_id;
+    uint8_t has_target_monitor_id;
+    uint8_t has_subject_token;
+    uint8_t should_activate_target_workspace;
+    uint8_t should_set_interaction_monitor;
+    uint8_t should_sync_monitors_to_niri;
+    uint8_t should_hide_focus_border;
+    uint8_t should_commit_workspace_transition;
+} omniwm_workspace_navigation_output;
+
+int32_t omniwm_workspace_navigation_plan(
+    const omniwm_workspace_navigation_input *input,
+    const omniwm_workspace_navigation_monitor *monitors,
+    size_t monitor_count,
+    const omniwm_workspace_navigation_workspace *workspaces,
+    size_t workspace_count,
+    omniwm_workspace_navigation_output *output
+);
+
 typedef struct {
     double x;
     double y;
