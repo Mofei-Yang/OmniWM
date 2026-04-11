@@ -575,6 +575,267 @@ int32_t omniwm_restore_resolve_assignments(
 );
 
 enum {
+    OMNIWM_RESTORE_EVENT_KIND_OTHER = 0,
+    OMNIWM_RESTORE_EVENT_KIND_TOPOLOGY_CHANGED = 1,
+    OMNIWM_RESTORE_EVENT_KIND_ACTIVE_SPACE_CHANGED = 2,
+    OMNIWM_RESTORE_EVENT_KIND_SYSTEM_WAKE = 3,
+    OMNIWM_RESTORE_EVENT_KIND_SYSTEM_SLEEP = 4,
+};
+
+enum {
+    OMNIWM_RESTORE_NOTE_NONE = 0,
+    OMNIWM_RESTORE_NOTE_TOPOLOGY = 1,
+    OMNIWM_RESTORE_NOTE_ACTIVE_SPACE = 2,
+    OMNIWM_RESTORE_NOTE_SYSTEM_WAKE = 3,
+    OMNIWM_RESTORE_NOTE_SYSTEM_SLEEP = 4,
+};
+
+enum {
+    OMNIWM_RESTORE_CACHE_SOURCE_EXISTING = 0,
+    OMNIWM_RESTORE_CACHE_SOURCE_REMOVED_MONITOR = 1,
+};
+
+enum {
+    OMNIWM_RESTORE_HYDRATION_OUTCOME_NONE = 0,
+    OMNIWM_RESTORE_HYDRATION_OUTCOME_MATCHED = 1,
+    OMNIWM_RESTORE_HYDRATION_OUTCOME_AMBIGUOUS = 2,
+    OMNIWM_RESTORE_HYDRATION_OUTCOME_WORKSPACE_UNRESOLVED = 3,
+};
+
+typedef struct {
+    double x;
+    double y;
+} omniwm_point;
+
+typedef struct {
+    double x;
+    double y;
+    double width;
+    double height;
+} omniwm_rect;
+
+typedef struct {
+    uint64_t high;
+    uint64_t low;
+} omniwm_uuid;
+
+typedef struct {
+    int32_t pid;
+    int64_t window_id;
+} omniwm_window_token;
+
+typedef struct {
+    size_t offset;
+    size_t length;
+} omniwm_restore_string_ref;
+
+typedef struct {
+    uint32_t display_id;
+    double anchor_x;
+    double anchor_y;
+    double frame_width;
+    double frame_height;
+    omniwm_restore_string_ref name;
+    uint8_t has_name;
+} omniwm_restore_monitor_key;
+
+typedef struct {
+    double frame_min_x;
+    double frame_max_y;
+    omniwm_rect visible_frame;
+    omniwm_restore_monitor_key key;
+} omniwm_restore_monitor_context;
+
+typedef struct {
+    uint32_t event_kind;
+    const uint32_t *sorted_monitor_ids;
+    size_t sorted_monitor_count;
+    uint32_t interaction_monitor_id;
+    uint32_t previous_interaction_monitor_id;
+    uint8_t has_interaction_monitor_id;
+    uint8_t has_previous_interaction_monitor_id;
+} omniwm_restore_event_input;
+
+typedef struct {
+    uint32_t interaction_monitor_id;
+    uint32_t previous_interaction_monitor_id;
+    uint32_t note_code;
+    uint8_t refresh_restore_intents;
+    uint8_t has_interaction_monitor_id;
+    uint8_t has_previous_interaction_monitor_id;
+} omniwm_restore_event_output;
+
+typedef struct {
+    omniwm_uuid workspace_id;
+    omniwm_restore_monitor_key monitor_key;
+} omniwm_restore_visible_workspace_snapshot;
+
+typedef struct {
+    omniwm_uuid workspace_id;
+    omniwm_restore_monitor_key monitor_key;
+} omniwm_restore_disconnected_cache_entry;
+
+typedef struct {
+    omniwm_uuid workspace_id;
+    uint32_t home_monitor_id;
+    uint32_t effective_monitor_id;
+    uint8_t workspace_exists;
+    uint8_t has_home_monitor_id;
+    uint8_t has_effective_monitor_id;
+} omniwm_restore_workspace_monitor_fact;
+
+typedef struct {
+    const omniwm_restore_monitor_context *previous_monitors;
+    size_t previous_monitor_count;
+    const omniwm_restore_monitor_context *new_monitors;
+    size_t new_monitor_count;
+    const omniwm_restore_visible_workspace_snapshot *visible_workspaces;
+    size_t visible_workspace_count;
+    const uint8_t *visible_workspace_name_penalties;
+    size_t visible_workspace_name_penalty_count;
+    const omniwm_restore_disconnected_cache_entry *disconnected_cache_entries;
+    size_t disconnected_cache_entry_count;
+    const omniwm_restore_workspace_monitor_fact *workspace_facts;
+    size_t workspace_fact_count;
+    const uint8_t *string_bytes;
+    size_t string_byte_count;
+    omniwm_uuid focused_workspace_id;
+    uint32_t interaction_monitor_id;
+    uint32_t previous_interaction_monitor_id;
+    uint8_t has_focused_workspace_id;
+    uint8_t has_interaction_monitor_id;
+    uint8_t has_previous_interaction_monitor_id;
+} omniwm_restore_topology_input;
+
+typedef struct {
+    uint32_t monitor_id;
+    omniwm_uuid workspace_id;
+} omniwm_restore_visible_assignment;
+
+typedef struct {
+    uint32_t source_kind;
+    uint32_t source_index;
+    omniwm_uuid workspace_id;
+} omniwm_restore_disconnected_cache_output_entry;
+
+typedef struct {
+    omniwm_restore_visible_assignment *visible_assignments;
+    size_t visible_assignment_capacity;
+    size_t visible_assignment_count;
+    omniwm_restore_disconnected_cache_output_entry *disconnected_cache_entries;
+    size_t disconnected_cache_capacity;
+    size_t disconnected_cache_count;
+    uint32_t interaction_monitor_id;
+    uint32_t previous_interaction_monitor_id;
+    uint8_t refresh_restore_intents;
+    uint8_t has_interaction_monitor_id;
+    uint8_t has_previous_interaction_monitor_id;
+} omniwm_restore_topology_output;
+
+typedef struct {
+    omniwm_restore_string_ref bundle_id;
+    omniwm_restore_string_ref role;
+    omniwm_restore_string_ref subrole;
+    omniwm_restore_string_ref title;
+    int32_t window_level;
+    uint32_t parent_window_id;
+    uint8_t has_bundle_id;
+    uint8_t has_role;
+    uint8_t has_subrole;
+    uint8_t has_title;
+    uint8_t has_window_level;
+    uint8_t has_parent_window_id;
+} omniwm_restore_persisted_key;
+
+typedef struct {
+    omniwm_restore_persisted_key key;
+    omniwm_uuid workspace_id;
+    omniwm_restore_monitor_key preferred_monitor;
+    omniwm_rect floating_frame;
+    omniwm_point normalized_floating_origin;
+    size_t preferred_monitor_name_penalty_offset;
+    uint8_t restore_to_floating;
+    uint8_t consumed;
+    uint8_t has_workspace_id;
+    uint8_t has_preferred_monitor;
+    uint8_t has_floating_frame;
+    uint8_t has_normalized_floating_origin;
+} omniwm_restore_persisted_entry_snapshot;
+
+typedef struct {
+    omniwm_restore_persisted_key metadata_key;
+    uint32_t metadata_mode;
+    const omniwm_restore_monitor_context *monitors;
+    size_t monitor_count;
+    const omniwm_restore_persisted_entry_snapshot *entries;
+    size_t entry_count;
+    const uint8_t *preferred_monitor_name_penalties;
+    size_t preferred_monitor_name_penalty_count;
+    const uint8_t *string_bytes;
+    size_t string_byte_count;
+} omniwm_restore_persisted_hydration_input;
+
+typedef struct {
+    uint32_t outcome;
+    size_t entry_index;
+    omniwm_uuid workspace_id;
+    uint32_t preferred_monitor_id;
+    uint32_t target_mode;
+    omniwm_rect floating_frame;
+    uint8_t has_entry_index;
+    uint8_t has_preferred_monitor_id;
+    uint8_t has_floating_frame;
+} omniwm_restore_persisted_hydration_output;
+
+typedef struct {
+    omniwm_window_token token;
+    omniwm_uuid workspace_id;
+    uint32_t target_monitor_id;
+    omniwm_rect target_monitor_visible_frame;
+    omniwm_rect current_frame;
+    omniwm_rect floating_frame;
+    omniwm_point normalized_origin;
+    uint32_t reference_monitor_id;
+    uint8_t has_current_frame;
+    uint8_t has_normalized_origin;
+    uint8_t has_reference_monitor_id;
+    uint8_t is_scratchpad_hidden;
+    uint8_t is_workspace_inactive_hidden;
+} omniwm_restore_floating_rescue_candidate;
+
+typedef struct {
+    size_t candidate_index;
+    omniwm_rect target_frame;
+} omniwm_restore_floating_rescue_operation;
+
+typedef struct {
+    omniwm_restore_floating_rescue_operation *operations;
+    size_t operation_capacity;
+    size_t operation_count;
+} omniwm_restore_floating_rescue_output;
+
+int32_t omniwm_restore_plan_event(
+    const omniwm_restore_event_input *input,
+    omniwm_restore_event_output *output
+);
+
+int32_t omniwm_restore_plan_topology(
+    const omniwm_restore_topology_input *input,
+    omniwm_restore_topology_output *output
+);
+
+int32_t omniwm_restore_plan_persisted_hydration(
+    const omniwm_restore_persisted_hydration_input *input,
+    omniwm_restore_persisted_hydration_output *output
+);
+
+int32_t omniwm_restore_plan_floating_rescue(
+    const omniwm_restore_floating_rescue_candidate *candidates,
+    size_t candidate_count,
+    omniwm_restore_floating_rescue_output *output
+);
+
+enum {
     OMNIWM_WINDOW_DECISION_RULE_ACTION_NONE = 0,
     OMNIWM_WINDOW_DECISION_RULE_ACTION_AUTO = 1,
     OMNIWM_WINDOW_DECISION_RULE_ACTION_TILE = 2,
@@ -759,16 +1020,6 @@ enum {
     OMNIWM_RECONCILE_FOCUS_LEASE_ACTION_SET_FROM_EVENT = 2,
 };
 
-typedef struct {
-    uint64_t high;
-    uint64_t low;
-} omniwm_uuid;
-
-typedef struct {
-    int32_t pid;
-    int64_t window_id;
-} omniwm_window_token;
-
 enum {
     OMNIWM_WORKSPACE_NAV_OPERATION_FOCUS_MONITOR_CYCLIC = 0,
     OMNIWM_WORKSPACE_NAV_OPERATION_FOCUS_MONITOR_LAST = 1,
@@ -923,18 +1174,6 @@ int32_t omniwm_workspace_navigation_plan(
     size_t workspace_count,
     omniwm_workspace_navigation_output *output
 );
-
-typedef struct {
-    double x;
-    double y;
-} omniwm_point;
-
-typedef struct {
-    double x;
-    double y;
-    double width;
-    double height;
-} omniwm_rect;
 
 typedef struct {
     omniwm_rect frame;

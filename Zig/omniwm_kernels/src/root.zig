@@ -5,6 +5,7 @@ const niri_topology = @import("niri_topology.zig");
 const orchestration = @import("orchestration.zig");
 const overview_projection = @import("overview_projection.zig");
 const reconcile = @import("reconcile.zig");
+const restore_planner = @import("restore_planner.zig");
 const window_decision = @import("window_decision.zig");
 const workspace_navigation = @import("workspace_navigation.zig");
 
@@ -15,6 +16,7 @@ comptime {
     _ = orchestration;
     _ = overview_projection;
     _ = reconcile;
+    _ = restore_planner;
     _ = window_decision;
     _ = workspace_navigation;
 }

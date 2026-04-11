@@ -1823,14 +1823,8 @@ final class WMController {
             guard let targetMonitor = workspaceManager.monitor(for: entry.workspaceId)
                 ?? monitorForInteraction()
                 ?? workspaceManager.monitors.first
+            , let floatingState = workspaceManager.floatingState(for: entry.token)
             else {
-                continue
-            }
-
-            guard let targetFrame = workspaceManager.resolvedFloatingFrame(
-                for: entry.token,
-                preferredMonitor: targetMonitor
-            ) else {
                 continue
             }
 
@@ -1842,7 +1836,9 @@ final class WMController {
                     workspaceId: entry.workspaceId,
                     targetMonitor: targetMonitor,
                     currentFrame: liveFrame(for: entry),
-                    targetFrame: targetFrame,
+                    floatingFrame: floatingState.lastFrame,
+                    normalizedOrigin: floatingState.normalizedOrigin,
+                    referenceMonitorId: floatingState.referenceMonitorId,
                     isScratchpadHidden: workspaceManager.hiddenState(for: entry.token)?.isScratchpad == true,
                     isWorkspaceInactiveHidden: workspaceManager.hiddenState(for: entry.token)?.workspaceInactive == true
                 )
