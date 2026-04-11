@@ -2444,8 +2444,6 @@ final class LayoutDiffExecutor {
         var blockedRevealTokens: Set<WindowToken> = []
         let nativeFullscreenRestoreFinalizeTokens = Set(plan.nativeFullscreenRestoreFinalizeTokens)
         var nativeFullscreenRestoreFramesByToken: [WindowToken: CGRect] = [:]
-        var hiddenNativeFullscreenRestoreFinalizeTokens: Set<WindowToken> = []
-
         for change in diff.frameChanges {
             frameChangeByToken[change.token] = change.frame
         }
@@ -2544,53 +2542,12 @@ final class LayoutDiffExecutor {
         }
 
         if !hiddenEntries.isEmpty {
-            var hiddenJobs: [(pid: pid_t, windowId: Int)] = []
-            hiddenJobs.reserveCapacity(hiddenEntries.count)
-            var hidePlans: [LayoutRefreshController.WindowPositionPlan] = []
-
-            for (entry, side) in hiddenEntries {
-                let nativeFullscreenRestoreFrameHint: CGRect?
-                if nativeFullscreenRestoreFinalizeTokens.contains(entry.token) {
-                    nativeFullscreenRestoreFrameHint = controller.workspaceManager
-                        .nativeFullscreenRestoreContext(for: entry.token)?.restoreFrame
-                } else {
-                    nativeFullscreenRestoreFrameHint = nil
-                }
-                switch refreshController.resolveHideOperation(
-                    for: entry,
-                    monitor: monitor,
-                    side: side,
-                    reason: .layoutTransient,
-                    frameHint: nativeFullscreenRestoreFrameHint
-                ) {
-                case let .movable(plan, hiddenState):
-                    controller.workspaceManager.setHiddenState(hiddenState, for: entry.token)
-                    hiddenJobs.append((entry.handle.pid, entry.windowId))
-                    hidePlans.append(plan)
-                    if nativeFullscreenRestoreFinalizeTokens.contains(entry.token) {
-                        hiddenNativeFullscreenRestoreFinalizeTokens.insert(entry.token)
-                    }
-                case let .alreadyHidden(hiddenState):
-                    controller.workspaceManager.setHiddenState(hiddenState, for: entry.token)
-                    hiddenJobs.append((entry.handle.pid, entry.windowId))
-                    if nativeFullscreenRestoreFinalizeTokens.contains(entry.token) {
-                        hiddenNativeFullscreenRestoreFinalizeTokens.insert(entry.token)
-                    }
-                case .unavailable:
-                    continue
-                }
-            }
-
-            if !hiddenJobs.isEmpty {
-                controller.axManager.cancelPendingFrameJobs(hiddenJobs)
-                controller.axManager.suppressFrameWrites(hiddenJobs)
-            }
-            if !hidePlans.isEmpty {
-                refreshController.applyPositionPlans(hidePlans)
-            }
-            for token in hiddenNativeFullscreenRestoreFinalizeTokens {
-                _ = controller.workspaceManager.finalizeNativeFullscreenRestore(for: token)
-            }
+            applyHiddenEntryUpdates(
+                hiddenEntries,
+                controller: controller,
+                monitor: monitor,
+                nativeFullscreenRestoreFinalizeTokens: nativeFullscreenRestoreFinalizeTokens
+            )
         }
 
         if !restoreEntries.isEmpty {
@@ -2728,6 +2685,62 @@ final class LayoutDiffExecutor {
         }
 
         return controller.workspaceManager.monitors.first(where: { $0.displayId == snapshot.displayId })
+    }
+
+    private func applyHiddenEntryUpdates(
+        _ hiddenEntries: [(entry: WindowModel.Entry, side: HideSide)],
+        controller: WMController,
+        monitor: Monitor,
+        nativeFullscreenRestoreFinalizeTokens: Set<WindowToken>
+    ) {
+        var hiddenJobs: [(pid: pid_t, windowId: Int)] = []
+        hiddenJobs.reserveCapacity(hiddenEntries.count)
+        var hidePlans: [LayoutRefreshController.WindowPositionPlan] = []
+        var hiddenNativeFullscreenRestoreFinalizeTokens: Set<WindowToken> = []
+
+        for (entry, side) in hiddenEntries {
+            let nativeFullscreenRestoreFrameHint: CGRect?
+            if nativeFullscreenRestoreFinalizeTokens.contains(entry.token) {
+                nativeFullscreenRestoreFrameHint = controller.workspaceManager
+                    .nativeFullscreenRestoreContext(for: entry.token)?.restoreFrame
+            } else {
+                nativeFullscreenRestoreFrameHint = nil
+            }
+            switch refreshController.resolveHideOperation(
+                for: entry,
+                monitor: monitor,
+                side: side,
+                reason: .layoutTransient,
+                frameHint: nativeFullscreenRestoreFrameHint
+            ) {
+            case let .movable(plan, hiddenState):
+                controller.workspaceManager.setHiddenState(hiddenState, for: entry.token)
+                hiddenJobs.append((entry.handle.pid, entry.windowId))
+                hidePlans.append(plan)
+                if nativeFullscreenRestoreFinalizeTokens.contains(entry.token) {
+                    hiddenNativeFullscreenRestoreFinalizeTokens.insert(entry.token)
+                }
+            case let .alreadyHidden(hiddenState):
+                controller.workspaceManager.setHiddenState(hiddenState, for: entry.token)
+                hiddenJobs.append((entry.handle.pid, entry.windowId))
+                if nativeFullscreenRestoreFinalizeTokens.contains(entry.token) {
+                    hiddenNativeFullscreenRestoreFinalizeTokens.insert(entry.token)
+                }
+            case .unavailable:
+                continue
+            }
+        }
+
+        if !hiddenJobs.isEmpty {
+            controller.axManager.cancelPendingFrameJobs(hiddenJobs)
+            controller.axManager.suppressFrameWrites(hiddenJobs)
+        }
+        if !hidePlans.isEmpty {
+            refreshController.applyPositionPlans(hidePlans)
+        }
+        for token in hiddenNativeFullscreenRestoreFinalizeTokens {
+            _ = controller.workspaceManager.finalizeNativeFullscreenRestore(for: token)
+        }
     }
 
     private func applyDirectBorderUpdate(_ focusedFrame: LayoutFocusedFrame?) {
