@@ -11,6 +11,13 @@
 <table align="center">
   <tr>
     <td align="center">
+      <a href="https://github.com/adelin-b" title="Adelin Berard">
+        <img src="https://github.com/adelin-b.png?size=96" width="96" alt="Adelin Berard">
+      </a>
+      <br>
+      <a href="https://github.com/adelin-b"><strong>Adelin Berard</strong></a>
+    </td>
+    <td align="center">
       <a href="https://github.com/balazshevesi" title="Balazs Hevesi">
         <img src="https://github.com/balazshevesi.png?size=96" width="96" alt="Balazs Hevesi">
       </a>
@@ -46,6 +53,13 @@
       <a href="https://github.com/zucram"><strong>Marcus Harlid Davin</strong></a>
     </td>
     <td align="center">
+      <a href="https://github.com/zwo-bot" title="mm">
+        <img src="https://github.com/zwo-bot.png?size=96" width="96" alt="mm">
+      </a>
+      <br>
+      <a href="https://github.com/zwo-bot"><strong>mm</strong></a>
+    </td>
+    <td align="center">
       <a href="https://github.com/georgebastille" title="Rich Hanes">
         <img src="https://github.com/georgebastille.png?size=96" width="96" alt="Rich Hanes">
       </a>
@@ -72,13 +86,6 @@
       </a>
       <br>
       <a href="https://github.com/zicochaos"><strong>Zicochaos</strong></a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/zwo-bot" title="mm">
-        <img src="https://github.com/zwo-bot.png?size=96" width="96" alt="mm">
-      </a>
-      <br>
-      <a href="https://github.com/zwo-bot"><strong>mm</strong></a>
     </td>
   </tr>
 </table>
