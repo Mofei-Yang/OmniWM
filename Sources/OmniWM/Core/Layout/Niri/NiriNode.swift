@@ -609,6 +609,10 @@ class NiriContainer: NiriNode {
         displayMode == .tabbed
     }
 
+    var effectiveSizingMode: SizingMode {
+        windowNodes.contains(where: \.isFullscreen) ? .fullscreen : .normal
+    }
+
     var activeWindow: NiriWindow? {
         let windows = windowNodes
         guard !windows.isEmpty else { return nil }

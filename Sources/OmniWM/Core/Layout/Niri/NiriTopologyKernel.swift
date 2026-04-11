@@ -85,6 +85,17 @@ private extension CenterFocusedColumn {
     }
 }
 
+private extension SizingMode {
+    var niriTopologyRawValue: UInt8 {
+        switch self {
+        case .normal:
+            UInt8(OMNIWM_NIRI_WINDOW_SIZING_NORMAL)
+        case .fullscreen:
+            UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+        }
+    }
+}
+
 private extension InsertPosition {
     var niriTopologyInsertRawValue: Int {
         switch self {
@@ -152,7 +163,12 @@ extension NiriLayoutEngine {
             for window in column.windowNodes {
                 let windowId = nextWindowId
                 nextWindowId += 1
-                rawWindows.append(omniwm_niri_topology_window_input(id: windowId))
+                rawWindows.append(
+                    omniwm_niri_topology_window_input(
+                        id: windowId,
+                        sizing_mode: window.sizingMode.niriTopologyRawValue
+                    )
+                )
                 windowById[windowId] = window
                 windowIdByNodeId[window.id] = windowId
                 windowIdByToken[window.token] = windowId
@@ -435,6 +451,9 @@ extension NiriLayoutEngine {
         } else {
             switch NiriTopologyViewportAction(rawValue: result.viewport_action) ?? .none {
             case .deltaOnly, .none:
+                if !motion.animationsEnabled, state.viewOffsetPixels.isAnimating {
+                    state.viewOffsetPixels = .static(state.viewOffsetPixels.target())
+                }
                 break
             case .setStatic:
                 state.viewOffsetPixels = .static(CGFloat(result.viewport_target_offset))

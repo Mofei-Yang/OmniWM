@@ -14,17 +14,39 @@ private extension CenterFocusedColumn {
     }
 }
 
+private extension SizingMode {
+    var viewportGeometryRawValue: UInt8 {
+        switch self {
+        case .normal:
+            return UInt8(OMNIWM_NIRI_WINDOW_SIZING_NORMAL)
+        case .fullscreen:
+            return UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+        }
+    }
+}
+
 extension ViewportState {
-    private func withSpanBuffer<Result>(
+    struct GeometrySnapTarget {
+        let viewPos: Double
+        let columnIndex: Int
+    }
+
+    private func withViewportBuffers<Result>(
         containers: [NiriContainer],
         sizeKeyPath: KeyPath<NiriContainer, CGFloat>,
-        _ body: (UnsafeBufferPointer<Double>) -> Result
+        _ body: (UnsafeBufferPointer<Double>, UnsafeBufferPointer<UInt8>) -> Result
     ) -> Result {
         withUnsafeTemporaryAllocation(of: Double.self, capacity: containers.count) { spans in
-            for (index, container) in containers.enumerated() {
-                spans[index] = container[keyPath: sizeKeyPath]
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: containers.count) { modes in
+                for (index, container) in containers.enumerated() {
+                    spans[index] = container[keyPath: sizeKeyPath]
+                    modes[index] = container.effectiveSizingMode.viewportGeometryRawValue
+                }
+                return body(
+                    UnsafeBufferPointer(start: spans.baseAddress, count: containers.count),
+                    UnsafeBufferPointer(start: modes.baseAddress, count: containers.count)
+                )
             }
-            return body(UnsafeBufferPointer(start: spans.baseAddress, count: containers.count))
         }
     }
 
@@ -44,7 +66,7 @@ extension ViewportState {
     ) -> CGFloat {
         guard index >= 0 else { return 0 }
 
-        return withSpanBuffer(containers: containers, sizeKeyPath: sizeKeyPath) { spans in
+        return withViewportBuffers(containers: containers, sizeKeyPath: sizeKeyPath) { spans, _ in
             omniwm_geometry_container_position(
                 spans.baseAddress,
                 spans.count,
@@ -59,7 +81,7 @@ extension ViewportState {
         gap: CGFloat,
         sizeKeyPath: KeyPath<NiriContainer, CGFloat>
     ) -> CGFloat {
-        withSpanBuffer(containers: containers, sizeKeyPath: sizeKeyPath) { spans in
+        withViewportBuffers(containers: containers, sizeKeyPath: sizeKeyPath) { spans, _ in
             omniwm_geometry_total_span(
                 spans.baseAddress,
                 spans.count,
@@ -77,9 +99,10 @@ extension ViewportState {
     ) -> CGFloat {
         guard containerIndex >= 0 else { return 0 }
 
-        return withSpanBuffer(containers: containers, sizeKeyPath: sizeKeyPath) { spans in
+        return withViewportBuffers(containers: containers, sizeKeyPath: sizeKeyPath) { spans, modes in
             omniwm_geometry_centered_offset(
                 spans.baseAddress,
+                modes.baseAddress,
                 spans.count,
                 gap,
                 viewportSpan,
@@ -102,9 +125,10 @@ extension ViewportState {
     ) -> CGFloat {
         guard containerIndex >= 0 else { return 0 }
 
-        return withSpanBuffer(containers: containers, sizeKeyPath: sizeKeyPath) { spans in
+        return withViewportBuffers(containers: containers, sizeKeyPath: sizeKeyPath) { spans, modes in
             omniwm_geometry_visible_offset(
                 spans.baseAddress,
+                modes.baseAddress,
                 spans.count,
                 gap,
                 viewportSpan,
@@ -114,6 +138,39 @@ extension ViewportState {
                 alwaysCenterSingleColumn ? 1 : 0,
                 Int32(fromContainerIndex ?? -1),
                 scale
+            )
+        }
+    }
+
+    func snapTarget(
+        projectedViewPos: Double,
+        currentViewPos: Double,
+        containers: [NiriContainer],
+        gap: CGFloat,
+        viewportSpan: CGFloat,
+        sizeKeyPath: KeyPath<NiriContainer, CGFloat>,
+        centerMode: CenterFocusedColumn,
+        alwaysCenterSingleColumn: Bool = false
+    ) -> GeometrySnapTarget {
+        guard !containers.isEmpty else {
+            return GeometrySnapTarget(viewPos: 0, columnIndex: 0)
+        }
+
+        return withViewportBuffers(containers: containers, sizeKeyPath: sizeKeyPath) { spans, modes in
+            let result = omniwm_geometry_snap_target(
+                spans.baseAddress,
+                modes.baseAddress,
+                spans.count,
+                gap,
+                viewportSpan,
+                projectedViewPos,
+                currentViewPos,
+                centerMode.zigRawValue,
+                alwaysCenterSingleColumn ? 1 : 0
+            )
+            return GeometrySnapTarget(
+                viewPos: result.view_pos,
+                columnIndex: numericCast(result.column_index)
             )
         }
     }
@@ -156,6 +213,27 @@ extension ViewportState {
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
             fromContainerIndex: fromColumnIndex,
             scale: scale
+        )
+    }
+
+    func snapTarget(
+        projectedViewPos: Double,
+        currentViewPos: Double,
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat,
+        centerMode: CenterFocusedColumn,
+        alwaysCenterSingleColumn: Bool = false
+    ) -> GeometrySnapTarget {
+        snapTarget(
+            projectedViewPos: projectedViewPos,
+            currentViewPos: currentViewPos,
+            containers: columns,
+            gap: gap,
+            viewportSpan: viewportWidth,
+            sizeKeyPath: \.cachedWidth,
+            centerMode: centerMode,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
     }
 }

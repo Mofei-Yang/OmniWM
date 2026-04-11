@@ -6,6 +6,7 @@ const orchestration = @import("orchestration.zig");
 const overview_projection = @import("overview_projection.zig");
 const reconcile = @import("reconcile.zig");
 const restore_planner = @import("restore_planner.zig");
+const viewport_policy = @import("viewport_policy.zig");
 const window_decision = @import("window_decision.zig");
 const workspace_navigation = @import("workspace_navigation.zig");
 
@@ -75,11 +76,6 @@ const AxisScratch = struct {
     has_maximums: []u8,
     has_fixed_values: []u8,
     non_fixed_indices: []usize,
-};
-
-const OffsetRange = struct {
-    min: f64,
-    max: f64,
 };
 
 fn swiftMax(lhs: f64, rhs: f64) f64 {
@@ -400,92 +396,11 @@ pub export fn omniwm_axis_solve(
 }
 
 fn totalSpan(spans: []const f64, gap: f64) f64 {
-    if (spans.len == 0) {
-        return 0;
-    }
-
-    var size_sum: f64 = 0;
-    for (spans) |span| {
-        size_sum += span;
-    }
-    const gap_sum = @as(f64, @floatFromInt(if (spans.len > 0) spans.len - 1 else 0)) * gap;
-    return size_sum + gap_sum;
+    return viewport_policy.totalSpan(spans, gap);
 }
 
 fn containerPosition(spans: []const f64, gap: f64, index: usize) f64 {
-    var pos: f64 = 0;
-    var i: usize = 0;
-    while (i < index) : (i += 1) {
-        if (i >= spans.len) {
-            break;
-        }
-        pos += spans[i] + gap;
-    }
-    return pos;
-}
-
-fn allowedOffsetRange(target_pos: f64, total_span: f64, viewport_span: f64) ?OffsetRange {
-    if (!(total_span > viewport_span)) {
-        return null;
-    }
-    return .{
-        .min = -target_pos,
-        .max = total_span - viewport_span - target_pos,
-    };
-}
-
-fn clampToRange(value: f64, range: OffsetRange) f64 {
-    if (value < range.min) {
-        return range.min;
-    }
-    if (value > range.max) {
-        return range.max;
-    }
-    return value;
-}
-
-fn centeredOffsetInternal(spans: []const f64, gap: f64, viewport_span: f64, index: usize) f64 {
-    if (spans.len == 0 or index >= spans.len) {
-        return 0;
-    }
-
-    const total = totalSpan(spans, gap);
-    const pos = containerPosition(spans, gap, index);
-
-    if (total <= viewport_span) {
-        return -pos - (viewport_span - total) / 2;
-    }
-
-    const span = spans[index];
-    const centered_offset = -(viewport_span - span) / 2;
-    if (allowedOffsetRange(pos, total, viewport_span)) |range| {
-        return clampToRange(centered_offset, range);
-    }
-    return centered_offset;
-}
-
-fn computeFitOffset(current_view_pos: f64, view_span: f64, target_pos: f64, target_span: f64, scale: f64) f64 {
-    const pixel_epsilon = 1.0 / swiftMax(scale, 1.0);
-
-    if (view_span <= target_span + pixel_epsilon) {
-        return 0;
-    }
-
-    const target_end = target_pos + target_span;
-
-    if (current_view_pos - pixel_epsilon <= target_pos and target_end <= current_view_pos + view_span + pixel_epsilon) {
-        return current_view_pos - target_pos;
-    }
-
-    const exact_start = target_pos;
-    const exact_end = target_end - view_span;
-    const dist_to_start = @abs(current_view_pos - exact_start);
-    const dist_to_end = @abs(current_view_pos - exact_end);
-
-    if (dist_to_start <= dist_to_end) {
-        return exact_start - target_pos;
-    }
-    return exact_end - target_pos;
+    return viewport_policy.containerPosition(spans, gap, index);
 }
 
 pub export fn omniwm_geometry_container_position(
@@ -515,6 +430,7 @@ pub export fn omniwm_geometry_total_span(
 
 pub export fn omniwm_geometry_centered_offset(
     spans_ptr: [*c]const f64,
+    modes_ptr: [*c]const u8,
     count: usize,
     gap: f64,
     viewport_span: f64,
@@ -524,11 +440,16 @@ pub export fn omniwm_geometry_centered_offset(
         &[_]f64{}
     else
         @as([*]const f64, @ptrCast(spans_ptr))[0..count];
-    return centeredOffsetInternal(spans, gap, viewport_span, index);
+    const modes = if (count == 0 or modes_ptr == null)
+        &[_]u8{}
+    else
+        @as([*]const u8, @ptrCast(modes_ptr))[0..count];
+    return viewport_policy.centeredOffset(spans, modes, gap, viewport_span, index);
 }
 
 pub export fn omniwm_geometry_visible_offset(
     spans_ptr: [*c]const f64,
+    modes_ptr: [*c]const u8,
     count: usize,
     gap: f64,
     viewport_span: f64,
@@ -543,63 +464,55 @@ pub export fn omniwm_geometry_visible_offset(
         &[_]f64{}
     else
         @as([*]const f64, @ptrCast(spans_ptr))[0..count];
-
-    if (spans.len == 0 or index < 0) {
-        return 0;
-    }
-
-    const target_index: usize = @intCast(index);
-    if (target_index >= spans.len) {
-        return 0;
-    }
-
-    const effective_center_mode: u32 = if (spans.len == 1 and always_center_single_column != 0)
-        1
+    const modes = if (count == 0 or modes_ptr == null)
+        &[_]u8{}
     else
-        center_mode;
+        @as([*]const u8, @ptrCast(modes_ptr))[0..count];
 
-    const current_view_end = current_view_start + viewport_span;
-    const pixel_epsilon = 1.0 / swiftMax(scale, 1.0);
-    const target_pos = containerPosition(spans, gap, target_index);
-    const target_span = spans[target_index];
-    const target_end = target_pos + target_span;
+    return viewport_policy.visibleOffset(
+        spans,
+        modes,
+        gap,
+        viewport_span,
+        index,
+        current_view_start,
+        center_mode,
+        always_center_single_column != 0,
+        if (from_index >= 0) @as(?usize, @intCast(from_index)) else null,
+        scale,
+    );
+}
 
-    const target_offset = switch (effective_center_mode) {
-        1 => centeredOffsetInternal(spans, gap, viewport_span, target_index),
-        2 => blk: {
-            if (target_span > viewport_span) {
-                break :blk centeredOffsetInternal(spans, gap, viewport_span, target_index);
-            }
+pub export fn omniwm_geometry_snap_target(
+    spans_ptr: [*c]const f64,
+    modes_ptr: [*c]const u8,
+    count: usize,
+    gap: f64,
+    viewport_span: f64,
+    projected_view_pos: f64,
+    current_view_pos: f64,
+    center_mode: u32,
+    always_center_single_column: u8,
+) viewport_policy.SnapTarget {
+    const spans = if (count == 0 or spans_ptr == null)
+        &[_]f64{}
+    else
+        @as([*]const f64, @ptrCast(spans_ptr))[0..count];
+    const modes = if (count == 0 or modes_ptr == null)
+        &[_]u8{}
+    else
+        @as([*]const u8, @ptrCast(modes_ptr))[0..count];
 
-            if (from_index >= 0) {
-                const source_index: usize = @intCast(from_index);
-                if (source_index != target_index and source_index < spans.len) {
-                    const source_pos = containerPosition(spans, gap, source_index);
-                    const source_span = spans[source_index];
-                    const source_end = source_pos + source_span;
-                    const pair_start = swiftMin(source_pos, target_pos);
-                    const pair_end = swiftMax(source_end, target_end);
-                    const pair_span = pair_end - pair_start;
-                    const source_visible = current_view_start - pixel_epsilon <= source_pos and source_end <= current_view_end + pixel_epsilon;
-                    const target_visible = current_view_start - pixel_epsilon <= target_pos and target_end <= current_view_end + pixel_epsilon;
-
-                    if ((source_visible and target_visible) or pair_span <= viewport_span) {
-                        break :blk computeFitOffset(current_view_start, viewport_span, target_pos, target_span, scale);
-                    }
-                    break :blk centeredOffsetInternal(spans, gap, viewport_span, target_index);
-                }
-            }
-
-            break :blk computeFitOffset(current_view_start, viewport_span, target_pos, target_span, scale);
-        },
-        else => computeFitOffset(current_view_start, viewport_span, target_pos, target_span, scale),
-    };
-
-    const total = totalSpan(spans, gap);
-    if (allowedOffsetRange(target_pos, total, viewport_span)) |range| {
-        return clampToRange(target_offset, range);
-    }
-    return target_offset;
+    return viewport_policy.snapTarget(
+        spans,
+        modes,
+        gap,
+        viewport_span,
+        projected_view_pos,
+        current_view_pos,
+        center_mode,
+        always_center_single_column != 0,
+    );
 }
 
 fn restoreSnapshotLessThan(lhs: RestoreSnapshot, rhs: RestoreSnapshot) bool {
@@ -1076,23 +989,30 @@ test "axis solver sanitizes non-finite and negative inputs in non-tabbed mode" {
 
 test "geometry preserves centering and pixel epsilon behavior" {
     const widths = [_]f64{ 100, 100, 100 };
-    try std.testing.expectApproxEqAbs(@as(f64, -50), omniwm_geometry_centered_offset(&widths, widths.len, 10, 150, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -25), omniwm_geometry_centered_offset(&widths, null, widths.len, 10, 150, 2), 0.001);
+    const oversized = [_]f64{200};
+    try std.testing.expectApproxEqAbs(@as(f64, 25), omniwm_geometry_centered_offset(&oversized, null, oversized.len, 0, 150, 0), 0.001);
 
     const single = [_]f64{100};
-    try std.testing.expectApproxEqAbs(@as(f64, 0.4), omniwm_geometry_visible_offset(&single, single.len, 0, 101, 0, 0.4, 0, 0, -1, 2), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_visible_offset(&single, single.len, 0, 101, 0, 0.4, 0, 0, -1, 10), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4), omniwm_geometry_visible_offset(&single, null, single.len, 0, 101, 0, 0.4, 0, 0, -1, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_visible_offset(&single, null, single.len, 0, 101, 0, 0.4, 0, 0, -1, 10), 0.001);
+}
+
+test "geometry preserves exact fit semantics in never mode" {
+    const widths = [_]f64{ 100, 100, 100 };
+    try std.testing.expectApproxEqAbs(@as(f64, -110), omniwm_geometry_visible_offset(&widths, null, widths.len, 10, 220, 1, 0, 0, 0, -1, 2), 0.001);
 }
 
 test "geometry handles empty spans and on-overflow pair visibility" {
     try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_total_span(null, 0, 8), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_centered_offset(null, 0, 8, 300, 0), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_visible_offset(null, 0, 8, 300, 0, 0, 0, 0, -1, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_centered_offset(null, null, 0, 8, 300, 0), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_visible_offset(null, null, 0, 8, 300, 0, 0, 0, 0, -1, 2), 0.001);
 
     const visible_pair = [_]f64{ 100, 100, 100 };
-    try std.testing.expectApproxEqAbs(@as(f64, -110), omniwm_geometry_visible_offset(&visible_pair, visible_pair.len, 10, 220, 1, 0, 2, 0, 0, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -60), omniwm_geometry_visible_offset(&visible_pair, null, visible_pair.len, 10, 220, 1, 0, 2, 0, 0, 2), 0.001);
 
     const overflowing_pair = [_]f64{ 100, 100, 100, 100 };
-    try std.testing.expectApproxEqAbs(@as(f64, -25), omniwm_geometry_visible_offset(&overflowing_pair, overflowing_pair.len, 10, 150, 2, 0, 2, 0, 0, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -25), omniwm_geometry_visible_offset(&overflowing_pair, null, overflowing_pair.len, 10, 150, 2, 0, 2, 0, 0, 2), 0.001);
 }
 
 test "geometry preserves out of range span helper semantics and always mode centering" {
@@ -1100,11 +1020,11 @@ test "geometry preserves out of range span helper semantics and always mode cent
     try std.testing.expectApproxEqAbs(@as(f64, 130), omniwm_geometry_container_position(&heights, heights.len, 5, 2), 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 220), omniwm_geometry_total_span(&heights, heights.len, 5), 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 225), omniwm_geometry_container_position(&heights, heights.len, 5, 10), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_visible_offset(&heights, heights.len, 5, 100, -1, 0, 0, 0, -1, 2), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_centered_offset(&heights, heights.len, 5, 100, 10), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_visible_offset(&heights, null, heights.len, 5, 100, -1, 0, 0, 0, -1, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_centered_offset(&heights, null, heights.len, 5, 100, 10), 0.001);
 
     const widths = [_]f64{ 100, 100, 100, 100 };
-    try std.testing.expectApproxEqAbs(@as(f64, -25), omniwm_geometry_visible_offset(&widths, widths.len, 10, 150, 2, 0, 1, 0, -1, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -25), omniwm_geometry_visible_offset(&widths, null, widths.len, 10, 150, 2, 0, 1, 0, -1, 2), 0.001);
 }
 
 test "geometry preserves out-of-range position semantics" {
@@ -1112,12 +1032,18 @@ test "geometry preserves out-of-range position semantics" {
     try std.testing.expectApproxEqAbs(@as(f64, 220), omniwm_geometry_total_span(&spans, spans.len, 5), 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 130), omniwm_geometry_container_position(&spans, spans.len, 5, 2), 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 225), omniwm_geometry_container_position(&spans, spans.len, 5, 10), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_centered_offset(&spans, spans.len, 5, 100, 10), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), omniwm_geometry_centered_offset(&spans, null, spans.len, 5, 100, 10), 0.001);
 }
 
 test "geometry centers a single column when requested" {
     const single = [_]f64{100};
-    try std.testing.expectApproxEqAbs(@as(f64, -50), omniwm_geometry_visible_offset(&single, single.len, 8, 200, 0, 0, 0, 1, -1, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -50), omniwm_geometry_visible_offset(&single, null, single.len, 8, 200, 0, 0, 0, 1, -1, 2), 0.001);
+}
+
+test "geometry centers edge columns even when the full strip fits" {
+    const widths = [_]f64{ 400, 400 };
+    try std.testing.expectApproxEqAbs(@as(f64, -400), omniwm_geometry_visible_offset(&widths, null, widths.len, 8, 1200, 0, 0, 1, 0, -1, 2), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -400), omniwm_geometry_visible_offset(&widths, null, widths.len, 8, 1200, 1, 0, 1, 0, -1, 2), 0.001);
 }
 
 test "restore assignments return no matches for empty inputs" {

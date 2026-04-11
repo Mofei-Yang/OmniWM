@@ -1,4 +1,5 @@
 const std = @import("std");
+const viewport_policy = @import("viewport_policy.zig");
 
 const status_ok: i32 = 0;
 const status_invalid_argument: i32 = 1;
@@ -62,6 +63,7 @@ const TopologyColumnInput = extern struct {
 
 const TopologyWindowInput = extern struct {
     id: u64,
+    sizing_mode: u8,
 };
 
 const TopologyInput = extern struct {
@@ -153,15 +155,14 @@ const ViewportPlan = struct {
     action: u32 = viewport_none,
 };
 
-const OffsetRange = struct {
-    min: f64,
-    max: f64,
-};
-
 const Topology = struct {
     columns: []ColumnState,
     windows: []u64,
+    window_modes: []u8,
     temp_windows: []u64,
+    temp_window_modes: []u8,
+    column_spans: []f64,
+    column_modes: []u8,
     column_count: usize,
     window_capacity: usize,
 
@@ -175,7 +176,11 @@ const Topology = struct {
         return .{
             .columns = try allocator.alloc(ColumnState, safe_column_capacity),
             .windows = try allocator.alloc(u64, safe_column_capacity * safe_window_capacity),
+            .window_modes = try allocator.alloc(u8, safe_column_capacity * safe_window_capacity),
             .temp_windows = try allocator.alloc(u64, safe_window_capacity),
+            .temp_window_modes = try allocator.alloc(u8, safe_window_capacity),
+            .column_spans = try allocator.alloc(f64, safe_column_capacity),
+            .column_modes = try allocator.alloc(u8, safe_column_capacity),
             .column_count = 0,
             .window_capacity = safe_window_capacity,
         };
@@ -184,7 +189,11 @@ const Topology = struct {
     fn deinit(self: *Topology, allocator: std.mem.Allocator) void {
         allocator.free(self.columns);
         allocator.free(self.windows);
+        allocator.free(self.window_modes);
         allocator.free(self.temp_windows);
+        allocator.free(self.temp_window_modes);
+        allocator.free(self.column_spans);
+        allocator.free(self.column_modes);
     }
 
     fn columnWindowSlice(self: *Topology, index: usize) []u64 {
@@ -195,6 +204,16 @@ const Topology = struct {
     fn columnWindowSliceConst(self: *const Topology, index: usize) []const u64 {
         const start = index * self.window_capacity;
         return self.windows[start .. start + self.window_capacity];
+    }
+
+    fn columnWindowModeSlice(self: *Topology, index: usize) []u8 {
+        const start = index * self.window_capacity;
+        return self.window_modes[start .. start + self.window_capacity];
+    }
+
+    fn columnWindowModeSliceConst(self: *const Topology, index: usize) []const u8 {
+        const start = index * self.window_capacity;
+        return self.window_modes[start .. start + self.window_capacity];
     }
 
     fn totalWindowCount(self: *const Topology) usize {
@@ -209,8 +228,11 @@ const Topology = struct {
         self.columns[dst] = self.columns[src];
         const src_windows = self.columnWindowSliceConst(src);
         const dst_windows = self.columnWindowSlice(dst);
+        const src_window_modes = self.columnWindowModeSliceConst(src);
+        const dst_window_modes = self.columnWindowModeSlice(dst);
         for (0..self.columns[src].count) |index| {
             dst_windows[index] = src_windows[index];
+            dst_window_modes[index] = src_window_modes[index];
         }
     }
 
@@ -221,15 +243,20 @@ const Topology = struct {
         const rhs_state = self.columns[rhs];
         const lhs_windows = self.columnWindowSlice(lhs);
         const rhs_windows = self.columnWindowSlice(rhs);
+        const lhs_window_modes = self.columnWindowModeSlice(lhs);
+        const rhs_window_modes = self.columnWindowModeSlice(rhs);
 
         for (0..lhs_state.count) |index| {
             self.temp_windows[index] = lhs_windows[index];
+            self.temp_window_modes[index] = lhs_window_modes[index];
         }
         for (0..rhs_state.count) |index| {
             lhs_windows[index] = rhs_windows[index];
+            lhs_window_modes[index] = rhs_window_modes[index];
         }
         for (0..lhs_state.count) |index| {
             rhs_windows[index] = self.temp_windows[index];
+            rhs_window_modes[index] = self.temp_window_modes[index];
         }
 
         self.columns[lhs] = rhs_state;
@@ -266,19 +293,22 @@ const Topology = struct {
         self.column_count -= 1;
     }
 
-    fn insertWindow(self: *Topology, column_index: usize, raw_index: usize, id: u64) bool {
+    fn insertWindow(self: *Topology, column_index: usize, raw_index: usize, id: u64, sizing_mode: u8) bool {
         if (column_index >= self.column_count) return false;
         var column = &self.columns[column_index];
         if (column.count >= self.window_capacity) return false;
 
         const index = @min(raw_index, column.count);
         const slice = self.columnWindowSlice(column_index);
+        const mode_slice = self.columnWindowModeSlice(column_index);
         var cursor = column.count;
         while (cursor > index) {
             slice[cursor] = slice[cursor - 1];
+            mode_slice[cursor] = mode_slice[cursor - 1];
             cursor -= 1;
         }
         slice[index] = id;
+        mode_slice[index] = sizing_mode;
         column.count += 1;
         return true;
     }
@@ -300,9 +330,11 @@ const Topology = struct {
         }
 
         const slice = self.columnWindowSlice(location.column);
+        const mode_slice = self.columnWindowModeSlice(location.column);
         var cursor = location.window;
         while (cursor + 1 < column.count) : (cursor += 1) {
             slice[cursor] = slice[cursor + 1];
+            mode_slice[cursor] = mode_slice[cursor + 1];
         }
         column.count -= 1;
         clampActive(column);
@@ -315,13 +347,30 @@ const Topology = struct {
         if (location.window >= column.count) return false;
 
         const slice = self.columnWindowSlice(location.column);
+        const mode_slice = self.columnWindowModeSlice(location.column);
         var cursor = location.window;
         while (cursor + 1 < column.count) : (cursor += 1) {
             slice[cursor] = slice[cursor + 1];
+            mode_slice[cursor] = mode_slice[cursor + 1];
         }
         column.count -= 1;
         clampActive(column);
         return true;
+    }
+
+    fn windowModeAt(self: *const Topology, location: WindowLocation) u8 {
+        if (location.column >= self.column_count) return viewport_policy.sizing_mode_normal;
+        if (location.window >= self.columns[location.column].count) return viewport_policy.sizing_mode_normal;
+        return self.columnWindowModeSliceConst(location.column)[location.window];
+    }
+
+    fn recomputeViewportMetadata(self: *Topology) void {
+        for (self.columns[0..self.column_count], 0..) |column, index| {
+            self.column_spans[index] = column.span;
+            self.column_modes[index] = viewport_policy.effectiveColumnMode(
+                self.columnWindowModeSliceConst(index)[0..column.count]
+            );
+        }
     }
 
     fn findWindow(self: *const Topology, id: u64) ?WindowLocation {
@@ -427,59 +476,17 @@ fn columnPosition(topology: *const Topology, index: usize, gap: f64) f64 {
 }
 
 fn totalSpan(topology: *const Topology, gap: f64) f64 {
-    if (topology.column_count == 0) return 0;
-    var total: f64 = 0;
-    for (topology.columns[0..topology.column_count]) |column| {
-        total += column.span;
-    }
-    total += gap * @as(f64, @floatFromInt(topology.column_count - 1));
-    return total;
-}
-
-fn allowedOffsetRange(target_pos: f64, total_span: f64, viewport_span: f64) ?OffsetRange {
-    if (!(total_span > viewport_span)) return null;
-    return .{
-        .min = -target_pos,
-        .max = total_span - viewport_span - target_pos,
-    };
-}
-
-fn clampToRange(value: f64, range: OffsetRange) f64 {
-    if (value < range.min) return range.min;
-    if (value > range.max) return range.max;
-    return value;
+    return viewport_policy.totalSpan(topology.column_spans[0..topology.column_count], gap);
 }
 
 fn centeredOffset(topology: *const Topology, gap: f64, viewport_span: f64, index: usize) f64 {
-    if (topology.column_count == 0 or index >= topology.column_count) return 0;
-    const total = totalSpan(topology, gap);
-    const pos = columnPosition(topology, index, gap);
-    if (total <= viewport_span) {
-        return -pos - (viewport_span - total) / 2;
-    }
-
-    const span = topology.columns[index].span;
-    const centered = -(viewport_span - span) / 2;
-    if (allowedOffsetRange(pos, total, viewport_span)) |range| {
-        return clampToRange(centered, range);
-    }
-    return centered;
-}
-
-fn computeFitOffset(current_view_pos: f64, view_span: f64, target_pos: f64, target_span: f64, scale: f64) f64 {
-    const pixel_epsilon = 1.0 / swiftMax(scale, 1.0);
-    if (view_span <= target_span + pixel_epsilon) return 0;
-
-    const target_end = target_pos + target_span;
-    if (current_view_pos - pixel_epsilon <= target_pos and target_end <= current_view_pos + view_span + pixel_epsilon) {
-        return current_view_pos - target_pos;
-    }
-
-    const exact_start = target_pos;
-    const exact_end = target_end - view_span;
-    const dist_to_start = @abs(current_view_pos - exact_start);
-    const dist_to_end = @abs(current_view_pos - exact_end);
-    return if (dist_to_start <= dist_to_end) exact_start - target_pos else exact_end - target_pos;
+    return viewport_policy.centeredOffset(
+        topology.column_spans[0..topology.column_count],
+        topology.column_modes[0..topology.column_count],
+        gap,
+        viewport_span,
+        index,
+    );
 }
 
 fn visibleOffset(
@@ -493,53 +500,18 @@ fn visibleOffset(
     from_index: ?usize,
     scale: f64,
 ) f64 {
-    if (topology.column_count == 0 or index >= topology.column_count) return 0;
-
-    const effective_center_mode = if (topology.column_count == 1 and always_center_single_column)
-        center_always
-    else
-        center_mode;
-    const current_view_end = current_view_start + viewport_span;
-    const pixel_epsilon = 1.0 / swiftMax(scale, 1.0);
-    const target_pos = columnPosition(topology, index, gap);
-    const target_span = topology.columns[index].span;
-    const target_end = target_pos + target_span;
-
-    const target_offset = switch (effective_center_mode) {
-        center_always => centeredOffset(topology, gap, viewport_span, index),
-        center_on_overflow => blk: {
-            if (target_span > viewport_span) {
-                break :blk centeredOffset(topology, gap, viewport_span, index);
-            }
-
-            if (from_index) |source_index| {
-                if (source_index != index and source_index < topology.column_count) {
-                    const source_pos = columnPosition(topology, source_index, gap);
-                    const source_span = topology.columns[source_index].span;
-                    const source_end = source_pos + source_span;
-                    const pair_start = swiftMin(source_pos, target_pos);
-                    const pair_end = swiftMax(source_end, target_end);
-                    const pair_span = pair_end - pair_start;
-                    const source_visible = current_view_start - pixel_epsilon <= source_pos and source_end <= current_view_end + pixel_epsilon;
-                    const target_visible = current_view_start - pixel_epsilon <= target_pos and target_end <= current_view_end + pixel_epsilon;
-
-                    if ((source_visible and target_visible) or pair_span <= viewport_span) {
-                        break :blk computeFitOffset(current_view_start, viewport_span, target_pos, target_span, scale);
-                    }
-                    break :blk centeredOffset(topology, gap, viewport_span, index);
-                }
-            }
-
-            break :blk computeFitOffset(current_view_start, viewport_span, target_pos, target_span, scale);
-        },
-        else => computeFitOffset(current_view_start, viewport_span, target_pos, target_span, scale),
-    };
-
-    const total = totalSpan(topology, gap);
-    if (allowedOffsetRange(target_pos, total, viewport_span)) |range| {
-        return clampToRange(target_offset, range);
-    }
-    return target_offset;
+    return viewport_policy.visibleOffset(
+        topology.column_spans[0..topology.column_count],
+        topology.column_modes[0..topology.column_count],
+        gap,
+        viewport_span,
+        @intCast(index),
+        current_view_start,
+        center_mode,
+        always_center_single_column,
+        from_index,
+        scale,
+    );
 }
 
 fn fallbackSelectionOnRemoval(topology: *const Topology, removing_id: u64) u64 {
@@ -604,14 +576,14 @@ fn addWindow(topology: *Topology, input: TopologyInput, id: u64) bool {
 
     if (topology.totalWindowCount() == 0) {
         if (!ensureNonEmptyWorkspaceColumn(topology, default_span)) return false;
-        return topology.insertWindow(0, 0, id);
+        return topology.insertWindow(0, 0, id, viewport_policy.sizing_mode_normal);
     }
 
     const reference_column = firstColumnWithWindow(topology, input.focused_window_id) orelse firstColumnWithWindow(topology, input.selected_window_id) orelse if (topology.column_count == 0) null else topology.column_count - 1;
 
     const insert_index = if (reference_column) |column_index| column_index + 1 else topology.column_count;
     if (!topology.insertColumn(insert_index, 0, default_span, false)) return false;
-    return topology.insertWindow(insert_index, 0, id);
+    return topology.insertWindow(insert_index, 0, id, viewport_policy.sizing_mode_normal);
 }
 
 fn cleanupEmptyColumns(topology: *Topology, default_span: f64) void {
@@ -648,13 +620,14 @@ fn activeIndex(input: TopologyInput, topology: *const Topology) usize {
 }
 
 fn planEnsureVisible(
-    topology: *const Topology,
+    topology: *Topology,
     input: TopologyInput,
     target_column: usize,
     previous_active_position: ?f64,
     from_column: ?usize,
 ) ViewportPlan {
     if (topology.column_count == 0 or target_column >= topology.column_count) return .{};
+    topology.recomputeViewportMetadata();
 
     const active = activeIndex(input, topology);
     const old_active_pos = previous_active_position orelse columnPosition(topology, active, input.gap);
@@ -694,8 +667,9 @@ fn planEnsureVisible(
     };
 }
 
-fn planTransitionToColumn(topology: *const Topology, input: TopologyInput, target_column: usize) ViewportPlan {
+fn planTransitionToColumn(topology: *Topology, input: TopologyInput, target_column: usize) ViewportPlan {
     if (topology.column_count == 0 or target_column >= topology.column_count) return .{};
+    topology.recomputeViewportMetadata();
     const previous_active = activeIndex(input, topology);
     const old_active_pos = columnPosition(topology, previous_active, input.gap);
     const new_active_pos = columnPosition(topology, target_column, input.gap);
@@ -1054,6 +1028,7 @@ fn moveColumn(topology: *Topology, input: TopologyInput, result: *TopologyResult
 
 fn moveWindow(topology: *Topology, input: TopologyInput, result: *TopologyResult) bool {
     const location = topology.findWindow(input.subject_window_id) orelse return false;
+    const subject_mode = topology.windowModeAt(location);
 
     if (directionSecondaryStep(input.direction, input.orientation)) |step| {
         const column = &topology.columns[location.column];
@@ -1061,9 +1036,13 @@ fn moveWindow(topology: *Topology, input: TopologyInput, result: *TopologyResult
         if (target_i32 < 0 or target_i32 >= @as(i32, @intCast(column.count))) return false;
         const target: usize = @intCast(target_i32);
         const slice = topology.columnWindowSlice(location.column);
+        const mode_slice = topology.columnWindowModeSlice(location.column);
         const other_id = slice[target];
+        const other_mode = mode_slice[target];
         slice[target] = input.subject_window_id;
+        mode_slice[target] = subject_mode;
         slice[location.window] = other_id;
+        mode_slice[location.window] = other_mode;
         if (column.is_tabbed) {
             const active = if (column.active < 0) 0 else @as(usize, @intCast(column.active));
             if (active == location.window) {
@@ -1092,7 +1071,7 @@ fn moveWindow(topology: *Topology, input: TopologyInput, result: *TopologyResult
         const new_column_index = if (input.direction == direction_right) current_column_index + 1 else current_column_index;
         _ = topology.removeWindowAt(location);
         if (!topology.insertColumn(new_column_index, 0, input.default_new_column_span, false)) return false;
-        if (!topology.insertWindow(new_column_index, 0, input.subject_window_id)) return false;
+        if (!topology.insertWindow(new_column_index, 0, input.subject_window_id, subject_mode)) return false;
         result.effect_kind = effect_expel_window;
         result.source_column_index = @intCast(current_column_index);
         result.target_column_index = @intCast(new_column_index);
@@ -1123,7 +1102,7 @@ fn moveWindow(topology: *Topology, input: TopologyInput, result: *TopologyResult
     } else {
         topology.removeColumn(current_column_index);
     }
-    if (!topology.insertWindow(adjusted_neighbor, 0, input.subject_window_id)) return false;
+    if (!topology.insertWindow(adjusted_neighbor, 0, input.subject_window_id, subject_mode)) return false;
     if (topology.columns[adjusted_neighbor].is_tabbed) {
         topology.columns[adjusted_neighbor].active = 0;
     }
@@ -1143,13 +1122,14 @@ fn moveWindow(topology: *Topology, input: TopologyInput, result: *TopologyResult
 
 fn insertWindowInNewColumn(topology: *Topology, input: TopologyInput, result: *TopologyResult) bool {
     const location = topology.findWindow(input.subject_window_id) orelse return false;
+    const subject_mode = topology.windowModeAt(location);
     const source_column_index = location.column;
     _ = topology.removeWindowAt(location);
 
     var insert_index: usize = if (input.insert_index < 0) 0 else @intCast(input.insert_index);
     insert_index = @min(insert_index, topology.column_count);
     if (!topology.insertColumn(insert_index, 0, input.default_new_column_span, false)) return false;
-    if (!topology.insertWindow(insert_index, 0, input.subject_window_id)) return false;
+    if (!topology.insertWindow(insert_index, 0, input.subject_window_id, subject_mode)) return false;
 
     var adjusted_source = source_column_index;
     if (insert_index <= source_column_index) {
@@ -1183,8 +1163,14 @@ fn swapWindows(topology: *Topology, input: TopologyInput, result: *TopologyResul
 
     const source_slice = topology.columnWindowSlice(source_location.column);
     const target_slice = topology.columnWindowSlice(target_location.column);
+    const source_mode_slice = topology.columnWindowModeSlice(source_location.column);
+    const target_mode_slice = topology.columnWindowModeSlice(target_location.column);
+    const source_mode = source_mode_slice[source_location.window];
+    const target_mode = target_mode_slice[target_location.window];
     source_slice[source_location.window] = input.target_window_id;
+    source_mode_slice[source_location.window] = target_mode;
     target_slice[target_location.window] = input.subject_window_id;
+    target_mode_slice[target_location.window] = source_mode;
 
     clampActive(&topology.columns[source_location.column]);
     if (target_location.column != source_location.column) {
@@ -1207,6 +1193,7 @@ fn swapWindows(topology: *Topology, input: TopologyInput, result: *TopologyResul
 
 fn insertWindowByMove(topology: *Topology, input: TopologyInput, result: *TopologyResult) bool {
     const source_location = topology.findWindow(input.subject_window_id) orelse return false;
+    const subject_mode = topology.windowModeAt(source_location);
     const target_location_before_removal = topology.findWindow(input.target_window_id) orelse return false;
     if (source_location.column == target_location_before_removal.column and
         source_location.window == target_location_before_removal.window)
@@ -1242,7 +1229,7 @@ fn insertWindowByMove(topology: *Topology, input: TopologyInput, result: *Topolo
         insert_index += 1;
     }
 
-    if (!topology.insertWindow(target_column_index, insert_index, input.subject_window_id)) return false;
+    if (!topology.insertWindow(target_column_index, insert_index, input.subject_window_id, subject_mode)) return false;
     const inserted_location = topology.findWindow(input.subject_window_id) orelse return false;
 
     clampActive(&topology.columns[inserted_location.column]);
@@ -1324,13 +1311,16 @@ fn buildTopology(
             return error.InvalidTopology;
         }
         const slice = topology.columnWindowSlice(index);
+        const mode_slice = topology.columnWindowModeSlice(index);
         for (0..count) |window_index| {
             slice[window_index] = windows[start + window_index].id;
+            mode_slice[window_index] = windows[start + window_index].sizing_mode;
         }
         topology.columns[index].count = count;
         clampActive(&topology.columns[index]);
     }
 
+    topology.recomputeViewportMetadata();
     return topology;
 }
 
@@ -1508,14 +1498,18 @@ test "niri topology fallback prefers next sibling" {
         .active_window_index = 1,
         .is_tabbed = 0,
     }};
-    const windows = [_]TopologyWindowInput{ .{ .id = 10 }, .{ .id = 20 }, .{ .id = 30 } };
+    const windows = [_]TopologyWindowInput{
+        .{ .id = 10, .sizing_mode = viewport_policy.sizing_mode_normal },
+        .{ .id = 20, .sizing_mode = viewport_policy.sizing_mode_normal },
+        .{ .id = 30, .sizing_mode = viewport_policy.sizing_mode_normal },
+    };
     var topology = try buildTopology(allocator, &columns, &windows, 0);
     defer topology.deinit(allocator);
 
     try std.testing.expectEqual(@as(u64, 30), fallbackSelectionOnRemoval(&topology, 20));
 }
 
-test "niri topology focus right preserves visible pair in overflow mode" {
+test "niri topology focus right centers overflowing edge pair in overflow mode" {
     var input = TopologyInput{
         .operation = op_focus,
         .direction = direction_right,
@@ -1553,7 +1547,11 @@ test "niri topology focus right preserves visible pair in overflow mode" {
         .{ .id = 2, .span = 500, .window_start_index = 1, .window_count = 1, .active_window_index = 0, .is_tabbed = 0 },
         .{ .id = 3, .span = 500, .window_start_index = 2, .window_count = 1, .active_window_index = 0, .is_tabbed = 0 },
     };
-    const windows = [_]TopologyWindowInput{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 } };
+    const windows = [_]TopologyWindowInput{
+        .{ .id = 1, .sizing_mode = viewport_policy.sizing_mode_normal },
+        .{ .id = 2, .sizing_mode = viewport_policy.sizing_mode_normal },
+        .{ .id = 3, .sizing_mode = viewport_policy.sizing_mode_normal },
+    };
     var column_outputs: [3]TopologyColumnOutput = undefined;
     var window_outputs: [3]TopologyWindowOutput = undefined;
     var result: TopologyResult = undefined;
@@ -1579,7 +1577,7 @@ test "niri topology focus right preserves visible pair in overflow mode" {
     try std.testing.expectEqual(@as(u64, 3), result.selected_window_id);
     try std.testing.expectEqual(@as(i32, 2), result.active_column_index);
     try std.testing.expectEqual(viewport_set_static, result.viewport_action);
-    try std.testing.expect(@abs(result.viewport_target_offset + 508) < 0.01);
+    try std.testing.expect(@abs(result.viewport_target_offset + 254) < 0.01);
 }
 
 test "niri topology move window consumes single column into neighbor" {
@@ -1619,7 +1617,10 @@ test "niri topology move window consumes single column into neighbor" {
         .{ .id = 1, .span = 500, .window_start_index = 0, .window_count = 1, .active_window_index = 0, .is_tabbed = 0 },
         .{ .id = 2, .span = 500, .window_start_index = 1, .window_count = 1, .active_window_index = 0, .is_tabbed = 0 },
     };
-    const windows = [_]TopologyWindowInput{ .{ .id = 1 }, .{ .id = 2 } };
+    const windows = [_]TopologyWindowInput{
+        .{ .id = 1, .sizing_mode = viewport_policy.sizing_mode_normal },
+        .{ .id = 2, .sizing_mode = viewport_policy.sizing_mode_normal },
+    };
     var column_outputs: [2]TopologyColumnOutput = undefined;
     var window_outputs: [2]TopologyWindowOutput = undefined;
     var result: TopologyResult = undefined;

@@ -177,16 +177,7 @@ extension ViewportState {
         guard totalW > 0 else { return nil }
 
         let currentOffset = viewOffsetPixels.current()
-        var newOffset = currentOffset + deltaPixels
-
-        let maxOffset: CGFloat = 0
-        let minOffset = viewportWidth - totalW
-
-        if minOffset < maxOffset {
-            newOffset = newOffset.clamped(to: minOffset ... maxOffset)
-        } else {
-            newOffset = 0
-        }
+        let newOffset = currentOffset + deltaPixels
 
         viewOffsetPixels = .static(newOffset)
 

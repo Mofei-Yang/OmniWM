@@ -135,6 +135,7 @@ private func sentinelWindowOutput() -> omniwm_niri_window_output {
 private func makeNiriTopologyInput(
     operation: UInt32,
     direction: UInt32 = UInt32(OMNIWM_NIRI_TOPOLOGY_DIRECTION_RIGHT),
+    centerMode: UInt32 = UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
     subjectWindowId: UInt64 = 0,
     targetWindowId: UInt64 = 0,
     selectedWindowId: UInt64 = 0,
@@ -155,7 +156,7 @@ private func makeNiriTopologyInput(
         operation: operation,
         direction: direction,
         orientation: UInt32(OMNIWM_NIRI_ORIENTATION_HORIZONTAL),
-        center_mode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+        center_mode: centerMode,
         subject_window_id: subjectWindowId,
         target_window_id: targetWindowId,
         selected_window_id: selectedWindowId,
@@ -200,6 +201,16 @@ private func makeNiriTopologyColumn(
         window_count: windowCount,
         active_window_index: activeWindowIndex,
         is_tabbed: isTabbed ? 1 : 0
+    )
+}
+
+private func makeNiriTopologyWindow(
+    id: UInt64,
+    sizingMode: UInt8 = UInt8(OMNIWM_NIRI_WINDOW_SIZING_NORMAL)
+) -> omniwm_niri_topology_window_input {
+    omniwm_niri_topology_window_input(
+        id: id,
+        sizing_mode: sizingMode
     )
 }
 
@@ -464,7 +475,7 @@ struct NiriTopologyKernelABITests {
                 activeWindowIndex: 1
             )
         ]
-        let windows = [10, 20, 30].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20, 30].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 
@@ -477,7 +488,7 @@ struct NiriTopologyKernelABITests {
         #expect(output.windows.map(\.id) == [10, 30])
     }
 
-    @Test func ensureVisibleNoOpsWhenTargetColumnAlreadyFits() {
+    @Test func ensureVisibleAppliesEdgePaddingWhenTargetColumnTouchesViewportBoundary() {
         var input = makeNiriTopologyInput(
             operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
             subjectWindowId: 10,
@@ -489,7 +500,32 @@ struct NiriTopologyKernelABITests {
             makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
             makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1)
         ]
-        let windows = [10, 20].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20].map { makeNiriTopologyWindow(id: UInt64($0)) }
+
+        let output = callNiriTopology(input: &input, columns: columns, windows: windows)
+
+        #expect(output.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(output.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(abs(output.result.viewport_offset_delta) < 0.001)
+        #expect(abs(output.result.viewport_target_offset + 8) < 0.001)
+        #expect(output.result.active_column_index == 0)
+        #expect(output.windows.map(\.id) == [10, 20])
+    }
+
+    @Test func ensureVisibleNoOpsWhenTargetColumnAlreadyFitsInNeverMode() {
+        var input = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_NEVER),
+            subjectWindowId: 10,
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            viewportSpan: 900
+        )
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1)
+        ]
+        let windows = [10, 20].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 
@@ -498,6 +534,299 @@ struct NiriTopologyKernelABITests {
         #expect(abs(output.result.viewport_offset_delta) < 0.001)
         #expect(output.result.active_column_index == 0)
         #expect(output.windows.map(\.id) == [10, 20])
+    }
+
+    @Test func ensureVisibleAlwaysModeCentersOversizedColumn() {
+        var input = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ALWAYS),
+            subjectWindowId: 20,
+            selectedWindowId: 20,
+            activeColumnIndex: 0,
+            targetIndex: 1,
+            gap: 10,
+            viewportSpan: 150
+        )
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 100, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 200, windowStartIndex: 1, windowCount: 1),
+            makeNiriTopologyColumn(id: 3, span: 100, windowStartIndex: 2, windowCount: 1)
+        ]
+        let windows = [10, 20, 30].map { makeNiriTopologyWindow(id: UInt64($0)) }
+
+        let output = callNiriTopology(input: &input, columns: columns, windows: windows)
+
+        #expect(output.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(output.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(abs(output.result.viewport_target_offset - 25) < 0.001)
+        #expect(output.result.active_column_index == 1)
+    }
+
+    @Test func focusColumnCentersEdgeColumnsWhenAlwaysModeEnabled() {
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1),
+        ]
+        let windows = [10, 20].map { makeNiriTopologyWindow(id: UInt64($0)) }
+
+        var focusLast = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_FOCUS_COLUMN),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ALWAYS),
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            targetIndex: 1,
+            viewportSpan: 1200
+        )
+        let lastOutput = callNiriTopology(input: &focusLast, columns: columns, windows: windows)
+
+        #expect(lastOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(lastOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(lastOutput.result.active_column_index == 1)
+        #expect(abs(lastOutput.result.viewport_target_offset + 400) < 0.001)
+
+        var focusFirst = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_FOCUS_COLUMN),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ALWAYS),
+            selectedWindowId: 20,
+            activeColumnIndex: 1,
+            targetIndex: 0,
+            viewportSpan: 1200
+        )
+        let firstOutput = callNiriTopology(input: &focusFirst, columns: columns, windows: windows)
+
+        #expect(firstOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(firstOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(firstOutput.result.active_column_index == 0)
+        #expect(abs(firstOutput.result.viewport_target_offset + 400) < 0.001)
+    }
+
+    @Test func ensureVisibleAlwaysModeKeepsFullscreenEdgeColumnsMonitorAnchored() {
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1),
+        ]
+
+        var ensureLast = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ALWAYS),
+            subjectWindowId: 20,
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            viewportSpan: 1_200
+        )
+        let lastOutput = callNiriTopology(
+            input: &ensureLast,
+            columns: columns,
+            windows: [
+                makeNiriTopologyWindow(id: 10),
+                makeNiriTopologyWindow(
+                    id: 20,
+                    sizingMode: UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+                ),
+            ]
+        )
+
+        #expect(lastOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(lastOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(lastOutput.result.active_column_index == 1)
+        #expect(abs(lastOutput.result.viewport_target_offset) < 0.001)
+
+        var ensureFirst = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ALWAYS),
+            subjectWindowId: 10,
+            selectedWindowId: 20,
+            activeColumnIndex: 1,
+            viewportSpan: 1_200
+        )
+        let firstOutput = callNiriTopology(
+            input: &ensureFirst,
+            columns: columns,
+            windows: [
+                makeNiriTopologyWindow(
+                    id: 10,
+                    sizingMode: UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+                ),
+                makeNiriTopologyWindow(id: 20),
+            ]
+        )
+
+        #expect(firstOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(firstOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(firstOutput.result.active_column_index == 0)
+        #expect(abs(firstOutput.result.viewport_target_offset) < 0.001)
+    }
+
+    @Test func ensureVisibleOnOverflowUsesNeighborPairWidthToChooseFitOrCenter() {
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 100, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 100, windowStartIndex: 1, windowCount: 1),
+            makeNiriTopologyColumn(id: 3, span: 100, windowStartIndex: 2, windowCount: 1),
+        ]
+        let windows = [10, 20, 30].map { makeNiriTopologyWindow(id: UInt64($0)) }
+
+        var fittingPair = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+            subjectWindowId: 20,
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            viewportSpan: 230
+        )
+        let fittingOutput = callNiriTopology(input: &fittingPair, columns: columns, windows: windows)
+
+        #expect(fittingOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(fittingOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_DELTA_ONLY))
+        #expect(fittingOutput.result.active_column_index == 1)
+        #expect(abs(fittingOutput.result.viewport_target_offset + 108) < 0.001)
+
+        var overflowingPair = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+            subjectWindowId: 20,
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            viewportSpan: 220
+        )
+        let overflowingOutput = callNiriTopology(input: &overflowingPair, columns: columns, windows: windows)
+
+        #expect(overflowingOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(overflowingOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(overflowingOutput.result.active_column_index == 1)
+        #expect(abs(overflowingOutput.result.viewport_target_offset + 60) < 0.001)
+    }
+
+    @Test func ensureVisibleOnOverflowUsesFullscreenTargetAndSourceModes() {
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1),
+        ]
+
+        var fullscreenTarget = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+            subjectWindowId: 20,
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            viewportSpan: 1_200
+        )
+        let targetOutput = callNiriTopology(
+            input: &fullscreenTarget,
+            columns: columns,
+            windows: [
+                makeNiriTopologyWindow(id: 10),
+                makeNiriTopologyWindow(
+                    id: 20,
+                    sizingMode: UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+                ),
+            ]
+        )
+
+        #expect(targetOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(targetOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(targetOutput.result.active_column_index == 1)
+        #expect(abs(targetOutput.result.viewport_target_offset) < 0.001)
+
+        var fullscreenSource = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+            subjectWindowId: 20,
+            selectedWindowId: 10,
+            activeColumnIndex: 0,
+            viewportSpan: 1_200
+        )
+        let sourceOutput = callNiriTopology(
+            input: &fullscreenSource,
+            columns: columns,
+            windows: [
+                makeNiriTopologyWindow(
+                    id: 10,
+                    sizingMode: UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+                ),
+                makeNiriTopologyWindow(id: 20),
+            ]
+        )
+
+        #expect(sourceOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(sourceOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_DELTA_ONLY))
+        #expect(sourceOutput.result.active_column_index == 1)
+        #expect(abs(sourceOutput.result.viewport_target_offset + 408) < 0.001)
+    }
+
+    @Test func focusColumnOnOverflowCentersFirstAndLastColumnsWhenPairsOverflow() {
+        let columns = [
+            makeNiriTopologyColumn(id: 1, span: 100, windowStartIndex: 0, windowCount: 1),
+            makeNiriTopologyColumn(id: 2, span: 100, windowStartIndex: 1, windowCount: 1),
+            makeNiriTopologyColumn(id: 3, span: 100, windowStartIndex: 2, windowCount: 1),
+        ]
+        let windows = [10, 20, 30].map { makeNiriTopologyWindow(id: UInt64($0)) }
+
+        var focusFirst = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_FOCUS_COLUMN),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+            selectedWindowId: 20,
+            activeColumnIndex: 1,
+            targetIndex: 0,
+            viewportSpan: 220
+        )
+        let firstOutput = callNiriTopology(input: &focusFirst, columns: columns, windows: windows)
+
+        #expect(firstOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(firstOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(firstOutput.result.active_column_index == 0)
+        #expect(abs(firstOutput.result.viewport_target_offset + 60) < 0.001)
+
+        var focusLast = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_FOCUS_COLUMN),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ON_OVERFLOW),
+            selectedWindowId: 20,
+            activeColumnIndex: 1,
+            targetIndex: 2,
+            viewportSpan: 220
+        )
+        let lastOutput = callNiriTopology(input: &focusLast, columns: columns, windows: windows)
+
+        #expect(lastOutput.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(lastOutput.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(lastOutput.result.active_column_index == 2)
+        #expect(abs(lastOutput.result.viewport_target_offset + 60) < 0.001)
+    }
+
+    @Test func ensureVisibleTreatsTabbedColumnWithAnyFullscreenChildAsFullscreen() {
+        var input = makeNiriTopologyInput(
+            operation: UInt32(OMNIWM_NIRI_TOPOLOGY_OP_ENSURE_VISIBLE),
+            centerMode: UInt32(OMNIWM_CENTER_FOCUSED_COLUMN_ALWAYS),
+            subjectWindowId: 11,
+            selectedWindowId: 20,
+            activeColumnIndex: 1,
+            viewportSpan: 1_200
+        )
+        let columns = [
+            makeNiriTopologyColumn(
+                id: 1,
+                span: 400,
+                windowStartIndex: 0,
+                windowCount: 2,
+                activeWindowIndex: 0,
+                isTabbed: true
+            ),
+            makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 2, windowCount: 1),
+        ]
+        let windows = [
+            makeNiriTopologyWindow(id: 11),
+            makeNiriTopologyWindow(
+                id: 12,
+                sizingMode: UInt8(OMNIWM_NIRI_WINDOW_SIZING_FULLSCREEN)
+            ),
+            makeNiriTopologyWindow(id: 20),
+        ]
+
+        let output = callNiriTopology(input: &input, columns: columns, windows: windows)
+
+        #expect(output.status == OMNIWM_KERNELS_STATUS_OK)
+        #expect(output.result.viewport_action == UInt32(OMNIWM_NIRI_TOPOLOGY_VIEWPORT_SET_STATIC))
+        #expect(output.result.active_column_index == 0)
+        #expect(abs(output.result.viewport_target_offset) < 0.001)
     }
 
     @Test func insufficientTopologyOutputCapacityReportsRequiredCounts() {
@@ -512,7 +841,7 @@ struct NiriTopologyKernelABITests {
             makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
             makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1)
         ]
-        let windows = [10, 20].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(
             input: &input,
@@ -538,7 +867,7 @@ struct NiriTopologyKernelABITests {
             makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
             makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 1)
         ]
-        let windows = [10, 20].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 
@@ -561,7 +890,7 @@ struct NiriTopologyKernelABITests {
         let columns = [
             makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 3)
         ]
-        let windows = [10, 20, 30].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20, 30].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 
@@ -584,7 +913,7 @@ struct NiriTopologyKernelABITests {
             makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1),
             makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 1, windowCount: 2)
         ]
-        let windows = [10, 20, 30].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20, 30].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 
@@ -615,7 +944,7 @@ struct NiriTopologyKernelABITests {
             ),
             makeNiriTopologyColumn(id: 2, span: 400, windowStartIndex: 3, windowCount: 1)
         ]
-        let windows = [10, 20, 30, 40].map { omniwm_niri_topology_window_input(id: UInt64($0)) }
+        let windows = [10, 20, 30, 40].map { makeNiriTopologyWindow(id: UInt64($0)) }
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 
@@ -635,7 +964,7 @@ struct NiriTopologyKernelABITests {
         let columns = [
             makeNiriTopologyColumn(id: 1, span: 400, windowStartIndex: 0, windowCount: 1)
         ]
-        let windows = [omniwm_niri_topology_window_input(id: 10)]
+        let windows = [makeNiriTopologyWindow(id: 10)]
 
         let output = callNiriTopology(input: &input, columns: columns, windows: windows)
 

@@ -243,7 +243,13 @@ typedef struct {
 
 typedef struct {
     uint64_t id;
+    uint8_t sizing_mode;
 } omniwm_niri_topology_window_input;
+
+typedef struct {
+    double view_pos;
+    int32_t column_index;
+} omniwm_geometry_snap_target_result;
 
 typedef struct {
     uint32_t operation;
@@ -378,6 +384,7 @@ double omniwm_geometry_total_span(
 
 double omniwm_geometry_centered_offset(
     const double *spans,
+    const uint8_t *modes,
     size_t count,
     double gap,
     double viewport_span,
@@ -386,6 +393,7 @@ double omniwm_geometry_centered_offset(
 
 double omniwm_geometry_visible_offset(
     const double *spans,
+    const uint8_t *modes,
     size_t count,
     double gap,
     double viewport_span,
@@ -395,6 +403,18 @@ double omniwm_geometry_visible_offset(
     uint8_t always_center_single_column,
     int32_t from_index,
     double scale
+);
+
+omniwm_geometry_snap_target_result omniwm_geometry_snap_target(
+    const double *spans,
+    const uint8_t *modes,
+    size_t count,
+    double gap,
+    double viewport_span,
+    double projected_view_pos,
+    double current_view_pos,
+    uint32_t center_mode,
+    uint8_t always_center_single_column
 );
 
 typedef struct {

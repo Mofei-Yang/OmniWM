@@ -5,12 +5,36 @@ import Testing
 
 private func makeContainers(
     widths: [CGFloat],
-    heights: [CGFloat]? = nil
+    heights: [CGFloat]? = nil,
+    windowSizingModes: [[SizingMode]]? = nil,
+    tabbedIndices: Set<Int> = []
 ) -> [NiriContainer] {
-    zip(widths, heights ?? widths).map { width, height in
+    zip(widths, heights ?? widths).enumerated().map { index, pair in
+        let (width, height) = pair
         let container = NiriContainer()
         container.cachedWidth = width
         container.cachedHeight = height
+        if tabbedIndices.contains(index) {
+            container.displayMode = .tabbed
+        }
+
+        let sizingModes: [SizingMode]
+        if let windowSizingModes, index < windowSizingModes.count {
+            sizingModes = windowSizingModes[index]
+        } else {
+            sizingModes = [.normal]
+        }
+
+        for (windowIndex, mode) in sizingModes.enumerated() {
+            let window = NiriWindow(
+                token: WindowToken(
+                    pid: pid_t(1_000 + index),
+                    windowId: windowIndex + 1
+                )
+            )
+            window.sizingMode = mode
+            container.appendChild(window)
+        }
         return container
     }
 }
@@ -75,7 +99,7 @@ private func makeContainers(
         )
     }
 
-    @Test func centeredOffsetCentersWholeContentWhenViewportExceedsTotalSpan() {
+    @Test func centeredOffsetCentersTargetColumnWhenViewportExceedsTotalSpan() {
         let state = ViewportState()
         let columns = makeContainers(widths: [100, 100])
 
@@ -86,10 +110,10 @@ private func makeContainers(
             viewportWidth: 300
         )
 
-        #expect(abs(offset + 155) < 0.001)
+        #expect(abs(offset + 100) < 0.001)
     }
 
-    @Test func centeredOffsetClampsWithinAllowedOverflowRange() {
+    @Test func centeredOffsetIgnoresFullStripBoundsWhenCenteringTargetColumn() {
         let state = ViewportState()
         let columns = makeContainers(widths: [100, 100, 100])
 
@@ -100,7 +124,21 @@ private func makeContainers(
             viewportWidth: 150
         )
 
-        #expect(abs(offset + 50) < 0.001)
+        #expect(abs(offset + 25) < 0.001)
+    }
+
+    @Test func centeredOffsetPreservesBestEffortCenteringForOversizedColumns() {
+        let state = ViewportState()
+        let columns = makeContainers(widths: [200])
+
+        let offset = state.computeCenteredOffset(
+            columnIndex: 0,
+            columns: columns,
+            gap: 0,
+            viewportWidth: 150
+        )
+
+        #expect(abs(offset - 25) < 0.001)
     }
 
     @Test func visibleOffsetKeepsFullyVisibleTargetPinnedInNeverMode() {
@@ -134,7 +172,7 @@ private func makeContainers(
             centerMode: .onOverflow
         )
 
-        #expect(abs(offset + 50) < 0.001)
+        #expect(abs(offset + 40) < 0.001)
     }
 
     @Test func visibleOffsetAlwaysModeMatchesCenteredOffset() {
@@ -154,7 +192,43 @@ private func makeContainers(
         #expect(abs(offset + 25) < 0.001)
     }
 
-    @Test func visibleOffsetKeepsFullyVisiblePairsPinnedInOnOverflowMode() {
+    @Test func visibleOffsetOnOverflowCentersOversizedColumn() {
+        let state = ViewportState()
+        let columns = makeContainers(widths: [100, 200, 100])
+
+        let offset = state.computeVisibleOffset(
+            containerIndex: 1,
+            containers: columns,
+            gap: 10,
+            viewportSpan: 150,
+            sizeKeyPath: \.cachedWidth,
+            currentViewStart: 0,
+            centerMode: .onOverflow,
+            fromContainerIndex: 0
+        )
+
+        #expect(abs(offset - 25) < 0.001)
+    }
+
+    @Test func visibleOffsetOnOverflowFitsWhenNeighborPairFitsWithinViewport() {
+        let state = ViewportState()
+        let columns = makeContainers(widths: [100, 100, 100])
+
+        let offset = state.computeVisibleOffset(
+            containerIndex: 1,
+            containers: columns,
+            gap: 10,
+            viewportSpan: 230,
+            sizeKeyPath: \.cachedWidth,
+            currentViewStart: 0,
+            centerMode: .onOverflow,
+            fromContainerIndex: 0
+        )
+
+        #expect(abs(offset + 110) < 0.001)
+    }
+
+    @Test func visibleOffsetOnOverflowCentersWhenNeighborPairExceedsViewport() {
         let state = ViewportState()
         let columns = makeContainers(widths: [100, 100, 100])
 
@@ -169,7 +243,7 @@ private func makeContainers(
             fromContainerIndex: 0
         )
 
-        #expect(abs(offset + 110) < 0.001)
+        #expect(abs(offset + 60) < 0.001)
     }
 
     @Test func visibleOffsetCentersWhenOverflowingPairCannotStayVisibleTogether() {
@@ -223,6 +297,385 @@ private func makeContainers(
         )
 
         #expect(abs(offset + 50) < 0.001)
+    }
+
+    @Test func visibleOffsetAlwaysModeCentersEdgeColumnsEvenWhenFullStripFits() {
+        let state = ViewportState()
+        let columns = makeContainers(widths: [400, 400])
+
+        let first = state.computeVisibleOffset(
+            containerIndex: 0,
+            containers: columns,
+            gap: 8,
+            viewportSpan: 1200,
+            sizeKeyPath: \.cachedWidth,
+            currentViewStart: 0,
+            centerMode: .always
+        )
+        let last = state.computeVisibleOffset(
+            containerIndex: 1,
+            containers: columns,
+            gap: 8,
+            viewportSpan: 1200,
+            sizeKeyPath: \.cachedWidth,
+            currentViewStart: 0,
+            centerMode: .always
+        )
+
+        #expect(abs(first + 400) < 0.001)
+        #expect(abs(last + 400) < 0.001)
+    }
+
+    @Test func fullscreenColumnsUseMonitorAnchoredCenteredAndFitOffsets() {
+        let state = ViewportState()
+        let normalColumns = makeContainers(widths: [400, 400])
+        let fullscreenColumns = makeContainers(
+            widths: [400, 400],
+            windowSizingModes: [[.normal], [.normal, .fullscreen]],
+            tabbedIndices: [1]
+        )
+
+        let normalCenteredOffset = state.computeCenteredOffset(
+            columnIndex: 1,
+            columns: normalColumns,
+            gap: 8,
+            viewportWidth: 500
+        )
+        let fullscreenCenteredOffset = state.computeCenteredOffset(
+            columnIndex: 1,
+            columns: fullscreenColumns,
+            gap: 8,
+            viewportWidth: 500
+        )
+
+        let normalFitOffset = state.computeVisibleOffset(
+            containerIndex: 1,
+            containers: normalColumns,
+            gap: 8,
+            viewportSpan: 500,
+            sizeKeyPath: \.cachedWidth,
+            currentViewStart: 0,
+            centerMode: .never
+        )
+        let fullscreenFitOffset = state.computeVisibleOffset(
+            containerIndex: 1,
+            containers: fullscreenColumns,
+            gap: 8,
+            viewportSpan: 500,
+            sizeKeyPath: \.cachedWidth,
+            currentViewStart: 0,
+            centerMode: .never
+        )
+
+        #expect(abs(normalCenteredOffset + 50) < 0.001)
+        #expect(abs(fullscreenCenteredOffset) < 0.001)
+        #expect(
+            abs(
+                state.columnX(at: 1, columns: normalColumns, gap: 8)
+                    + normalFitOffset
+                    - 308
+            ) < 0.001
+        )
+        #expect(
+            abs(
+                state.columnX(at: 1, columns: fullscreenColumns, gap: 8)
+                    + fullscreenFitOffset
+                    - 408
+            ) < 0.001
+        )
+    }
+
+    @Test func snapTargetAlwaysModeAnchorsFullscreenEdgeColumns() {
+        let state = ViewportState()
+        let lastFullscreen = makeContainers(
+            widths: [400, 400],
+            windowSizingModes: [[.normal], [.fullscreen]]
+        )
+        let firstFullscreen = makeContainers(
+            widths: [400, 400],
+            windowSizingModes: [[.fullscreen], [.normal]]
+        )
+
+        let snapToLast = state.snapTarget(
+            projectedViewPos: 900,
+            currentViewPos: -400,
+            columns: lastFullscreen,
+            gap: 8,
+            viewportWidth: 1_200,
+            centerMode: .always
+        )
+        let snapToFirst = state.snapTarget(
+            projectedViewPos: -200,
+            currentViewPos: 408,
+            columns: firstFullscreen,
+            gap: 8,
+            viewportWidth: 1_200,
+            centerMode: .always
+        )
+
+        #expect(snapToLast.columnIndex == 1)
+        #expect(abs(snapToLast.viewPos - 408) < 0.001)
+        #expect(snapToFirst.columnIndex == 0)
+        #expect(abs(snapToFirst.viewPos) < 0.001)
+    }
+
+    @Test func snapTargetOnOverflowAnchorsFullscreenEdgeColumns() {
+        let state = ViewportState()
+        let lastFullscreen = makeContainers(
+            widths: [400, 400],
+            windowSizingModes: [[.normal], [.fullscreen]]
+        )
+        let firstFullscreen = makeContainers(
+            widths: [400, 400],
+            windowSizingModes: [[.fullscreen], [.normal]]
+        )
+
+        let snapToLast = state.snapTarget(
+            projectedViewPos: 900,
+            currentViewPos: 0,
+            columns: lastFullscreen,
+            gap: 8,
+            viewportWidth: 1_200,
+            centerMode: .onOverflow
+        )
+        let snapToFirst = state.snapTarget(
+            projectedViewPos: -200,
+            currentViewPos: 0,
+            columns: firstFullscreen,
+            gap: 8,
+            viewportWidth: 1_200,
+            centerMode: .onOverflow
+        )
+
+        #expect(snapToLast.columnIndex == 1)
+        #expect(abs(snapToLast.viewPos - 408) < 0.001)
+        #expect(snapToFirst.columnIndex == 0)
+        #expect(abs(snapToFirst.viewPos) < 0.001)
+    }
+
+    @Test func endGestureAlwaysModeCentersEdgeColumnsOnSnap() {
+        let columns = makeContainers(widths: [400, 400])
+
+        var toLast = ViewportState()
+        toLast.activeColumnIndex = 0
+        toLast.viewOffsetPixels = .static(-400)
+        toLast.beginGesture(isTrackpad: false)
+        _ = toLast.updateGesture(
+            deltaPixels: 500,
+            timestamp: 1.0,
+            columns: columns,
+            gap: 8,
+            viewportWidth: 1200
+        )
+        toLast.endGesture(
+            columns: columns,
+            gap: 8,
+            viewportWidth: 1200,
+            motion: .disabled,
+            centerMode: .always
+        )
+
+        #expect(toLast.activeColumnIndex == 1)
+        #expect(abs(toLast.viewOffsetPixels.target() + 400) < 0.001)
+
+        var toFirst = ViewportState()
+        toFirst.activeColumnIndex = 1
+        toFirst.viewOffsetPixels = .static(-400)
+        toFirst.beginGesture(isTrackpad: false)
+        _ = toFirst.updateGesture(
+            deltaPixels: -500,
+            timestamp: 1.0,
+            columns: columns,
+            gap: 8,
+            viewportWidth: 1200
+        )
+        toFirst.endGesture(
+            columns: columns,
+            gap: 8,
+            viewportWidth: 1200,
+            motion: .disabled,
+            centerMode: .always
+        )
+
+        #expect(toFirst.activeColumnIndex == 0)
+        #expect(abs(toFirst.viewOffsetPixels.target() + 400) < 0.001)
+    }
+
+    @Test func endGestureOnOverflowUsesEdgeSnapBoundsWithoutStripClamp() {
+        let columns = makeContainers(widths: [100, 100, 100])
+
+        var toLast = ViewportState()
+        toLast.activeColumnIndex = 1
+        toLast.viewOffsetPixels = .static(-60)
+        toLast.beginGesture(isTrackpad: false)
+        _ = toLast.updateGesture(
+            deltaPixels: 500,
+            timestamp: 1.0,
+            columns: columns,
+            gap: 10,
+            viewportWidth: 220
+        )
+        toLast.endGesture(
+            columns: columns,
+            gap: 10,
+            viewportWidth: 220,
+            motion: .disabled,
+            centerMode: .onOverflow
+        )
+
+        #expect(toLast.activeColumnIndex == 2)
+        #expect(abs(toLast.viewOffsetPixels.target() + 60) < 0.001)
+
+        var toFirst = ViewportState()
+        toFirst.activeColumnIndex = 1
+        toFirst.viewOffsetPixels = .static(-60)
+        toFirst.beginGesture(isTrackpad: false)
+        _ = toFirst.updateGesture(
+            deltaPixels: -500,
+            timestamp: 1.0,
+            columns: columns,
+            gap: 10,
+            viewportWidth: 220
+        )
+        toFirst.endGesture(
+            columns: columns,
+            gap: 10,
+            viewportWidth: 220,
+            motion: .disabled,
+            centerMode: .onOverflow
+        )
+
+        #expect(toFirst.activeColumnIndex == 0)
+        #expect(abs(toFirst.viewOffsetPixels.target() + 60) < 0.001)
+    }
+
+    @Test func endGestureMatchesSharedSnapTargetAcrossNormalAndFullscreenScenarios() {
+        struct Scenario {
+            let label: String
+            let widths: [CGFloat]
+            let windowSizingModes: [[SizingMode]]
+            let gap: CGFloat
+            let viewportWidth: CGFloat
+            let centerMode: CenterFocusedColumn
+            let initialActiveIndex: Int
+            let initialOffset: CGFloat
+            let deltaPixels: CGFloat
+        }
+
+        let scenarios: [Scenario] = [
+            .init(
+                label: "always normal -> edge center",
+                widths: [400, 400],
+                windowSizingModes: [[.normal], [.normal]],
+                gap: 8,
+                viewportWidth: 1_200,
+                centerMode: .always,
+                initialActiveIndex: 0,
+                initialOffset: -400,
+                deltaPixels: 500
+            ),
+            .init(
+                label: "always fullscreen target -> monitor anchor",
+                widths: [400, 400],
+                windowSizingModes: [[.normal], [.fullscreen]],
+                gap: 8,
+                viewportWidth: 1_200,
+                centerMode: .always,
+                initialActiveIndex: 0,
+                initialOffset: -400,
+                deltaPixels: 700
+            ),
+            .init(
+                label: "overflow fullscreen target -> monitor anchor",
+                widths: [400, 400],
+                windowSizingModes: [[.normal], [.fullscreen]],
+                gap: 8,
+                viewportWidth: 1_200,
+                centerMode: .onOverflow,
+                initialActiveIndex: 0,
+                initialOffset: 0,
+                deltaPixels: 700
+            ),
+            .init(
+                label: "overflow fullscreen source -> pair fit",
+                widths: [400, 400],
+                windowSizingModes: [[.fullscreen], [.normal]],
+                gap: 8,
+                viewportWidth: 1_200,
+                centerMode: .onOverflow,
+                initialActiveIndex: 1,
+                initialOffset: -408,
+                deltaPixels: -700
+            ),
+        ]
+
+        for scenario in scenarios {
+            let columns = makeContainers(
+                widths: scenario.widths,
+                windowSizingModes: scenario.windowSizingModes
+            )
+
+            var state = ViewportState()
+            state.activeColumnIndex = scenario.initialActiveIndex
+            state.viewOffsetPixels = .static(scenario.initialOffset)
+            state.beginGesture(isTrackpad: false)
+            _ = state.updateGesture(
+                deltaPixels: scenario.deltaPixels,
+                timestamp: 1.0,
+                columns: columns,
+                gap: scenario.gap,
+                viewportWidth: scenario.viewportWidth
+            )
+
+            guard let gesture = state.viewOffsetPixels.gestureRef else {
+                Issue.record("Expected gesture state for \(scenario.label)")
+                continue
+            }
+
+            let activeColumnX = state.columnX(
+                at: state.activeColumnIndex,
+                columns: columns,
+                gap: scenario.gap
+            )
+            let currentViewPos = Double(activeColumnX) + gesture.current()
+            let projectedViewPos = Double(activeColumnX)
+                + gesture.tracker.projectedEndPosition()
+                + gesture.deltaFromTracker
+            let expectedTarget = state.snapTarget(
+                projectedViewPos: projectedViewPos,
+                currentViewPos: currentViewPos,
+                columns: columns,
+                gap: scenario.gap,
+                viewportWidth: scenario.viewportWidth,
+                centerMode: scenario.centerMode
+            )
+
+            state.endGesture(
+                columns: columns,
+                gap: scenario.gap,
+                viewportWidth: scenario.viewportWidth,
+                motion: .disabled,
+                centerMode: scenario.centerMode
+            )
+
+            let expectedOffset = expectedTarget.viewPos
+                - Double(
+                    state.columnX(
+                        at: expectedTarget.columnIndex,
+                        columns: columns,
+                        gap: scenario.gap
+                    )
+                )
+
+            #expect(
+                state.activeColumnIndex == expectedTarget.columnIndex,
+                Comment(rawValue: scenario.label)
+            )
+            #expect(
+                abs(Double(state.viewOffsetPixels.target()) - expectedOffset) < 0.001,
+                Comment(rawValue: scenario.label)
+            )
+        }
     }
 
     @Test func pixelEpsilonTreatsNearlyVisibleTargetAsVisible() {
