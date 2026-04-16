@@ -46,7 +46,8 @@ import OmniWMIPC
         )
 
         var iterator = stream.makeAsyncIterator()
-        let event = try await #require(iterator.next())
+        let nextEvent = await iterator.next()
+        let event = try #require(nextEvent)
 
         #expect(event.id == "evt-2")
         if case let .focusedWindow(payload) = event.result.payload {

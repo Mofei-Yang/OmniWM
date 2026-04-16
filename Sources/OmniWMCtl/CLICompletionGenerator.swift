@@ -315,26 +315,25 @@ enum CLICompletionGenerator {
             "complete -c omniwmctl -f -n '__fish_seen_subcommand_from completion' -a '\(shell.rawValue)'"
         }
 
-        return (
-            [helperFunctions]
-                + baseLines
-                + queryLines
-                + queryFlagLines.sorted()
-                + queryFieldLines.sorted()
-                + commandRootLines
-                + commandNestedLines.sorted()
-                + commandPathArgumentLines.sorted()
-                + commandFallbackLines.sorted()
-                + commandSecondArgumentLines.sorted()
-                + ruleLines
-                + ruleApplyLines
-                + subscribeLines
-                + watchLines
-                + workspaceLines
-                + windowLines
-                + shellLines
-        )
-        .joined(separator: "\n")
+        var lines = [helperFunctions]
+        lines.append(contentsOf: baseLines)
+        lines.append(contentsOf: queryLines)
+        lines.append(contentsOf: queryFlagLines.sorted())
+        lines.append(contentsOf: queryFieldLines.sorted())
+        lines.append(contentsOf: commandRootLines)
+        lines.append(contentsOf: commandNestedLines.sorted())
+        lines.append(contentsOf: commandPathArgumentLines.sorted())
+        lines.append(contentsOf: commandFallbackLines.sorted())
+        lines.append(contentsOf: commandSecondArgumentLines.sorted())
+        lines.append(contentsOf: ruleLines)
+        lines.append(contentsOf: ruleApplyLines)
+        lines.append(contentsOf: subscribeLines)
+        lines.append(contentsOf: watchLines)
+        lines.append(contentsOf: workspaceLines)
+        lines.append(contentsOf: windowLines)
+        lines.append(contentsOf: shellLines)
+
+        return lines.joined(separator: "\n")
     }
 
     private static var topLevelCommands: [String] {

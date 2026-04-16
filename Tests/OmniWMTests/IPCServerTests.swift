@@ -807,7 +807,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
 
         let events = await connection.eventStream()
         var iterator = events.makeAsyncIterator()
-        let initialEvent = try await #require(iterator.next())
+        let initialNextEvent = try await iterator.next()
+        let initialEvent = try #require(initialNextEvent)
         #expect(initialEvent.channel == .focus)
         if case let .focusedWindow(payload) = initialEvent.result.payload {
             #expect(payload.window?.title == "Initial Focus")
@@ -817,7 +818,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
 
         _ = controller.workspaceManager.setManagedFocus(updatedToken, in: workspaceId)
 
-        let event = try await #require(iterator.next())
+        let nextEvent = try await iterator.next()
+        let event = try #require(nextEvent)
         #expect(event.channel == .focus)
         #expect(event.ok)
         #expect(event.status == .success)
@@ -885,7 +887,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
         #expect(subscribeResponse.kind == .subscribe)
         #expect(subscribeResponse.status == .subscribed)
 
-        let event = try await #require(connection.readEvent())
+        let nextEvent = try await connection.readEvent()
+        let event = try #require(nextEvent)
         #expect(event.channel == .focus)
         #expect(event.id == bufferedEvent.id)
         if case let .focusedWindow(payload) = event.result.payload {
@@ -963,7 +966,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
         #expect(subscribeResponse.kind == .subscribe)
         #expect(subscribeResponse.status == .subscribed)
 
-        let initialEvent = try await #require(connection.readEvent())
+        let initialNextEvent = try await connection.readEvent()
+        let initialEvent = try #require(initialNextEvent)
         #expect(initialEvent.channel == .focus)
         if case let .focusedWindow(payload) = initialEvent.result.payload {
             #expect(payload.window?.title == "Initial Focus")
@@ -971,7 +975,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
             Issue.record("Expected initial focused-window payload")
         }
 
-        let liveEvent = try await #require(connection.readEvent())
+        let liveNextEvent = try await connection.readEvent()
+        let liveEvent = try #require(liveNextEvent)
         #expect(liveEvent.channel == .focus)
         #expect(liveEvent.id == bufferedEvent.id)
         if case let .focusedWindow(payload) = liveEvent.result.payload {
@@ -1015,7 +1020,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
         #expect(subscribeResponse.kind == .subscribe)
         #expect(subscribeResponse.status == .subscribed)
 
-        let initialEvent = try await #require(connection.readEvent())
+        let initialNextEvent = try await connection.readEvent()
+        let initialEvent = try #require(initialNextEvent)
         #expect(initialEvent.channel == .focusedMonitor)
         if case let .focusedMonitor(payload) = initialEvent.result.payload {
             #expect(payload.display?.id == "display:\(fixture.primaryMonitor.displayId)")
@@ -1026,7 +1032,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
 
         fixture.controller.workspaceNavigationHandler.focusMonitorCyclic(previous: false)
 
-        let event = try await #require(connection.readEvent())
+        let nextEvent = try await connection.readEvent()
+        let event = try #require(nextEvent)
         #expect(event.channel == .focusedMonitor)
         if case let .focusedMonitor(payload) = event.result.payload {
             #expect(payload.display?.id == "display:\(fixture.secondaryMonitor.displayId)")
@@ -1077,7 +1084,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
         let workspaceId = try #require(controller.workspaceManager.workspaceId(for: "2", createIfMissing: false))
         #expect(controller.workspaceManager.setActiveWorkspace(workspaceId, on: monitor.id))
 
-        let firstEvent = try await #require(connection.readEvent())
+        let firstNextEvent = try await connection.readEvent()
+        let firstEvent = try #require(firstNextEvent)
         #expect(firstEvent.channel == .activeWorkspace)
         if case let .activeWorkspace(payload) = firstEvent.result.payload {
             #expect(payload.workspace?.rawName == "2")
@@ -1125,9 +1133,12 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
 
         fixture.controller.workspaceNavigationHandler.focusMonitorCyclic(previous: false)
 
-        let firstEvent = try await #require(connection.readEvent())
-        let secondEvent = try await #require(connection.readEvent())
-        let thirdEvent = try await #require(connection.readEvent())
+        let firstNextEvent = try await connection.readEvent()
+        let firstEvent = try #require(firstNextEvent)
+        let secondNextEvent = try await connection.readEvent()
+        let secondEvent = try #require(secondNextEvent)
+        let thirdNextEvent = try await connection.readEvent()
+        let thirdEvent = try #require(thirdNextEvent)
 
         #expect([firstEvent.channel, secondEvent.channel, thirdEvent.channel] == [
             .activeWorkspace,
@@ -1206,7 +1217,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
 
         let events = await connection.eventStream()
         var iterator = events.makeAsyncIterator()
-        let initialEvent = try await #require(iterator.next())
+        let initialNextEvent = try await iterator.next()
+        let initialEvent = try #require(initialNextEvent)
         #expect(initialEvent.channel == .workspaceBar)
 
         controller.requestWorkspaceBarRefresh()
@@ -1214,7 +1226,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
         controller.requestWorkspaceBarRefresh()
         await controller.waitForWorkspaceBarRefreshForTests()
 
-        let event = try await #require(iterator.next())
+        let nextEvent = try await iterator.next()
+        let event = try #require(nextEvent)
         #expect(event.channel == .workspaceBar)
         #expect(event.ok)
         #expect(event.status == .success)
@@ -1286,7 +1299,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
 
         let events = await connection.eventStream()
         var iterator = events.makeAsyncIterator()
-        let initialEvent = try await #require(iterator.next())
+        let initialNextEvent = try await iterator.next()
+        let initialEvent = try #require(initialNextEvent)
         #expect(initialEvent.channel == .workspaceBar)
 
         controller.requestWorkspaceBarRefresh()
@@ -1294,7 +1308,8 @@ private func makeTestFocusEvent(id: String, title: String) -> IPCEventEnvelope {
         controller.requestWorkspaceBarRefresh()
         await controller.waitForWorkspaceBarRefreshForTests()
 
-        let event = try await #require(iterator.next())
+        let nextEvent = try await iterator.next()
+        let event = try #require(nextEvent)
         #expect(event.channel == .workspaceBar)
         #expect(event.ok)
         #expect(event.status == .success)

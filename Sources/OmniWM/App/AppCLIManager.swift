@@ -138,7 +138,7 @@ final class AppCLIManager {
     private func preferredUserBinDirectory() -> URL {
         let homeDirectory = homeDirectoryURLProvider().standardizedFileURL
         let pathDirectories = pathDirectoriesFromEnvironment()
-            .filter { $0.path.hasPrefix(homeDirectory.path) }
+            .filter { isWithinHomeDirectory($0, homeDirectory: homeDirectory) }
         let fallbacks = [
             homeDirectory.appendingPathComponent(".local/bin", isDirectory: true),
             homeDirectory.appendingPathComponent("bin", isDirectory: true)
@@ -180,7 +180,21 @@ final class AppCLIManager {
             return fileManager.isWritableFile(atPath: directory.path)
         }
 
-        return directory.deletingLastPathComponent().path.hasPrefix(homeDirectoryURLProvider().path)
+        return isWithinHomeDirectory(
+            directory.deletingLastPathComponent(),
+            homeDirectory: homeDirectoryURLProvider().standardizedFileURL
+        )
+    }
+
+    private func isWithinHomeDirectory(_ directory: URL, homeDirectory: URL) -> Bool {
+        let directoryPathComponents = directory.standardizedFileURL.pathComponents
+        let homePathComponents = homeDirectory.standardizedFileURL.pathComponents
+
+        guard directoryPathComponents.count >= homePathComponents.count else {
+            return false
+        }
+
+        return Array(directoryPathComponents.prefix(homePathComponents.count)) == homePathComponents
     }
 
     private func symlinkResolvesToBundledCLI(at url: URL) -> Bool {

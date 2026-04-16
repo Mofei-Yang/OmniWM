@@ -87,6 +87,33 @@ private func makeCLIManager(
         #expect(manager.exposureStatus() == .appManaged(linkURL: expectedLinkURL, directoryOnPath: false))
     }
 
+    @Test func installCLIIgnoresPathDirectoriesThatOnlyShareHomePrefix() throws {
+        let root = makeAppCLIManagerTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let homeDirectory = root.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDirectory, withIntermediateDirectories: true)
+
+        let siblingHomePrefixDirectory = root.appendingPathComponent("home-other/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: siblingHomePrefixDirectory, withIntermediateDirectories: true)
+
+        let appBundleURL = try makeBundledCLIAppBundle(in: root)
+        let manager = makeCLIManager(
+            homeDirectory: homeDirectory,
+            bundleURL: appBundleURL,
+            pathDirectories: [siblingHomePrefixDirectory]
+        )
+
+        let expectedLinkURL = homeDirectory
+            .appendingPathComponent(".local/bin", isDirectory: true)
+            .appendingPathComponent("omniwmctl", isDirectory: false)
+        let result = try manager.installCLIToPATH()
+
+        #expect(result == .installed(linkURL: expectedLinkURL, directoryOnPath: false))
+        #expect(FileManager.default.fileExists(atPath: siblingHomePrefixDirectory.appendingPathComponent("omniwmctl").path) == false)
+        #expect(manager.exposureStatus() == .appManaged(linkURL: expectedLinkURL, directoryOnPath: false))
+    }
+
     @Test func installAndRemoveCLITrackAppManagedLinkLifecycle() throws {
         let root = makeAppCLIManagerTestDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
