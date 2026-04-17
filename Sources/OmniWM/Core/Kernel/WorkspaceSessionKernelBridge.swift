@@ -1,63 +1,118 @@
 import COmniWMKernels
 import Foundation
 
-func workspaceSessionKernelOutputValidationFailureReason(
-    status: Int32,
-    rawOutput: omniwm_workspace_session_output,
-    monitorCapacity: Int,
-    workspaceProjectionCapacity: Int,
-    disconnectedCacheCapacity: Int
-) -> String? {
-    guard status == OMNIWM_KERNELS_STATUS_OK else {
-        return "omniwm_workspace_session_plan returned \(status)"
-    }
-    guard rawOutput.monitor_result_count <= monitorCapacity else {
-        return "omniwm_workspace_session_plan reported \(rawOutput.monitor_result_count) monitor results for capacity \(monitorCapacity)"
-    }
-    guard rawOutput.workspace_projection_count <= workspaceProjectionCapacity else {
-        return "omniwm_workspace_session_plan reported \(rawOutput.workspace_projection_count) workspace projections for capacity \(workspaceProjectionCapacity)"
-    }
-    guard rawOutput.disconnected_cache_result_count <= disconnectedCacheCapacity else {
-        return "omniwm_workspace_session_plan reported \(rawOutput.disconnected_cache_result_count) disconnected cache results for capacity \(disconnectedCacheCapacity)"
-    }
-    return nil
-}
-
-// Error-conforming so we can move callers from `Plan?` to `throws` later without re-typing the cause.
-enum WorkspaceSessionKernelError: Error, Equatable {
-    case invocationFailed(reason: String)
-
-    var reason: String {
-        switch self {
-        case .invocationFailed(let reason): return reason
-        }
-    }
-}
-
-enum WorkspaceSessionKernelFallback {
-    /// Single reporting choke point for kernel invocation failures.
-    ///
-    /// Each caller still chooses its local degradation (cache, nil, no-op)
-    /// because their return shapes differ — but every failure flows through
-    /// here so logging, telemetry, and DEBUG assertions live in one place
-    /// instead of being scattered across call sites.
-    static func report(_ error: WorkspaceSessionKernelError, operation: StaticString) {
-        let message = "[WorkspaceSessionKernel] \(operation) failed: \(error.reason)"
-        // fputs covers release builds; assertionFailure covers debug.
-        fputs("\(message)\n", stderr)
-        assertionFailure(message)
-    }
-}
-
 @MainActor
 enum WorkspaceSessionKernel {
+    enum WorkspaceSessionKernelError: Error, Equatable, CustomStringConvertible {
+        case kernelStatus(code: Int32)
+        case monitorResultsOverflow(reported: Int, capacity: Int)
+        case workspaceProjectionOverflow(reported: Int, capacity: Int)
+        case disconnectedCacheOverflow(reported: Int, capacity: Int)
+        case unknownRawValue(label: StaticString, value: UInt32)
+
+        var description: String {
+            switch self {
+            case .kernelStatus(let code):
+                return "omniwm_workspace_session_plan returned \(code)"
+            case .monitorResultsOverflow(let reported, let capacity):
+                return "omniwm_workspace_session_plan reported \(reported) monitor results for capacity \(capacity)"
+            case .workspaceProjectionOverflow(let reported, let capacity):
+                return "omniwm_workspace_session_plan reported \(reported) workspace projections for capacity \(capacity)"
+            case .disconnectedCacheOverflow(let reported, let capacity):
+                return "omniwm_workspace_session_plan reported \(reported) disconnected cache results for capacity \(capacity)"
+            case .unknownRawValue(let label, let value):
+                return "Unknown \(String(describing: label)): \(value)"
+            }
+        }
+
+        static func ==(lhs: WorkspaceSessionKernelError, rhs: WorkspaceSessionKernelError) -> Bool {
+            switch (lhs, rhs) {
+            case (.kernelStatus(let lhsCode), .kernelStatus(let rhsCode)):
+                return lhsCode == rhsCode
+            case (
+                .monitorResultsOverflow(let lhsReported, let lhsCapacity),
+                .monitorResultsOverflow(let rhsReported, let rhsCapacity)
+            ):
+                return lhsReported == rhsReported && lhsCapacity == rhsCapacity
+            case (
+                .workspaceProjectionOverflow(let lhsReported, let lhsCapacity),
+                .workspaceProjectionOverflow(let rhsReported, let rhsCapacity)
+            ):
+                return lhsReported == rhsReported && lhsCapacity == rhsCapacity
+            case (
+                .disconnectedCacheOverflow(let lhsReported, let lhsCapacity),
+                .disconnectedCacheOverflow(let rhsReported, let rhsCapacity)
+            ):
+                return lhsReported == rhsReported && lhsCapacity == rhsCapacity
+            case (
+                .unknownRawValue(let lhsLabel, let lhsValue),
+                .unknownRawValue(let rhsLabel, let rhsValue)
+            ):
+                return String(describing: lhsLabel) == String(describing: rhsLabel) && lhsValue == rhsValue
+            default:
+                return false
+            }
+        }
+    }
+
+    static func workspaceSessionKernelValidationError(
+        status: Int32,
+        rawOutput: omniwm_workspace_session_output,
+        monitorCapacity: Int,
+        workspaceProjectionCapacity: Int,
+        disconnectedCacheCapacity: Int
+    ) -> WorkspaceSessionKernelError? {
+        guard status == OMNIWM_KERNELS_STATUS_OK else {
+            return .kernelStatus(code: status)
+        }
+        guard rawOutput.monitor_result_count <= monitorCapacity else {
+            return .monitorResultsOverflow(
+                reported: Int(rawOutput.monitor_result_count),
+                capacity: monitorCapacity
+            )
+        }
+        guard rawOutput.workspace_projection_count <= workspaceProjectionCapacity else {
+            return .workspaceProjectionOverflow(
+                reported: Int(rawOutput.workspace_projection_count),
+                capacity: workspaceProjectionCapacity
+            )
+        }
+        guard rawOutput.disconnected_cache_result_count <= disconnectedCacheCapacity else {
+            return .disconnectedCacheOverflow(
+                reported: Int(rawOutput.disconnected_cache_result_count),
+                capacity: disconnectedCacheCapacity
+            )
+        }
+        return nil
+    }
+
+    static func workspaceSessionKernelFailureMessage(
+        for error: WorkspaceSessionKernelError,
+        operation: StaticString
+    ) -> String {
+        "[WorkspaceSessionKernel] \(operation) failed: \(error)"
+    }
+
+    static func logged<T>(
+        _ result: Result<T, WorkspaceSessionKernelError>,
+        operation: StaticString
+    ) -> T? {
+        switch result {
+        case .success(let value):
+            return value
+        case .failure(let error):
+            fputs("\(workspaceSessionKernelFailureMessage(for: error, operation: operation))\n", stderr)
+            return nil
+        }
+    }
+
     enum Outcome {
         case noop
         case apply
         case invalidTarget
         case invalidPatch
 
-        init(kernelRawValue: UInt32) {
+        init(kernelRawValue: UInt32) throws {
             switch kernelRawValue {
             case UInt32(OMNIWM_WORKSPACE_SESSION_OUTCOME_NOOP):
                 self = .noop
@@ -68,7 +123,10 @@ enum WorkspaceSessionKernel {
             case UInt32(OMNIWM_WORKSPACE_SESSION_OUTCOME_INVALID_PATCH):
                 self = .invalidPatch
             default:
-                KernelContract.unknownRawValue(kernelRawValue, label: "WorkspaceSessionKernel.Outcome")
+                throw WorkspaceSessionKernelError.unknownRawValue(
+                    label: "WorkspaceSessionKernel.Outcome",
+                    value: kernelRawValue
+                )
             }
         }
     }
@@ -78,7 +136,7 @@ enum WorkspaceSessionKernel {
         case apply
         case preserveCurrent
 
-        init(kernelRawValue: UInt32) {
+        init(kernelRawValue: UInt32) throws {
             switch kernelRawValue {
             case UInt32(OMNIWM_WORKSPACE_SESSION_PATCH_VIEWPORT_NONE):
                 self = .none
@@ -87,7 +145,10 @@ enum WorkspaceSessionKernel {
             case UInt32(OMNIWM_WORKSPACE_SESSION_PATCH_VIEWPORT_PRESERVE_CURRENT):
                 self = .preserveCurrent
             default:
-                KernelContract.unknownRawValue(kernelRawValue, label: "WorkspaceSessionKernel.PatchViewportAction")
+                throw WorkspaceSessionKernelError.unknownRawValue(
+                    label: "WorkspaceSessionKernel.PatchViewportAction",
+                    value: kernelRawValue
+                )
             }
         }
     }
@@ -97,7 +158,7 @@ enum WorkspaceSessionKernel {
         case pending
         case pendingAndConfirmed
 
-        init(kernelRawValue: UInt32) {
+        init(kernelRawValue: UInt32) throws {
             switch kernelRawValue {
             case UInt32(OMNIWM_WORKSPACE_SESSION_FOCUS_CLEAR_NONE):
                 self = .none
@@ -106,7 +167,10 @@ enum WorkspaceSessionKernel {
             case UInt32(OMNIWM_WORKSPACE_SESSION_FOCUS_CLEAR_PENDING_AND_CONFIRMED):
                 self = .pendingAndConfirmed
             default:
-                KernelContract.unknownRawValue(kernelRawValue, label: "WorkspaceSessionKernel.FocusClearAction")
+                throw WorkspaceSessionKernelError.unknownRawValue(
+                    label: "WorkspaceSessionKernel.FocusClearAction",
+                    value: kernelRawValue
+                )
             }
         }
     }
@@ -198,20 +262,26 @@ enum WorkspaceSessionKernel {
         manager: WorkspaceManager,
         monitors: [Monitor]
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: monitors,
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_PROJECT)
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: monitors,
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_PROJECT)
+            ),
+            operation: "WorkspaceSessionKernel.project"
         )?.plan
     }
 
     static func reconcileVisible(
         manager: WorkspaceManager
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: manager.monitors,
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RECONCILE_VISIBLE)
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: manager.monitors,
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RECONCILE_VISIBLE)
+            ),
+            operation: "WorkspaceSessionKernel.reconcileVisible"
         )?.plan
     }
 
@@ -221,14 +291,17 @@ enum WorkspaceSessionKernel {
         monitorId: Monitor.ID,
         updateInteractionMonitor: Bool
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: manager.monitors,
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_ACTIVATE_WORKSPACE),
-            workspaceId: workspaceId,
-            monitorId: monitorId,
-            updateInteractionMonitor: updateInteractionMonitor,
-            preservePreviousInteractionMonitor: true
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: manager.monitors,
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_ACTIVATE_WORKSPACE),
+                workspaceId: workspaceId,
+                monitorId: monitorId,
+                updateInteractionMonitor: updateInteractionMonitor,
+                preservePreviousInteractionMonitor: true
+            ),
+            operation: "WorkspaceSessionKernel.activateWorkspace"
         )?.plan
     }
 
@@ -237,12 +310,15 @@ enum WorkspaceSessionKernel {
         monitorId: Monitor.ID?,
         preservePrevious: Bool
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: manager.monitors,
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_SET_INTERACTION_MONITOR),
-            monitorId: monitorId,
-            preservePreviousInteractionMonitor: preservePrevious
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: manager.monitors,
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_SET_INTERACTION_MONITOR),
+                monitorId: monitorId,
+                preservePreviousInteractionMonitor: preservePrevious
+            ),
+            operation: "WorkspaceSessionKernel.setInteractionMonitor"
         )?.plan
     }
 
@@ -250,11 +326,14 @@ enum WorkspaceSessionKernel {
         manager: WorkspaceManager,
         workspaceId: WorkspaceDescriptor.ID
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: [],
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RESOLVE_PREFERRED_FOCUS),
-            workspaceId: workspaceId
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: [],
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RESOLVE_PREFERRED_FOCUS),
+                workspaceId: workspaceId
+            ),
+            operation: "WorkspaceSessionKernel.resolvePreferredFocus"
         )?.plan
     }
 
@@ -262,11 +341,14 @@ enum WorkspaceSessionKernel {
         manager: WorkspaceManager,
         workspaceId: WorkspaceDescriptor.ID
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: [],
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RESOLVE_WORKSPACE_FOCUS),
-            workspaceId: workspaceId
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: [],
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RESOLVE_WORKSPACE_FOCUS),
+                workspaceId: workspaceId
+            ),
+            operation: "WorkspaceSessionKernel.resolveWorkspaceFocus"
         )?.plan
     }
 
@@ -274,12 +356,15 @@ enum WorkspaceSessionKernel {
         manager: WorkspaceManager,
         patch: WorkspaceSessionPatch
     ) -> Plan? {
-        invoke(
-            manager: manager,
-            monitors: [],
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_APPLY_SESSION_PATCH),
-            workspaceId: patch.workspaceId,
-            patch: patch
+        logged(
+            invokeResult(
+                manager: manager,
+                monitors: [],
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_APPLY_SESSION_PATCH),
+                workspaceId: patch.workspaceId,
+                patch: patch
+            ),
+            operation: "WorkspaceSessionKernel.applySessionPatch"
         )?.plan
     }
 
@@ -289,31 +374,29 @@ enum WorkspaceSessionKernel {
     ) -> TopologyTransitionPlan? {
         let previousMonitors = previousMonitorSnapshots(manager: manager)
         let disconnectedCacheEntries = disconnectedCacheEntries(manager: manager)
-        guard let result = invoke(
-            manager: manager,
-            monitors: newMonitors,
-            previousMonitors: previousMonitors,
-            operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RECONCILE_TOPOLOGY),
-            disconnectedCacheEntries: disconnectedCacheEntries
+        let operation: StaticString = "WorkspaceSessionKernel.reconcileTopology"
+        guard let result = logged(
+            invokeResult(
+                manager: manager,
+                monitors: newMonitors,
+                previousMonitors: previousMonitors,
+                operation: UInt32(OMNIWM_WORKSPACE_SESSION_OPERATION_RECONCILE_TOPOLOGY),
+                disconnectedCacheEntries: disconnectedCacheEntries
+            ),
+            operation: operation
         ) else {
             return nil
         }
 
-        var disconnectedCache: [MonitorRestoreKey: WorkspaceDescriptor.ID] = [:]
-        disconnectedCache.reserveCapacity(result.disconnectedCacheResults.count)
-        for entry in result.disconnectedCacheResults {
-            let restoreKey: MonitorRestoreKey
-            switch entry.sourceKind {
-            case UInt32(OMNIWM_RESTORE_CACHE_SOURCE_EXISTING):
-                guard disconnectedCacheEntries.indices.contains(entry.sourceIndex) else { continue }
-                restoreKey = disconnectedCacheEntries[entry.sourceIndex].restoreKey
-            case UInt32(OMNIWM_RESTORE_CACHE_SOURCE_REMOVED_MONITOR):
-                guard previousMonitors.indices.contains(entry.sourceIndex) else { continue }
-                restoreKey = MonitorRestoreKey(monitor: previousMonitors[entry.sourceIndex].monitor)
-            default:
-                KernelContract.unknownRawValue(entry.sourceKind, label: "OMNIWM_RESTORE_CACHE_SOURCE")
-            }
-            disconnectedCache[restoreKey] = entry.workspaceId
+        guard let disconnectedCache = logged(
+            disconnectedVisibleWorkspaceCache(
+                from: result.disconnectedCacheResults,
+                previousMonitors: previousMonitors,
+                disconnectedCacheEntries: disconnectedCacheEntries
+            ),
+            operation: operation
+        ) else {
+            return nil
         }
 
         return TopologyTransitionPlan(
@@ -341,7 +424,7 @@ enum WorkspaceSessionKernel {
         )
     }
 
-    private static func invoke(
+    private static func invokeResult(
         manager: WorkspaceManager,
         monitors: [Monitor],
         previousMonitors: [PreviousMonitorSnapshot] = [],
@@ -352,7 +435,7 @@ enum WorkspaceSessionKernel {
         preservePreviousInteractionMonitor: Bool = false,
         disconnectedCacheEntries: [DisconnectedCacheEntrySnapshot] = [],
         patch: WorkspaceSessionPatch? = nil
-    ) -> InvocationResult? {
+    ) -> Result<InvocationResult, WorkspaceSessionKernelError> {
         let focusSnapshot = focusSnapshot(manager: manager)
         let sortedWorkspaces = manager.workspaceStore.sortedWorkspaces()
 
@@ -614,18 +697,14 @@ enum WorkspaceSessionKernel {
             }
         }
 
-        if let failureReason = workspaceSessionKernelOutputValidationFailureReason(
+        if let error = workspaceSessionKernelValidationError(
             status: status,
             rawOutput: rawOutput,
             monitorCapacity: rawMonitorResults.count,
             workspaceProjectionCapacity: rawWorkspaceProjections.count,
             disconnectedCacheCapacity: rawDisconnectedCacheResults.count
         ) {
-            WorkspaceSessionKernelFallback.report(
-                .invocationFailed(reason: failureReason),
-                operation: "WorkspaceSessionKernel.invoke"
-            )
-            return nil
+            return .failure(error)
         }
 
         return decodeInvocationResult(
@@ -641,58 +720,100 @@ enum WorkspaceSessionKernel {
         rawMonitorResults: ContiguousArray<omniwm_workspace_session_monitor_result>,
         rawWorkspaceProjections: ContiguousArray<omniwm_workspace_session_workspace_projection>,
         rawDisconnectedCacheResults: ContiguousArray<omniwm_workspace_session_disconnected_cache_result>
-    ) -> InvocationResult {
-        InvocationResult(
-            plan: Plan(
-                outcome: Outcome(kernelRawValue: rawOutput.outcome),
-                patchViewportAction: PatchViewportAction(kernelRawValue: rawOutput.patch_viewport_action),
-                focusClearAction: FocusClearAction(kernelRawValue: rawOutput.focus_clear_action),
-                interactionMonitorId: rawOutput.has_interaction_monitor_id == 0
-                    ? nil
-                    : Monitor.ID(displayId: rawOutput.interaction_monitor_id),
-                previousInteractionMonitorId: rawOutput.has_previous_interaction_monitor_id == 0
-                    ? nil
-                    : Monitor.ID(displayId: rawOutput.previous_interaction_monitor_id),
-                resolvedFocusToken: rawOutput.has_resolved_focus_token == 0
-                    ? nil
-                    : decode(token: rawOutput.resolved_focus_token),
-                monitorStates: Array(rawMonitorResults.prefix(rawOutput.monitor_result_count)).map {
-                    MonitorState(
-                        monitorId: Monitor.ID(displayId: $0.monitor_id),
-                        visibleWorkspaceId: $0
-                            .has_visible_workspace_id == 0 ? nil : decode(uuid: $0.visible_workspace_id),
-                        previousVisibleWorkspaceId: $0.has_previous_visible_workspace_id == 0
+    ) -> Result<InvocationResult, WorkspaceSessionKernelError> {
+        do {
+            return .success(
+                InvocationResult(
+                    plan: Plan(
+                        outcome: try Outcome(kernelRawValue: rawOutput.outcome),
+                        patchViewportAction: try PatchViewportAction(
+                            kernelRawValue: rawOutput.patch_viewport_action
+                        ),
+                        focusClearAction: try FocusClearAction(
+                            kernelRawValue: rawOutput.focus_clear_action
+                        ),
+                        interactionMonitorId: rawOutput.has_interaction_monitor_id == 0
                             ? nil
-                            : decode(uuid: $0.previous_visible_workspace_id),
-                        resolvedActiveWorkspaceId: $0.has_resolved_active_workspace_id == 0
+                            : Monitor.ID(displayId: rawOutput.interaction_monitor_id),
+                        previousInteractionMonitorId: rawOutput.has_previous_interaction_monitor_id == 0
                             ? nil
-                            : decode(uuid: $0.resolved_active_workspace_id)
-                    )
-                },
-                workspaceProjections: Array(rawWorkspaceProjections.prefix(rawOutput.workspace_projection_count))
-                    .map {
-                        WorkspaceProjectionRecord(
-                            workspaceId: decode(uuid: $0.workspace_id),
-                            projectedMonitorId: $0.has_projected_monitor_id == 0 ? nil : Monitor
-                                .ID(displayId: $0.projected_monitor_id),
-                            homeMonitorId: $0.has_home_monitor_id == 0 ? nil : Monitor
-                                .ID(displayId: $0.home_monitor_id),
-                            effectiveMonitorId: $0.has_effective_monitor_id == 0 ? nil : Monitor
-                                .ID(displayId: $0.effective_monitor_id)
+                            : Monitor.ID(displayId: rawOutput.previous_interaction_monitor_id),
+                        resolvedFocusToken: rawOutput.has_resolved_focus_token == 0
+                            ? nil
+                            : decode(token: rawOutput.resolved_focus_token),
+                        monitorStates: Array(rawMonitorResults.prefix(rawOutput.monitor_result_count)).map {
+                            MonitorState(
+                                monitorId: Monitor.ID(displayId: $0.monitor_id),
+                                visibleWorkspaceId: $0.has_visible_workspace_id == 0
+                                    ? nil
+                                    : decode(uuid: $0.visible_workspace_id),
+                                previousVisibleWorkspaceId: $0.has_previous_visible_workspace_id == 0
+                                    ? nil
+                                    : decode(uuid: $0.previous_visible_workspace_id),
+                                resolvedActiveWorkspaceId: $0.has_resolved_active_workspace_id == 0
+                                    ? nil
+                                    : decode(uuid: $0.resolved_active_workspace_id)
+                            )
+                        },
+                        workspaceProjections: Array(rawWorkspaceProjections
+                            .prefix(rawOutput.workspace_projection_count)).map {
+                            WorkspaceProjectionRecord(
+                                workspaceId: decode(uuid: $0.workspace_id),
+                                projectedMonitorId: $0.has_projected_monitor_id == 0
+                                    ? nil
+                                    : Monitor.ID(displayId: $0.projected_monitor_id),
+                                homeMonitorId: $0.has_home_monitor_id == 0
+                                    ? nil
+                                    : Monitor.ID(displayId: $0.home_monitor_id),
+                                effectiveMonitorId: $0.has_effective_monitor_id == 0
+                                    ? nil
+                                    : Monitor.ID(displayId: $0.effective_monitor_id)
+                            )
+                        },
+                        shouldRememberFocus: rawOutput.should_remember_focus != 0
+                    ),
+                    disconnectedCacheResults: Array(rawDisconnectedCacheResults
+                        .prefix(rawOutput.disconnected_cache_result_count)).map {
+                        DisconnectedCacheResultRecord(
+                            sourceKind: $0.source_kind,
+                            sourceIndex: Int($0.source_index),
+                            workspaceId: decode(uuid: $0.workspace_id)
                         )
                     },
-                shouldRememberFocus: rawOutput.should_remember_focus != 0
-            ),
-            disconnectedCacheResults: Array(rawDisconnectedCacheResults
-                .prefix(rawOutput.disconnected_cache_result_count)).map {
-                DisconnectedCacheResultRecord(
-                    sourceKind: $0.source_kind,
-                    sourceIndex: Int($0.source_index),
-                    workspaceId: decode(uuid: $0.workspace_id)
+                    refreshRestoreIntents: rawOutput.refresh_restore_intents != 0
                 )
-            },
-            refreshRestoreIntents: rawOutput.refresh_restore_intents != 0
-        )
+            )
+        } catch let error as WorkspaceSessionKernelError {
+            return .failure(error)
+        } catch {
+            preconditionFailure("Unexpected WorkspaceSessionKernel decode error: \(error)")
+        }
+    }
+
+    private static func disconnectedVisibleWorkspaceCache(
+        from disconnectedCacheResults: [DisconnectedCacheResultRecord],
+        previousMonitors: [PreviousMonitorSnapshot],
+        disconnectedCacheEntries: [DisconnectedCacheEntrySnapshot]
+    ) -> Result<[MonitorRestoreKey: WorkspaceDescriptor.ID], WorkspaceSessionKernelError> {
+        var disconnectedCache: [MonitorRestoreKey: WorkspaceDescriptor.ID] = [:]
+        disconnectedCache.reserveCapacity(disconnectedCacheResults.count)
+        for entry in disconnectedCacheResults {
+            let restoreKey: MonitorRestoreKey
+            switch entry.sourceKind {
+            case UInt32(OMNIWM_RESTORE_CACHE_SOURCE_EXISTING):
+                guard disconnectedCacheEntries.indices.contains(entry.sourceIndex) else { continue }
+                restoreKey = disconnectedCacheEntries[entry.sourceIndex].restoreKey
+            case UInt32(OMNIWM_RESTORE_CACHE_SOURCE_REMOVED_MONITOR):
+                guard previousMonitors.indices.contains(entry.sourceIndex) else { continue }
+                restoreKey = MonitorRestoreKey(monitor: previousMonitors[entry.sourceIndex].monitor)
+            default:
+                return .failure(
+                    .unknownRawValue(label: "OMNIWM_RESTORE_CACHE_SOURCE", value: entry.sourceKind)
+                )
+            }
+            disconnectedCache[restoreKey] = entry.workspaceId
+        }
+        return .success(disconnectedCache)
     }
 
     private static func previousMonitorSnapshots(
