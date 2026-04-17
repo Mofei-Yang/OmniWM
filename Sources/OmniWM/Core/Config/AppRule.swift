@@ -2,16 +2,12 @@ import Foundation
 
 enum WindowRuleManageAction: String, Codable, CaseIterable, Identifiable {
     case auto
-    case off
-
-    static var allCases: [WindowRuleManageAction] { [.auto] }
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .auto: "Automatic"
-        case .off: "Ignore (Legacy)"
         }
     }
 }
@@ -87,12 +83,10 @@ struct AppRule: Codable, Identifiable, Equatable {
         self.assignToWorkspace = assignToWorkspace
         self.minWidth = minWidth
         self.minHeight = minHeight
-        normalizeLegacyManageOff()
     }
 
     var effectiveManageAction: WindowRuleManageAction {
-        guard manage != .off else { return .auto }
-        return manage ?? .auto
+        manage ?? .auto
     }
 
     var effectiveLayoutAction: WindowRuleLayoutAction {
@@ -133,12 +127,32 @@ struct AppRule: Codable, Identifiable, Equatable {
         titleRegex = try container.decodeIfPresent(String.self, forKey: .titleRegex)
         axRole = try container.decodeIfPresent(String.self, forKey: .axRole)
         axSubrole = try container.decodeIfPresent(String.self, forKey: .axSubrole)
-        manage = try container.decodeIfPresent(WindowRuleManageAction.self, forKey: .manage)
-        layout = try container.decodeIfPresent(WindowRuleLayoutAction.self, forKey: .layout)
+
+        var decodedLayout = try container.decodeIfPresent(WindowRuleLayoutAction.self, forKey: .layout)
+        let rawManage = try container.decodeIfPresent(String.self, forKey: .manage)
+        if rawManage == "off" {
+            // Accept legacy `manage = "off"` input by normalizing it into the
+            // tracked-window model: keep any explicit layout, otherwise
+            // synthesize `.float`.
+            manage = nil
+            if decodedLayout == nil { decodedLayout = .float }
+        } else if let rawManage {
+            guard let parsed = WindowRuleManageAction(rawValue: rawManage) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .manage,
+                    in: container,
+                    debugDescription: "Unknown manage action: \(rawManage)"
+                )
+            }
+            manage = parsed
+        } else {
+            manage = nil
+        }
+        layout = decodedLayout
+
         assignToWorkspace = try container.decodeIfPresent(String.self, forKey: .assignToWorkspace)
         minWidth = try container.decodeIfPresent(Double.self, forKey: .minWidth)
         minHeight = try container.decodeIfPresent(Double.self, forKey: .minHeight)
-        normalizeLegacyManageOff()
     }
 
     func encode(to encoder: Encoder) throws {
@@ -155,11 +169,5 @@ struct AppRule: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(assignToWorkspace, forKey: .assignToWorkspace)
         try container.encodeIfPresent(minWidth, forKey: .minWidth)
         try container.encodeIfPresent(minHeight, forKey: .minHeight)
-    }
-
-    private mutating func normalizeLegacyManageOff() {
-        guard manage == .off else { return }
-        manage = nil
-        layout = .float
     }
 }
