@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class RuntimeEffectExecutor: EffectExecutor {
     func execute(
-        _ result: OrchestrationResult,
+        _ result: CoordinationResult,
         on controller: WMController,
         context: RuntimeEffectContext
     ) {
@@ -12,7 +12,7 @@ final class RuntimeEffectExecutor: EffectExecutor {
             controller.applyRuntimeFocusRequestResult(result)
 
         case let .activationObserved(observedAXRef, managedEntry, source, confirmRequest):
-            controller.axEventHandler.applyActivationOrchestrationResult(
+            controller.axEventHandler.applyActivationCoordinationResult(
                 result,
                 observedAXRef: observedAXRef,
                 managedEntry: managedEntry,

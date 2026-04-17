@@ -2376,7 +2376,7 @@ extension WMController {
             return
         }
 
-        let result = OrchestrationCore.step(
+        let result = CoordinationCore.step(
             snapshot: stateSnapshot(
                 refresh: .init(
                     activeRefresh: layoutRefreshController.layoutState.activeRefresh,
@@ -2393,12 +2393,12 @@ extension WMController {
         applyRuntimeFocusRequestResult(result)
     }
 
-    func applyRuntimeFocusRequestResult(_ result: OrchestrationResult) {
-        focusBridge.applyOrchestrationState(
+    func applyRuntimeFocusRequestResult(_ result: CoordinationResult) {
+        focusBridge.applyCoordinationState(
             nextManagedRequestId: result.snapshot.focus.nextManagedRequestId,
             activeManagedRequest: result.snapshot.focus.activeManagedRequest
         )
-        _ = workspaceManager.applyOrchestrationFocusState(result.snapshot.focus)
+        _ = workspaceManager.applyCoordinationFocusState(result.snapshot.focus)
 
         for action in result.plan.actions {
             switch action {
@@ -2418,7 +2418,7 @@ extension WMController {
                     )
                 )
             case let .clearManagedFocusState(requestId, token, workspaceId):
-                axEventHandler.clearManagedFocusStateForOrchestration(
+                axEventHandler.clearManagedFocusState(
                     requestId: requestId,
                     matching: token,
                     workspaceId: workspaceId

@@ -933,13 +933,13 @@ final class AXEventHandler: CGSEventDelegate {
         )
     }
 
-    private func activationOrchestrationResult(
+    private func activationCoordinationResult(
         source: ActivationEventSource,
         origin: ActivationCallOrigin,
         match: ManagedActivationMatch
-    ) -> OrchestrationResult? {
+    ) -> CoordinationResult? {
         guard let controller else { return nil }
-        return OrchestrationCore.step(
+        return CoordinationCore.step(
             snapshot: controller.stateSnapshot(
                 refresh: .init(
                     activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,
@@ -979,14 +979,14 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        guard let result = activationOrchestrationResult(
+        guard let result = activationCoordinationResult(
             source: source,
             origin: origin,
             match: match
         ) else {
             return
         }
-        applyActivationOrchestrationResult(
+        applyActivationCoordinationResult(
             result,
             observedAXRef: observedAXRef,
             managedEntry: managedEntry,
@@ -2212,8 +2212,8 @@ final class AXEventHandler: CGSEventDelegate {
         createdWindowRetryCountById.removeAll()
     }
 
-    func applyActivationOrchestrationResult(
-        _ result: OrchestrationResult,
+    func applyActivationCoordinationResult(
+        _ result: CoordinationResult,
         observedAXRef: AXWindowRef?,
         managedEntry: WindowModel.Entry?,
         source: ActivationEventSource,
@@ -2221,11 +2221,11 @@ final class AXEventHandler: CGSEventDelegate {
     ) {
         guard let controller else { return }
 
-        controller.focusBridge.applyOrchestrationState(
+        controller.focusBridge.applyCoordinationState(
             nextManagedRequestId: result.snapshot.focus.nextManagedRequestId,
             activeManagedRequest: result.snapshot.focus.activeManagedRequest
         )
-        _ = controller.workspaceManager.applyOrchestrationFocusState(result.snapshot.focus)
+        _ = controller.workspaceManager.applyCoordinationFocusState(result.snapshot.focus)
 
         for action in result.plan.actions {
             switch action {
@@ -2376,7 +2376,7 @@ final class AXEventHandler: CGSEventDelegate {
         controller.focusBridge.clearFocusedTarget(pid: pid)
     }
 
-    private func clearManagedFocusState(
+    func clearManagedFocusState(
         requestId: UInt64? = nil,
         matching token: WindowToken,
         workspaceId: WorkspaceDescriptor.ID?
@@ -2400,18 +2400,6 @@ final class AXEventHandler: CGSEventDelegate {
         controller.clearKeyboardFocusTarget(
             matching: token,
             restoreCurrentBorder: false
-        )
-    }
-
-    func clearManagedFocusStateForOrchestration(
-        requestId: UInt64,
-        matching token: WindowToken,
-        workspaceId: WorkspaceDescriptor.ID?
-    ) {
-        clearManagedFocusState(
-            requestId: requestId,
-            matching: token,
-            workspaceId: workspaceId
         )
     }
 

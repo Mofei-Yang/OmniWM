@@ -140,7 +140,7 @@ final class Runtime {
     func requestManagedFocus(
         token: WindowToken,
         workspaceId: WorkspaceDescriptor.ID
-    ) -> OrchestrationResult {
+    ) -> CoordinationResult {
         apply(
             .focusRequested(
                 .init(
@@ -157,7 +157,7 @@ final class Runtime {
         observedAXRef: AXWindowRef?,
         managedEntry: WindowModel.Entry?,
         confirmRequest: Bool = true
-    ) -> OrchestrationResult {
+    ) -> CoordinationResult {
         apply(
             .activationObserved(observation),
             context: .activationObserved(
@@ -171,7 +171,7 @@ final class Runtime {
 
     func requestRefresh(
         _ request: RefreshRequestEvent
-    ) -> OrchestrationResult {
+    ) -> CoordinationResult {
         apply(
             .refreshRequested(request),
             context: .refresh
@@ -180,14 +180,14 @@ final class Runtime {
 
     func completeRefresh(
         _ completion: RefreshCompletionEvent
-    ) -> OrchestrationResult {
+    ) -> CoordinationResult {
         apply(
             .refreshCompleted(completion),
             context: .refresh
         )
     }
 
-    func resetRefreshOrchestration() {
+    func resetRefreshCoordination() {
         snapshot.state.refresh = .init()
         appendTrace(
             eventSummary: "refresh_reset",
@@ -199,10 +199,10 @@ final class Runtime {
     private func apply(
         _ event: WMEvent,
         context: RuntimeEffectContext
-    ) -> OrchestrationResult {
+    ) -> CoordinationResult {
         synchronizeStateSnapshot()
 
-        let result = OrchestrationCore.step(
+        let result = CoordinationCore.step(
             snapshot: snapshot.state,
             event: event
         )

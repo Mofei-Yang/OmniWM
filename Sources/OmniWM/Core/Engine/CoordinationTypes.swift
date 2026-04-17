@@ -56,7 +56,7 @@ struct ScheduledRefresh: Equatable {
     }
 }
 
-struct OrchestrationResult: Equatable {
+struct CoordinationResult: Equatable {
     var snapshot: WMSnapshot
     var plan: ActionPlan
 
@@ -75,7 +75,7 @@ struct OrchestrationResult: Equatable {
 
     var decision: ActionPlan.Decision {
         guard let decision = plan.decision else {
-            preconditionFailure("OrchestrationResult missing plan decision")
+            preconditionFailure("CoordinationResult missing plan decision")
         }
         return decision
     }

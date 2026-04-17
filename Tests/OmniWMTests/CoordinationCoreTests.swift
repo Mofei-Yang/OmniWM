@@ -3,7 +3,7 @@ import Testing
 
 @testable import OmniWM
 
-private func makeOrchestrationRefresh(
+private func makeCoordinationRefresh(
     cycleId: RefreshCycleId,
     kind: ScheduledRefreshKind,
     reason: RefreshReason,
@@ -21,7 +21,7 @@ private func makeOrchestrationRefresh(
     )
 }
 
-private func makeOrchestrationSnapshot(
+private func makeCoordinationSnapshot(
     activeRefresh: ScheduledRefresh? = nil,
     pendingRefresh: ScheduledRefresh? = nil,
     nextManagedRequestId: UInt64 = 1,
@@ -47,12 +47,12 @@ private func makeOrchestrationSnapshot(
 
 @Test func fullRescanAbsorbsVisibilityRefreshIntoActiveCycle() {
     let workspaceId = WorkspaceDescriptor.ID()
-    let activeRefresh = makeOrchestrationRefresh(
+    let activeRefresh = makeCoordinationRefresh(
         cycleId: 10,
         kind: .fullRescan,
         reason: .startup
     )
-    let incomingRefresh = makeOrchestrationRefresh(
+    let incomingRefresh = makeCoordinationRefresh(
         cycleId: 11,
         kind: .visibilityRefresh,
         reason: .appHidden,
@@ -60,8 +60,8 @@ private func makeOrchestrationSnapshot(
         postLayoutAttachmentIds: [99]
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(activeRefresh: activeRefresh),
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(activeRefresh: activeRefresh),
         event: .refreshRequested(
             .init(
                 refresh: incomingRefresh,
@@ -82,7 +82,7 @@ private func makeOrchestrationSnapshot(
 
 @Test func cancelledWindowRemovalPreservesRemovalPayloadBeforeRestart() {
     let workspaceId = WorkspaceDescriptor.ID()
-    let cancelledRefresh = makeOrchestrationRefresh(
+    let cancelledRefresh = makeCoordinationRefresh(
         cycleId: 21,
         kind: .windowRemoval,
         reason: .windowDestroyed,
@@ -95,14 +95,14 @@ private func makeOrchestrationSnapshot(
             shouldRecoverFocus: true
         )
     )
-    let queuedRefresh = makeOrchestrationRefresh(
+    let queuedRefresh = makeCoordinationRefresh(
         cycleId: 22,
         kind: .relayout,
         reason: .workspaceTransition
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             activeRefresh: cancelledRefresh,
             pendingRefresh: queuedRefresh
         ),
@@ -138,8 +138,8 @@ private func makeOrchestrationSnapshot(
         workspaceId: firstWorkspace
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 9,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: oldToken,
@@ -192,8 +192,8 @@ private func makeOrchestrationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: requestedToken,
@@ -241,8 +241,8 @@ private func makeOrchestrationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: requestedToken,
@@ -281,8 +281,8 @@ private func makeOrchestrationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: requestedToken,
@@ -321,8 +321,8 @@ private func makeOrchestrationSnapshot(
     let pendingToken = WindowToken(pid: 88, windowId: 3)
     let ownedPID = pid_t(99)
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             pendingFocusedToken: pendingToken,
             pendingFocusedWorkspaceId: workspaceId
@@ -360,8 +360,8 @@ private func makeOrchestrationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 13,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: token,
@@ -402,8 +402,8 @@ private func makeOrchestrationSnapshot(
 
 @Test func repeatedPendingRelayoutMergesPreserveAffectedWorkspaceSet() {
     let workspaceId = WorkspaceDescriptor.ID()
-    var snapshot = makeOrchestrationSnapshot(
-        activeRefresh: makeOrchestrationRefresh(
+    var snapshot = makeCoordinationSnapshot(
+        activeRefresh: makeCoordinationRefresh(
             cycleId: 1,
             kind: .immediateRelayout,
             reason: .workspaceTransition
@@ -411,11 +411,11 @@ private func makeOrchestrationSnapshot(
     )
 
     for cycleId in 2...8 {
-        let result = OrchestrationCore.step(
+        let result = CoordinationCore.step(
             snapshot: snapshot,
             event: .refreshRequested(
                 .init(
-                    refresh: makeOrchestrationRefresh(
+                    refresh: makeCoordinationRefresh(
                         cycleId: UInt64(cycleId),
                         kind: .relayout,
                         reason: .workspaceConfigChanged,
@@ -437,26 +437,26 @@ private func makeOrchestrationSnapshot(
 @Test func upgradedPendingRefreshRetainsPreviousAffectedWorkspaceSet() {
     let firstWorkspaceId = WorkspaceDescriptor.ID()
     let secondWorkspaceId = WorkspaceDescriptor.ID()
-    let activeRefresh = makeOrchestrationRefresh(
+    let activeRefresh = makeCoordinationRefresh(
         cycleId: 1,
         kind: .fullRescan,
         reason: .startup
     )
-    let pendingRefresh = makeOrchestrationRefresh(
+    let pendingRefresh = makeCoordinationRefresh(
         cycleId: 2,
         kind: .relayout,
         reason: .workspaceConfigChanged,
         affectedWorkspaceIds: [firstWorkspaceId]
     )
-    let incomingRefresh = makeOrchestrationRefresh(
+    let incomingRefresh = makeCoordinationRefresh(
         cycleId: 3,
         kind: .immediateRelayout,
         reason: .workspaceTransition,
         affectedWorkspaceIds: [secondWorkspaceId]
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             activeRefresh: activeRefresh,
             pendingRefresh: pendingRefresh
         ),
@@ -482,25 +482,25 @@ private func makeOrchestrationSnapshot(
 
 @Test func windowRemovalRelayoutMergeAllowsWorkspaceInRefreshAndFollowUp() {
     let workspaceId = WorkspaceDescriptor.ID()
-    let activeRefresh = makeOrchestrationRefresh(
+    let activeRefresh = makeCoordinationRefresh(
         cycleId: 1,
         kind: .fullRescan,
         reason: .startup
     )
-    let pendingRefresh = makeOrchestrationRefresh(
+    let pendingRefresh = makeCoordinationRefresh(
         cycleId: 2,
         kind: .windowRemoval,
         reason: .windowDestroyed
     )
-    let relayout = makeOrchestrationRefresh(
+    let relayout = makeCoordinationRefresh(
         cycleId: 3,
         kind: .relayout,
         reason: .workspaceTransition,
         affectedWorkspaceIds: [workspaceId]
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             activeRefresh: activeRefresh,
             pendingRefresh: pendingRefresh
         ),
@@ -529,8 +529,8 @@ private func makeOrchestrationSnapshot(
 
 @Test func repeatedWindowRemovalBurstsPreserveAllPayloads() {
     let workspaceId = WorkspaceDescriptor.ID()
-    var snapshot = makeOrchestrationSnapshot(
-        activeRefresh: makeOrchestrationRefresh(
+    var snapshot = makeCoordinationSnapshot(
+        activeRefresh: makeCoordinationRefresh(
             cycleId: 1,
             kind: .relayout,
             reason: .workspaceTransition
@@ -545,11 +545,11 @@ private func makeOrchestrationSnapshot(
             niriOldFrames: [:],
             shouldRecoverFocus: true
         )
-        let result = OrchestrationCore.step(
+        let result = CoordinationCore.step(
             snapshot: snapshot,
             event: .refreshRequested(
                 .init(
-                    refresh: makeOrchestrationRefresh(
+                    refresh: makeCoordinationRefresh(
                         cycleId: UInt64(cycleId),
                         kind: .windowRemoval,
                         reason: .windowDestroyed,
@@ -579,8 +579,8 @@ private func makeOrchestrationSnapshot(
         workspaceId: workspaceId
     )
 
-    let firstResult = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let firstResult = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 4,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: requestedToken,
@@ -606,7 +606,7 @@ private func makeOrchestrationSnapshot(
             == .workspaceDidActivateApplication
     )
 
-    let secondResult = OrchestrationCore.step(
+    let secondResult = CoordinationCore.step(
         snapshot: firstResult.snapshot,
         event: .activationObserved(
             .init(
@@ -641,8 +641,8 @@ private func makeOrchestrationSnapshot(
         lastActivationSource: .workspaceDidActivateApplication
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 10,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: requestedToken,
@@ -693,8 +693,8 @@ private func makeOrchestrationSnapshot(
         lastActivationSource: .focusedWindowChanged
     )
 
-    let result = OrchestrationCore.step(
-        snapshot: makeOrchestrationSnapshot(
+    let result = CoordinationCore.step(
+        snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 11,
             activeManagedRequest: activeRequest,
             pendingFocusedToken: requestedToken,

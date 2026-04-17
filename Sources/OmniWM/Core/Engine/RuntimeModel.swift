@@ -36,7 +36,7 @@ enum RuntimeEffectContext {
 @MainActor
 protocol EffectExecutor {
     func execute(
-        _ result: OrchestrationResult,
+        _ result: CoordinationResult,
         on controller: WMController,
         context: RuntimeEffectContext
     )
@@ -44,7 +44,7 @@ protocol EffectExecutor {
 
 enum RuntimeSubmitResult {
     case reconcile(ReconcileTxn)
-    case coordination(OrchestrationResult)
+    case coordination(CoordinationResult)
 }
 
 struct RuntimeSnapshot {

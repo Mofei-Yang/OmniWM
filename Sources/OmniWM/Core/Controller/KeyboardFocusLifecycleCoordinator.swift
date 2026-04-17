@@ -40,7 +40,7 @@ final class FocusBridgeCoordinator {
         nextRequestId
     }
 
-    func applyOrchestrationState(
+    func applyCoordinationState(
         nextManagedRequestId: UInt64,
         activeManagedRequest: ManagedFocusRequest?
     ) {

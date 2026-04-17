@@ -714,7 +714,7 @@ final class WorkspaceManager {
     }
 
     @discardableResult
-    func applyOrchestrationFocusState(
+    func applyCoordinationFocusState(
         _ focusSnapshot: FocusSessionSnapshot
     ) -> Bool {
         var changed = false

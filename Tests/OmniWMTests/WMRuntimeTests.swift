@@ -73,8 +73,8 @@ private func makeRuntimeTestSettings() -> SettingsStore {
         )
 
         switch result {
-        case let .coordination(orchestration):
-            #expect(orchestration.snapshot.focus.activeManagedRequest?.token == token)
+        case let .coordination(coordination):
+            #expect(coordination.snapshot.focus.activeManagedRequest?.token == token)
         case .reconcile:
             Issue.record("Expected coordination result for focusRequested event")
         }
@@ -83,7 +83,7 @@ private func makeRuntimeTestSettings() -> SettingsStore {
         #expect(recorder.events == [.activate(getpid()), .focus(getpid(), 654), .raise])
     }
 
-    @Test @MainActor func runtimeOwnsFocusOrchestrationForControllerRequests() {
+    @Test @MainActor func runtimeOwnsFocusCoordinationForControllerRequests() {
         resetSharedControllerStateForTests()
         let recorder = RuntimeFocusOperationRecorder()
         let runtime = Runtime(
@@ -95,7 +95,7 @@ private func makeRuntimeTestSettings() -> SettingsStore {
         controller.workspaceManager.applyMonitorConfigurationChange([monitor])
 
         guard let workspaceId = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false) else {
-            Issue.record("Expected a visible workspace for runtime focus orchestration test")
+            Issue.record("Expected a visible workspace for runtime focus coordination test")
             return
         }
 

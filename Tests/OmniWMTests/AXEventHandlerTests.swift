@@ -1249,7 +1249,7 @@ private func waitUntilAXEventTest(
             in: workspaceId,
             onMonitor: monitor.id
         )
-        controller.focusBridge.applyOrchestrationState(
+        controller.focusBridge.applyCoordinationState(
             nextManagedRequestId: 2,
             activeManagedRequest: ManagedFocusRequest(
                 requestId: 1,
@@ -1330,7 +1330,7 @@ private func waitUntilAXEventTest(
             in: workspaceId,
             onMonitor: monitor.id
         )
-        controller.focusBridge.applyOrchestrationState(
+        controller.focusBridge.applyCoordinationState(
             nextManagedRequestId: 2,
             activeManagedRequest: ManagedFocusRequest(
                 requestId: 1,
@@ -1407,7 +1407,7 @@ private func waitUntilAXEventTest(
             in: workspaceId,
             onMonitor: monitor.id
         )
-        controller.focusBridge.applyOrchestrationState(
+        controller.focusBridge.applyCoordinationState(
             nextManagedRequestId: 2,
             activeManagedRequest: ManagedFocusRequest(
                 requestId: 1,
@@ -1682,7 +1682,7 @@ private func waitUntilAXEventTest(
             token: externalToken,
             workspaceId: workspaceId
         )
-        controller.focusBridge.applyOrchestrationState(
+        controller.focusBridge.applyCoordinationState(
             nextManagedRequestId: 42,
             activeManagedRequest: externalRequest
         )

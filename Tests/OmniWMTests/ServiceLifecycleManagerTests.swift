@@ -350,7 +350,7 @@ private func waitUntilServiceLifecycleTest(
             in: ws1,
             onMonitor: monitor.id
         )
-        controller.focusBridge.applyOrchestrationState(
+        controller.focusBridge.applyCoordinationState(
             nextManagedRequestId: 2,
             activeManagedRequest: ManagedFocusRequest(
                 requestId: 1,

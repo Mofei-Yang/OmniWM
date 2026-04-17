@@ -1038,7 +1038,7 @@ import QuartzCore
         layoutState.pendingRefresh = nil
         layoutState.didExecuteRefreshExecutionPlan = false
         refreshSchedulingState.clearPostLayoutActions()
-        controller?.runtime?.resetRefreshOrchestration()
+        controller?.runtime?.resetRefreshCoordination()
 
         for (_, link) in layoutState.displayLinksByDisplay {
             link.invalidate()
@@ -1558,7 +1558,7 @@ import QuartzCore
             return
         }
 
-        let result = OrchestrationCore.step(
+        let result = CoordinationCore.step(
             snapshot: controller?.stateSnapshot(refresh: refreshPlanningSnapshot())
                 ?? .init(refresh: refreshPlanningSnapshot(), focus: .init(
                     focusedToken: nil,
@@ -1583,7 +1583,7 @@ import QuartzCore
         applyRuntimeRefreshResult(result)
     }
 
-    func applyRuntimeRefreshResult(_ result: OrchestrationResult) {
+    func applyRuntimeRefreshResult(_ result: CoordinationResult) {
         applyResolvedRefreshPlan(
             snapshot: result.snapshot.refresh,
             actions: result.plan.actions
@@ -1686,7 +1686,7 @@ import QuartzCore
             return
         }
 
-        let result = OrchestrationCore.step(
+        let result = CoordinationCore.step(
             snapshot: controller?.stateSnapshot(refresh: refreshPlanningSnapshot())
                 ?? .init(refresh: refreshPlanningSnapshot(), focus: .init(
                     focusedToken: nil,
