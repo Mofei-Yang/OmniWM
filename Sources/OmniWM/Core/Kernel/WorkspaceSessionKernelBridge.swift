@@ -93,6 +93,36 @@ enum WorkspaceSessionKernel {
         "[WorkspaceSessionKernel] \(operation) failed: \(error)"
     }
 
+    @MainActor
+    enum WorkspaceSessionKernelFallback {
+        private static func defaultStandardErrorSink(_ message: String) {
+            fputs("\(message)\n", stderr)
+        }
+
+        private static func defaultDebugAssertionSink(_ message: String) {
+#if DEBUG
+            assertionFailure(message)
+#endif
+        }
+
+        static var standardErrorSink: @MainActor (String) -> Void = defaultStandardErrorSink
+        static var debugAssertionSink: @MainActor (String) -> Void = defaultDebugAssertionSink
+
+        static func report(
+            _ error: WorkspaceSessionKernelError,
+            operation: StaticString
+        ) {
+            let message = workspaceSessionKernelFailureMessage(for: error, operation: operation)
+            standardErrorSink(message)
+            debugAssertionSink(message)
+        }
+
+        static func resetForTesting() {
+            standardErrorSink = defaultStandardErrorSink
+            debugAssertionSink = defaultDebugAssertionSink
+        }
+    }
+
     static func logged<T>(
         _ result: Result<T, WorkspaceSessionKernelError>,
         operation: StaticString
@@ -101,7 +131,7 @@ enum WorkspaceSessionKernel {
         case .success(let value):
             return value
         case .failure(let error):
-            fputs("\(workspaceSessionKernelFailureMessage(for: error, operation: operation))\n", stderr)
+            WorkspaceSessionKernelFallback.report(error, operation: operation)
             return nil
         }
     }

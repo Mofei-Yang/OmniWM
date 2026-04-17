@@ -73,13 +73,54 @@ struct WorkspaceSessionKernelBridgeTests {
         )
     }
 
-    @Test func `logged adapter returns nil for failed result`() {
+    @Test func `logged adapter reports failures through centralized fallback`() {
+        var standardErrorMessages: [String] = []
+        var assertionMessages: [String] = []
+        WorkspaceSessionKernel.WorkspaceSessionKernelFallback.standardErrorSink = {
+            standardErrorMessages.append($0)
+        }
+        WorkspaceSessionKernel.WorkspaceSessionKernelFallback.debugAssertionSink = {
+            assertionMessages.append($0)
+        }
+        defer { WorkspaceSessionKernel.WorkspaceSessionKernelFallback.resetForTesting() }
+
+        let error = WorkspaceSessionKernel.WorkspaceSessionKernelError.kernelStatus(
+            code: Int32(OMNIWM_KERNELS_STATUS_INVALID_ARGUMENT)
+        )
+        let expectedMessage = WorkspaceSessionKernel.workspaceSessionKernelFailureMessage(
+            for: error,
+            operation: "WorkspaceSessionKernel.project"
+        )
+
         let value: Int? = WorkspaceSessionKernel.logged(
-            .failure(.kernelStatus(code: Int32(OMNIWM_KERNELS_STATUS_INVALID_ARGUMENT))),
+            .failure(error),
             operation: "WorkspaceSessionKernel.project"
         )
 
         #expect(value == nil)
+        #expect(standardErrorMessages == [expectedMessage])
+        #expect(assertionMessages == [expectedMessage])
+    }
+
+    @Test func `logged adapter leaves success untouched`() {
+        var standardErrorMessages: [String] = []
+        var assertionMessages: [String] = []
+        WorkspaceSessionKernel.WorkspaceSessionKernelFallback.standardErrorSink = {
+            standardErrorMessages.append($0)
+        }
+        WorkspaceSessionKernel.WorkspaceSessionKernelFallback.debugAssertionSink = {
+            assertionMessages.append($0)
+        }
+        defer { WorkspaceSessionKernel.WorkspaceSessionKernelFallback.resetForTesting() }
+
+        let value: Int? = WorkspaceSessionKernel.logged(
+            .success(42),
+            operation: "WorkspaceSessionKernel.project"
+        )
+
+        #expect(value == 42)
+        #expect(standardErrorMessages.isEmpty)
+        #expect(assertionMessages.isEmpty)
     }
 
     @Test func `outcome rejects unknown raw values with typed bridge error`() {
