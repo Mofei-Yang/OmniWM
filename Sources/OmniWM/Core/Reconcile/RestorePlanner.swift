@@ -443,6 +443,8 @@ struct RestorePlanner {
 
     private func notes(forEventNoteCode code: UInt32) -> [String] {
         switch code {
+        case UInt32(OMNIWM_RESTORE_NOTE_NONE):
+            []
         case UInt32(OMNIWM_RESTORE_NOTE_TOPOLOGY):
             ["restore_refresh=topology"]
         case UInt32(OMNIWM_RESTORE_NOTE_ACTIVE_SPACE):
@@ -452,24 +454,24 @@ struct RestorePlanner {
         case UInt32(OMNIWM_RESTORE_NOTE_SYSTEM_SLEEP):
             ["restore_refresh=system_sleep"]
         default:
-            []
+            KernelContract.unknownRawValue(code, label: "OMNIWM_RESTORE_NOTE")
         }
     }
 
     private func rawWindowMode(_ mode: TrackedWindowMode) -> UInt32 {
         switch mode {
         case .tiling:
-            UInt32(OMNIWM_RECONCILE_WINDOW_MODE_TILING)
+            ReconcileWire.WindowMode.tiling.rawValue
         case .floating:
-            UInt32(OMNIWM_RECONCILE_WINDOW_MODE_FLOATING)
+            ReconcileWire.WindowMode.floating.rawValue
         }
     }
 
     private func trackedWindowMode(from rawValue: UInt32) -> TrackedWindowMode {
         switch rawValue {
-        case UInt32(OMNIWM_RECONCILE_WINDOW_MODE_TILING):
+        case ReconcileWire.WindowMode.tiling.rawValue:
             .tiling
-        case UInt32(OMNIWM_RECONCILE_WINDOW_MODE_FLOATING):
+        case ReconcileWire.WindowMode.floating.rawValue:
             .floating
         default:
             preconditionFailure("Unexpected restore target mode \(rawValue)")

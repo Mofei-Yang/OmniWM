@@ -1,6 +1,7 @@
 import COmniWMKernels
 import Foundation
 import Testing
+@testable import OmniWM
 
 private func makeRestoreKernelUUID(high: UInt64, low: UInt64) -> omniwm_uuid {
     omniwm_uuid(high: high, low: low)
@@ -394,7 +395,7 @@ private func makeRestoreKernelPersistedKey(
                     namePenalties.withUnsafeBufferPointer { penaltyBuffer in
                         var input = omniwm_restore_persisted_hydration_input(
                             metadata_key: metadataKey,
-                            metadata_mode: UInt32(OMNIWM_RECONCILE_WINDOW_MODE_TILING),
+                            metadata_mode: ReconcileWire.WindowMode.tiling.rawValue,
                             monitors: monitorBuffer.baseAddress,
                             monitor_count: monitorBuffer.count,
                             entries: entryBuffer.baseAddress,
@@ -418,7 +419,7 @@ private func makeRestoreKernelPersistedKey(
         #expect(restoreKernelUUIDEqual(output.workspace_id, workspaceId))
         #expect(output.has_preferred_monitor_id == 1)
         #expect(output.preferred_monitor_id == 80)
-        #expect(output.target_mode == UInt32(OMNIWM_RECONCILE_WINDOW_MODE_FLOATING))
+        #expect(output.target_mode == ReconcileWire.WindowMode.floating.rawValue)
         #expect(output.has_floating_frame == 1)
         #expect(output.floating_frame.x == 1140)
         #expect(output.floating_frame.y == 700)
