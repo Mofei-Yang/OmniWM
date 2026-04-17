@@ -566,14 +566,14 @@ All three types inherit from `NiriNode` (base class with `id: NodeId`, `parent`,
 
 **Viewport scrolling:** The viewport tracks which columns are visible. User gestures (trackpad swipe) drive the viewport via `ViewGesture` → `SwipeTracker`, which accumulates deltas and produces spring animations that snap to column boundaries.
 
-**File Organization (29 files):**
+**File Organization (28 files):**
 
 The Niri directory is the largest subsystem. Files are organized by responsibility:
 
 | Category | Files | Purpose |
 |----------|-------|---------|
 | Core engine | `NiriLayoutEngine.swift`, `NiriNode.swift`, `NiriLayout.swift` | Engine class, node tree (Root/Container/Window), pixel-rounding utilities |
-| Navigation/topology | `NiriNavigation.swift`, `NiriTopologyKernel.swift` | Thin Swift boundary for workspace-local focus, insertion, removal, movement, and viewport planning |
+| Navigation/topology | `NiriNavigation.swift` | Thin Swift boundary for workspace-local focus, insertion, removal, movement, and viewport planning. (Note: `NiriTopologyKernel.swift` relocated to `Core/Kernel/` in M2.3.) |
 | Constraint solving | `NiriConstraintSolver.swift` | `NiriAxisSolver` distributes space among windows respecting min/max size constraints |
 | Monitor model | `NiriMonitor.swift` | Per-monitor state: geometry, workspace roots, workspace switch animation |
 | Viewport | `ViewportState.swift`, `+Animation`, `+ColumnTransitions`, `+Geometry`, `+Gestures` | Horizontal scroll offset, spring physics, gesture tracking |

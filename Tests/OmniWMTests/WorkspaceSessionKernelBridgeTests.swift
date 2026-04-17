@@ -59,4 +59,21 @@ struct WorkspaceSessionKernelBridgeTests {
 
         #expect(failureReason == "omniwm_workspace_session_plan reported 4 disconnected cache results for capacity 3")
     }
+
+    @Test func `kernel error carries reason`() {
+        let error = WorkspaceSessionKernelError.invocationFailed(
+            reason: "omniwm_workspace_session_plan returned 7"
+        )
+
+        #expect(error.reason == "omniwm_workspace_session_plan returned 7")
+    }
+
+    @Test func `kernel error is equatable`() {
+        let a = WorkspaceSessionKernelError.invocationFailed(reason: "x")
+        let b = WorkspaceSessionKernelError.invocationFailed(reason: "x")
+        let c = WorkspaceSessionKernelError.invocationFailed(reason: "y")
+
+        #expect(a == b)
+        #expect(a != c)
+    }
 }

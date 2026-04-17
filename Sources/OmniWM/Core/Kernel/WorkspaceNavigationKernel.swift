@@ -44,13 +44,13 @@ enum WorkspaceNavigationKernel {
         case invalidTarget
         case blocked
 
-        init?(kernelRawValue: UInt32) {
+        init(kernelRawValue: UInt32) {
             switch kernelRawValue {
             case UInt32(OMNIWM_WORKSPACE_NAV_OUTCOME_NOOP): self = .noop
             case UInt32(OMNIWM_WORKSPACE_NAV_OUTCOME_EXECUTE): self = .execute
             case UInt32(OMNIWM_WORKSPACE_NAV_OUTCOME_INVALID_TARGET): self = .invalidTarget
             case UInt32(OMNIWM_WORKSPACE_NAV_OUTCOME_BLOCKED): self = .blocked
-            default: return nil
+            default: KernelContract.unknownRawValue(kernelRawValue, label: "WorkspaceNavigationKernel.Outcome")
             }
         }
     }
@@ -63,7 +63,7 @@ enum WorkspaceNavigationKernel {
         case recoverSource
         case clearManagedFocus
 
-        init?(kernelRawValue: UInt32) {
+        init(kernelRawValue: UInt32) {
             switch kernelRawValue {
             case UInt32(OMNIWM_WORKSPACE_NAV_FOCUS_NONE): self = .none
             case UInt32(OMNIWM_WORKSPACE_NAV_FOCUS_WORKSPACE_HANDOFF): self = .workspaceHandoff
@@ -71,7 +71,7 @@ enum WorkspaceNavigationKernel {
             case UInt32(OMNIWM_WORKSPACE_NAV_FOCUS_SUBJECT): self = .subject
             case UInt32(OMNIWM_WORKSPACE_NAV_FOCUS_RECOVER_SOURCE): self = .recoverSource
             case UInt32(OMNIWM_WORKSPACE_NAV_FOCUS_CLEAR_MANAGED_FOCUS): self = .clearManagedFocus
-            default: return nil
+            default: KernelContract.unknownRawValue(kernelRawValue, label: "WorkspaceNavigationKernel.FocusAction")
             }
         }
     }
@@ -370,15 +370,9 @@ enum WorkspaceNavigationKernel {
         let subject = decodeSubject(from: rawOutput)
 
         return Plan(
-            outcome: KernelContract.require(
-                Outcome(kernelRawValue: rawOutput.outcome),
-                "Unknown workspace navigation outcome \(rawOutput.outcome)"
-            ),
+            outcome: Outcome(kernelRawValue: rawOutput.outcome),
             subject: subject,
-            focusAction: KernelContract.require(
-                FocusAction(kernelRawValue: rawOutput.focus_action),
-                "Unknown workspace navigation focus action \(rawOutput.focus_action)"
-            ),
+            focusAction: FocusAction(kernelRawValue: rawOutput.focus_action),
             resolvedFocusToken: rawOutput.has_resolved_focus_token == 0 ? nil : decode(token: rawOutput.resolved_focus_token),
             sourceWorkspaceId: rawOutput.has_source_workspace_id == 0 ? nil : decode(uuid: rawOutput.source_workspace_id),
             targetWorkspaceId: rawOutput.has_target_workspace_id == 0 ? nil : decode(uuid: rawOutput.target_workspace_id),
