@@ -1,10 +1,8 @@
 import Foundation
 
-/// Post-M3 Swift-native raw values for the types formerly exchanged with
-/// `reconcile.zig` via `OMNIWM_RECONCILE_*` C enum constants. Values are
-/// preserved numerically so test fixtures recorded against the Zig wire
-/// format continue to decode. Do NOT reassign values; later milestones may
-/// drop the raw-value side entirely once the last wire consumer is gone.
+/// Preserved raw values for the legacy reconcile wire format. The numeric
+/// assignments stay stable so older fixtures and traces continue to decode
+/// while the remaining bridge consumers are retired. Do not reassign them.
 enum ReconcileWire {
     enum WindowMode: UInt32 {
         case tiling = 0

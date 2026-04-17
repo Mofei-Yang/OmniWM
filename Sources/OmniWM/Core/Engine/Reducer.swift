@@ -1,17 +1,13 @@
 import CoreGraphics
 import Foundation
 
-/// Swift-native implementation of the reduce algorithm that previously
-/// lived in `Zig/omniwm_kernels/src/reconcile.zig`. Call sites in
-/// `StateReducer` route here once M3.5 flips the cutover. No import of
-/// `COmniWMKernels`; this file operates on native Swift types
-/// (`WMEvent`, `WindowModel.Entry`, `FocusSessionSnapshot`, `Monitor`,
-/// `ActionPlan`, `RestoreIntent`, `ReplacementCorrelation`).
-enum NativeStateReducer {
+/// Swift-native reconcile reducer operating directly on the app's Swift
+/// types without any kernel marshalling.
+enum Reducer {
     static func reduce(
         event: WMEvent,
         existingEntry: WindowModel.Entry?,
-        currentSnapshot: ReconcileSnapshot,
+        currentSnapshot: WMSnapshot,
         monitors: [Monitor],
         persistedHydration: PersistedHydrationMutation? = nil
     ) -> ActionPlan {
@@ -38,7 +34,7 @@ enum NativeStateReducer {
     private static func apply(
         event: WMEvent,
         existingEntry: WindowModel.Entry?,
-        currentSnapshot: ReconcileSnapshot,
+        currentSnapshot: WMSnapshot,
         monitors: [Monitor],
         persistedHydration: PersistedHydrationMutation?,
         into plan: inout ActionPlan
@@ -160,10 +156,11 @@ enum NativeStateReducer {
             applySystemSleep(into: &plan)
         case .systemWake:
             applySystemWake(into: &plan)
+        case .refreshRequested, .refreshCompleted, .focusRequested, .activationObserved:
+            return
         }
 
-        // Mirror post-switch block in reconcile.zig:
-        // applyHydration overrides observed/desired/lifecycle if hydration present
+        // Hydration overrides observed/desired/lifecycle when present.
         if let hydration = persistedHydration {
             applyHydration(hydration: hydration, existingEntry: existingEntry, into: &plan)
         }
@@ -232,6 +229,13 @@ enum NativeStateReducer {
         if let pending = next_focus.pendingManagedFocus.token, pending == previousToken {
             next_focus.pendingManagedFocus.token = nextToken
         }
+        if let activeRequest = next_focus.activeManagedRequest,
+           activeRequest.token == previousToken
+        {
+            var updatedRequest = activeRequest
+            updatedRequest.token = nextToken
+            next_focus.activeManagedRequest = updatedRequest
+        }
         plan.focusSession = next_focus
     }
 
@@ -252,6 +256,11 @@ enum NativeStateReducer {
         }
         if let pending = next_focus.pendingManagedFocus.token, pending == token {
             next_focus.pendingManagedFocus = .empty
+        }
+        if let activeRequest = next_focus.activeManagedRequest,
+           activeRequest.token == token
+        {
+            next_focus.activeManagedRequest = nil
         }
         plan.focusSession = next_focus
     }
@@ -316,7 +325,7 @@ enum NativeStateReducer {
     //               is_visible = (hidden_state == hidden_state_visible)
     //   lifecycle = visible → lifecycleForMode(effectiveMode); hidden → .hidden; else → .offscreen
     //
-    // Swift hiddenState mapping (mirrors StateReducer.encode(hiddenState:)):
+    // Historical hidden-state wire mapping:
     //   nil (visible)              → hidden_state_visible (0)
     //   HiddenState with no offscreenSide → hidden_state_hidden (1)
     //   HiddenState with offscreenSide    → else (2 or 3) → lifecycle_offscreen
@@ -501,7 +510,7 @@ enum NativeStateReducer {
 
     // event_topology_changed:
     //   output.note_code = note_topology_changed
-    //   note string = "topology=\(displays.count)"  (decoded by StateReducer.decodeNotes)
+    //   note string = "topology=\(displays.count)"
     private static func applyTopologyChanged(
         displays: [DisplayFingerprint],
         into plan: inout ActionPlan
@@ -532,9 +541,8 @@ enum NativeStateReducer {
 
     // MARK: - Restore intent (see M3.4)
     //
-    // Mirrors the Zig `omniwm_reconcile_restore_intent` entrypoint (reconcile.zig:655-678):
-    // constructs a SimulatedEntry directly from the entry's raw fields and passes it to
-    // deriveRestoreIntent — no plan-output merging, no hydration.
+    // Builds restore intent directly from the entry's raw fields with no
+    // plan-output merging and no hydration.
     private static func resolveRestoreIntent(
         entry: WindowModel.Entry,
         monitors: [Monitor]
@@ -549,7 +557,7 @@ enum NativeStateReducer {
         )
     }
 
-    // MARK: - Helpers mirroring Zig helper fns
+    // MARK: - Helper functions
 
     // lifecycleForMode: mode_floating → .floating, else → .tiled
     private static func lifecycleForMode(_ mode: TrackedWindowMode) -> WindowLifecyclePhase {
@@ -703,13 +711,11 @@ enum NativeStateReducer {
         plan.lifecyclePhase = lifecycleForMode(hydration.targetMode)
     }
 
-    // MARK: - deriveRestoreIntent — mirrors Zig deriveRestoreIntent + simulatedEntry logic
+    // MARK: - deriveRestoreIntent
     // This is the post-switch call: builds a SimulatedEntry then derives the restore intent.
     //
-    // Zig builds a SimulatedEntry (reconcile.zig, ~line 378) before calling
-    // deriveRestoreIntent. Swift inlines that projection here — the hydration
-    // branches below carry the same semantics as simulatedEntry + deriveRestoreIntent
-    // combined.
+    // Swift inlines the simulated-entry projection here, so the hydration
+    // branches below preserve those combined semantics in one place.
     private static func deriveRestoreIntent(
         entry: WindowModel.Entry,
         currentPlan: ActionPlan,

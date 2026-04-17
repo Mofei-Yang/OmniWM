@@ -1,44 +1,28 @@
 import Foundation
 
-enum RefreshPlannerEvent: Equatable {
-    case requested(RefreshRequestEvent)
-    case completed(RefreshCompletionEvent)
-}
-
 struct RefreshPlannerResult: Equatable {
-    var snapshot: RefreshOrchestrationSnapshot
-    var decision: OrchestrationDecision
-    var plan: OrchestrationPlan
-
-    func asOrchestrationResult(
-        focus: FocusOrchestrationSnapshot
-    ) -> OrchestrationResult {
-        OrchestrationResult(
-            snapshot: .init(
-                refresh: snapshot,
-                focus: focus
-            ),
-            decision: decision,
-            plan: plan
-        )
-    }
+    var snapshot: WMSnapshot
+    var decision: ActionPlan.Decision
+    var plan: ActionPlan
 }
 
 enum RefreshPlanner {
     static func step(
-        snapshot: RefreshOrchestrationSnapshot,
-        event: RefreshPlannerEvent
+        snapshot: WMSnapshot,
+        event: WMEvent
     ) -> RefreshPlannerResult {
         switch event {
-        case let .requested(request):
+        case let .refreshRequested(request):
             reduceRequest(snapshot: snapshot, request: request)
-        case let .completed(completion):
+        case let .refreshCompleted(completion):
             reduceCompletion(snapshot: snapshot, completion: completion)
+        default:
+            preconditionFailure("RefreshPlanner received non-refresh event \(event)")
         }
     }
 
     private static func reduceRequest(
-        snapshot: RefreshOrchestrationSnapshot,
+        snapshot: WMSnapshot,
         request: RefreshRequestEvent
     ) -> RefreshPlannerResult {
         if request.shouldDropWhileBusy,
@@ -59,13 +43,16 @@ enum RefreshPlanner {
                 activeRefresh: activeRefresh,
                 pendingRefresh: snapshot.pendingRefresh
             )
+            var updatedSnapshot = snapshot
+            updatedSnapshot.activeRefresh = handled.activeRefresh
+            updatedSnapshot.pendingRefresh = handled.pendingRefresh
             return .init(
-                snapshot: .init(
-                    activeRefresh: handled.activeRefresh,
-                    pendingRefresh: handled.pendingRefresh
-                ),
+                snapshot: updatedSnapshot,
                 decision: handled.decision,
-                plan: .init(actions: handled.actions)
+                plan: .init(
+                    decision: handled.decision,
+                    actions: handled.actions
+                )
             )
         }
 
@@ -74,27 +61,31 @@ enum RefreshPlanner {
             snapshot.pendingRefresh,
             incoming: request.refresh
         )
+        var updatedSnapshot = snapshot
+        updatedSnapshot.activeRefresh = mergedRefresh
+        updatedSnapshot.pendingRefresh = nil
+        let decision: ActionPlan.Decision = hadPendingRefresh
+            ? .refreshMerged(cycleId: mergedRefresh.cycleId, kind: mergedRefresh.kind)
+            : .refreshQueued(cycleId: mergedRefresh.cycleId, kind: mergedRefresh.kind)
         return .init(
-            snapshot: .init(
-                activeRefresh: mergedRefresh,
-                pendingRefresh: nil
-            ),
-            decision: hadPendingRefresh
-                ? .refreshMerged(cycleId: mergedRefresh.cycleId, kind: mergedRefresh.kind)
-                : .refreshQueued(cycleId: mergedRefresh.cycleId, kind: mergedRefresh.kind),
-            plan: .init(actions: [.startRefresh(mergedRefresh)])
+            snapshot: updatedSnapshot,
+            decision: decision,
+            plan: .init(
+                decision: decision,
+                actions: [.startRefresh(mergedRefresh)]
+            )
         )
     }
 
     private static func reduceCompletion(
-        snapshot: RefreshOrchestrationSnapshot,
+        snapshot: WMSnapshot,
         completion: RefreshCompletionEvent
     ) -> RefreshPlannerResult {
         var updatedSnapshot = snapshot
         let completedRefresh = updatedSnapshot.activeRefresh ?? completion.refresh
         updatedSnapshot.activeRefresh = nil
 
-        var actions: [OrchestrationPlan.Action] = []
+        var actions: [ActionPlan.Action] = []
 
         if completion.didComplete {
             if completion.didExecutePlan {
@@ -148,7 +139,13 @@ enum RefreshPlanner {
                 cycleId: completedRefresh.cycleId,
                 didComplete: completion.didComplete
             ),
-            plan: .init(actions: actions)
+            plan: .init(
+                decision: .refreshCompleted(
+                    cycleId: completedRefresh.cycleId,
+                    didComplete: completion.didComplete
+                ),
+                actions: actions
+            )
         )
     }
 
@@ -159,12 +156,12 @@ enum RefreshPlanner {
     ) -> (
         activeRefresh: ScheduledRefresh,
         pendingRefresh: ScheduledRefresh?,
-        decision: OrchestrationDecision,
-        actions: [OrchestrationPlan.Action]
+        decision: ActionPlan.Decision,
+        actions: [ActionPlan.Action]
     ) {
         var updatedActiveRefresh = activeRefresh
         var updatedPendingRefresh = pendingRefresh
-        var actions: [OrchestrationPlan.Action] = []
+        var actions: [ActionPlan.Action] = []
 
         switch activeRefresh.kind {
         case .fullRescan:

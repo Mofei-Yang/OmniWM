@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-typealias WMState = ReconcileSnapshot
+typealias WMState = WMSnapshot
 typealias WMPlan = ActionPlan
 
 @MainActor
@@ -22,7 +22,7 @@ protocol PlatformAdapter {
 
 extension WMPlatform: PlatformAdapter {}
 
-enum WMRuntimeEffectContext {
+enum RuntimeEffectContext {
     case focusRequest
     case activationObserved(
         observedAXRef: AXWindowRef?,
@@ -38,17 +38,21 @@ protocol EffectExecutor {
     func execute(
         _ result: OrchestrationResult,
         on controller: WMController,
-        context: WMRuntimeEffectContext
+        context: RuntimeEffectContext
     )
 }
 
-struct WMRuntimeSnapshot {
-    var reconcile: WMState
-    var orchestration: OrchestrationSnapshot
-    var configuration: WMRuntimeConfiguration
+enum RuntimeSubmitResult {
+    case reconcile(ReconcileTxn)
+    case coordination(OrchestrationResult)
 }
 
-struct WMRuntimeTraceRecord {
+struct RuntimeSnapshot {
+    var state: WMState
+    var configuration: RuntimeConfiguration
+}
+
+struct RuntimeTraceRecord {
     let eventId: UInt64
     let timestamp: Date
     let eventSummary: String
@@ -60,7 +64,7 @@ struct WMRuntimeTraceRecord {
     let pendingRefreshCycleId: RefreshCycleId?
 }
 
-struct WMRuntimeConfiguration {
+struct RuntimeConfiguration {
     struct LayoutConfiguration {
         struct Niri {
             var maxWindowsPerColumn: Int

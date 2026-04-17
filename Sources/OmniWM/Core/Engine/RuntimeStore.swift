@@ -2,17 +2,14 @@ import Foundation
 
 @MainActor
 final class RuntimeStore {
-    private let planner: Planner
     private let traceRecorder: ReconcileTraceRecorder
     private let nowProvider: () -> Date
 
     init(
         traceRecorder: ReconcileTraceRecorder,
-        planner: Planner = Planner(),
         nowProvider: @escaping () -> Date = Date.init
     ) {
         self.traceRecorder = traceRecorder
-        self.planner = planner
         self.nowProvider = nowProvider
     }
 
@@ -22,7 +19,7 @@ final class RuntimeStore {
         existingEntry: WindowModel.Entry?,
         monitors: [Monitor],
         persistedHydration: PersistedHydrationMutation? = nil,
-        snapshot: () -> ReconcileSnapshot,
+        snapshot: () -> WMSnapshot,
         applyPlan: (ActionPlan, WindowToken?) -> ActionPlan
     ) -> ReconcileTxn {
         let currentSnapshot = snapshot()
@@ -31,7 +28,7 @@ final class RuntimeStore {
             existingEntry: existingEntry,
             monitors: monitors
         )
-        let plan = planner.plan(
+        let plan = Reducer.reduce(
             event: normalizedEvent,
             existingEntry: existingEntry,
             currentSnapshot: currentSnapshot,
@@ -52,7 +49,7 @@ final class RuntimeStore {
         event: WMEvent,
         normalizedEvent: WMEvent? = nil,
         plan: ActionPlan,
-        snapshot: ReconcileSnapshot
+        snapshot: WMSnapshot
     ) -> ReconcileTxn {
         let invariantViolations = InvariantChecks.validate(snapshot: snapshot)
         var tracedPlan = plan

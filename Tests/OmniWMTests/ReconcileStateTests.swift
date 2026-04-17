@@ -71,8 +71,8 @@ private func lastWindowRemovedTrace(in manager: WorkspaceManager) -> ReconcileTr
     }
 }
 
-private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> ReconcileSnapshot {
-    ReconcileSnapshot(
+private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
+    WMSnapshot(
         topologyProfile: TopologyProfile(monitors: monitors),
         focusSession: FocusSessionSnapshot(
             focusedToken: nil,
@@ -972,7 +972,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> ReconcileSnapsh
             )
         }
 
-        let desiredFirst = StateReducer.restoreIntent(
+        let desiredFirst = Reducer.restoreIntent(
             for: makeEntry(desiredMonitorId: primary.id, observedMonitorId: secondary.id),
             monitors: [primary, secondary, tertiary]
         )
@@ -982,13 +982,13 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> ReconcileSnapsh
         #expect(desiredFirst.restoreToFloating == true)
         #expect(desiredFirst.rescueEligible == true)
 
-        let observedFallback = StateReducer.restoreIntent(
+        let observedFallback = Reducer.restoreIntent(
             for: makeEntry(desiredMonitorId: nil, observedMonitorId: secondary.id),
             monitors: [primary, secondary, tertiary]
         )
         #expect(observedFallback.preferredMonitor == DisplayFingerprint(monitor: secondary))
 
-        let floatingFallback = StateReducer.restoreIntent(
+        let floatingFallback = Reducer.restoreIntent(
             for: makeEntry(desiredMonitorId: nil, observedMonitorId: nil),
             monitors: [primary, secondary, tertiary]
         )
@@ -999,7 +999,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> ReconcileSnapsh
         let monitor = makeLayoutPlanPrimaryTestMonitor()
         let snapshot = makeReconcileKernelSnapshot(monitors: [monitor])
 
-        let activeSpacePlan = StateReducer.reduce(
+        let activeSpacePlan = Reducer.reduce(
             event: .activeSpaceChanged(source: .service),
             existingEntry: nil,
             currentSnapshot: snapshot,
@@ -1007,7 +1007,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> ReconcileSnapsh
         )
         #expect(activeSpacePlan.notes == ["active_space_changed"])
 
-        let sleepPlan = StateReducer.reduce(
+        let sleepPlan = Reducer.reduce(
             event: .systemSleep(source: .service),
             existingEntry: nil,
             currentSnapshot: snapshot,
@@ -1015,12 +1015,72 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> ReconcileSnapsh
         )
         #expect(sleepPlan.notes == ["system_sleep"])
 
-        let wakePlan = StateReducer.reduce(
+        let wakePlan = Reducer.reduce(
             event: .systemWake(source: .service),
             existingEntry: nil,
             currentSnapshot: snapshot,
             monitors: [monitor]
         )
         #expect(wakePlan.notes == ["system_wake"])
+    }
+
+    @Test func reducerMaintainsManagedRequestAcrossUnifiedRekeyAndRemovalEvents() {
+        let monitor = makeLayoutPlanPrimaryTestMonitor()
+        let workspaceId = WorkspaceDescriptor.ID()
+        let oldToken = WindowToken(pid: 77, windowId: 11)
+        let newToken = WindowToken(pid: 77, windowId: 12)
+        let activeRequest = ManagedFocusRequest(
+            requestId: 4,
+            token: oldToken,
+            workspaceId: workspaceId
+        )
+        let snapshot = WMSnapshot(
+            topologyProfile: TopologyProfile(monitors: [monitor]),
+            focusSession: FocusSessionSnapshot(
+                focusedToken: oldToken,
+                pendingManagedFocus: .init(
+                    token: oldToken,
+                    workspaceId: workspaceId,
+                    monitorId: monitor.id
+                ),
+                focusLease: nil,
+                isNonManagedFocusActive: false,
+                isAppFullscreenActive: false,
+                interactionMonitorId: nil,
+                previousInteractionMonitorId: nil,
+                nextManagedRequestId: 5,
+                activeManagedRequest: activeRequest
+            ),
+            windows: []
+        )
+
+        let rekeyPlan = Reducer.reduce(
+            event: .windowRekeyed(
+                from: oldToken,
+                to: newToken,
+                workspaceId: workspaceId,
+                monitorId: monitor.id,
+                reason: .managedReplacement,
+                source: .workspaceManager
+            ),
+            existingEntry: nil,
+            currentSnapshot: snapshot,
+            monitors: [monitor]
+        )
+
+        #expect(rekeyPlan.focusSession?.activeManagedRequest?.token == newToken)
+
+        let removedPlan = Reducer.reduce(
+            event: .windowRemoved(
+                token: oldToken,
+                workspaceId: workspaceId,
+                source: .workspaceManager
+            ),
+            existingEntry: nil,
+            currentSnapshot: snapshot,
+            monitors: [monitor]
+        )
+
+        #expect(removedPlan.focusSession?.activeManagedRequest == nil)
     }
 }

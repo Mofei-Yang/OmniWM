@@ -3,7 +3,6 @@ const dwindle_layout = @import("dwindle_layout.zig");
 const ipc_support = @import("ipc_support.zig");
 const niri_layout = @import("niri_layout.zig");
 const niri_topology = @import("niri_topology.zig");
-const orchestration = @import("orchestration.zig");
 const overview_projection = @import("overview_projection.zig");
 const restore_planner = @import("restore_planner.zig");
 const viewport_policy = @import("viewport_policy.zig");
@@ -16,7 +15,6 @@ comptime {
     _ = ipc_support;
     _ = niri_layout;
     _ = niri_topology;
-    _ = orchestration;
     _ = overview_projection;
     _ = restore_planner;
     _ = window_decision;

@@ -1,11 +1,11 @@
 import Foundation
 
 @MainActor
-final class WMRuntimeEffectExecutor: EffectExecutor {
+final class RuntimeEffectExecutor: EffectExecutor {
     func execute(
         _ result: OrchestrationResult,
         on controller: WMController,
-        context: WMRuntimeEffectContext
+        context: RuntimeEffectContext
     ) {
         switch context {
         case .focusRequest:

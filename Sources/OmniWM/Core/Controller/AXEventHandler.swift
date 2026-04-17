@@ -940,7 +940,7 @@ final class AXEventHandler: CGSEventDelegate {
     ) -> OrchestrationResult? {
         guard let controller else { return nil }
         return OrchestrationCore.step(
-            snapshot: controller.orchestrationSnapshot(
+            snapshot: controller.stateSnapshot(
                 refresh: .init(
                     activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,
                     pendingRefresh: controller.layoutRefreshController.layoutState.pendingRefresh

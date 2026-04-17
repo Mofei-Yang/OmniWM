@@ -49,8 +49,8 @@ private func makeRestorePlannerSnapshot(
     interactionMonitorId: Monitor.ID? = nil,
     previousInteractionMonitorId: Monitor.ID? = nil,
     windows: [ReconcileWindowSnapshot] = []
-) -> ReconcileSnapshot {
-    ReconcileSnapshot(
+) -> WMSnapshot {
+    WMSnapshot(
         topologyProfile: TopologyProfile(monitors: []),
         focusSession: FocusSessionSnapshot(
             focusedToken: focusedToken,

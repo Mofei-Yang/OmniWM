@@ -40,10 +40,53 @@ private func makeRuntimeTestSettings() -> SettingsStore {
 }
 
 @Suite(.serialized) struct WMRuntimeTests {
+    @Test @MainActor func runtimeSubmitRoutesUnifiedCoordinationEventsThroughEngine() {
+        resetSharedControllerStateForTests()
+        let recorder = RuntimeFocusOperationRecorder()
+        let runtime = Runtime(
+            settings: makeRuntimeTestSettings(),
+            windowFocusOperations: makeRuntimeFocusOperations(recorder: recorder)
+        )
+        let controller = runtime.controller
+        let monitor = makeLayoutPlanTestMonitor()
+        controller.workspaceManager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false) else {
+            Issue.record("Expected a visible workspace for runtime submit routing test")
+            return
+        }
+
+        let token = controller.workspaceManager.addWindow(
+            makeLayoutPlanTestWindow(windowId: 654),
+            pid: getpid(),
+            windowId: 654,
+            to: workspaceId
+        )
+
+        let result = runtime.submit(
+            .focusRequested(
+                .init(
+                    token: token,
+                    workspaceId: workspaceId
+                )
+            )
+        )
+
+        switch result {
+        case let .coordination(orchestration):
+            #expect(orchestration.snapshot.focus.activeManagedRequest?.token == token)
+        case .reconcile:
+            Issue.record("Expected coordination result for focusRequested event")
+        }
+
+        #expect(runtime.stateSnapshot.focus.activeManagedRequest?.token == token)
+        #expect(recorder.events == [.activate(getpid()), .focus(getpid(), 654), .raise])
+    }
+
     @Test @MainActor func runtimeOwnsFocusOrchestrationForControllerRequests() {
         resetSharedControllerStateForTests()
         let recorder = RuntimeFocusOperationRecorder()
-        let runtime = WMRuntime(
+        let runtime = Runtime(
             settings: makeRuntimeTestSettings(),
             windowFocusOperations: makeRuntimeFocusOperations(recorder: recorder)
         )
@@ -65,7 +108,7 @@ private func makeRuntimeTestSettings() -> SettingsStore {
 
         controller.focusWindow(token)
 
-        #expect(runtime.orchestrationSnapshot.focus.activeManagedRequest?.token == token)
+        #expect(runtime.stateSnapshot.focus.activeManagedRequest?.token == token)
         #expect(controller.workspaceManager.pendingFocusedToken == token)
         #expect(recorder.events == [.activate(getpid()), .focus(getpid(), 321), .raise])
         #expect(runtime.recentTrace.last?.eventSummary.contains("focusRequested") == true)
@@ -73,7 +116,7 @@ private func makeRuntimeTestSettings() -> SettingsStore {
 
     @Test @MainActor func runtimeTracksRefreshPlanningAndCompletion() async {
         resetSharedControllerStateForTests()
-        let runtime = WMRuntime(settings: makeRuntimeTestSettings())
+        let runtime = Runtime(settings: makeRuntimeTestSettings())
         let controller = runtime.controller
         controller.workspaceManager.applyMonitorConfigurationChange([makeLayoutPlanTestMonitor()])
         controller.layoutRefreshController.debugHooks.onVisibilityRefresh = { _ in
@@ -97,7 +140,7 @@ private func makeRuntimeTestSettings() -> SettingsStore {
     @Test @MainActor func runtimeOwnsAppliedConfigurationSnapshots() {
         resetSharedControllerStateForTests()
         let settings = makeRuntimeTestSettings()
-        let runtime = WMRuntime(settings: settings)
+        let runtime = Runtime(settings: settings)
         let controller = runtime.controller
 
         let originalValue = runtime.configuration.focusFollowsMouse

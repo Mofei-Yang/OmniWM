@@ -6,7 +6,7 @@ struct ReconcileTraceRecord: Equatable {
     let event: WMEvent
     let normalizedEvent: WMEvent
     let plan: ActionPlan
-    let snapshot: ReconcileSnapshot
+    let snapshot: WMSnapshot
     let invariantViolations: [ReconcileInvariantViolation]
 }
 
@@ -26,7 +26,7 @@ final class ReconcileTraceRecorder {
         event: WMEvent,
         normalizedEvent: WMEvent? = nil,
         plan: ActionPlan,
-        snapshot: ReconcileSnapshot,
+        snapshot: WMSnapshot,
         invariantViolations: [ReconcileInvariantViolation] = [],
         timestamp: Date = Date()
     ) {

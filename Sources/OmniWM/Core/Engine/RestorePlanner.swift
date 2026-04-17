@@ -5,7 +5,7 @@ import Foundation
 struct RestorePlanner {
     struct EventInput {
         let event: WMEvent
-        let snapshot: ReconcileSnapshot
+        let snapshot: WMSnapshot
         let monitors: [Monitor]
     }
 
@@ -436,7 +436,11 @@ struct RestorePlanner {
              .managedFocusRequested,
              .managedFocusConfirmed,
              .managedFocusCancelled,
-             .nonManagedFocusChanged:
+             .nonManagedFocusChanged,
+             .refreshRequested,
+             .refreshCompleted,
+             .focusRequested,
+             .activationObserved:
             UInt32(OMNIWM_RESTORE_EVENT_KIND_OTHER)
         }
     }

@@ -107,6 +107,10 @@ enum EventNormalizer {
              .managedFocusConfirmed,
              .managedFocusCancelled,
              .nonManagedFocusChanged,
+             .refreshRequested,
+             .refreshCompleted,
+             .focusRequested,
+             .activationObserved,
              .systemSleep,
              .systemWake:
             return event

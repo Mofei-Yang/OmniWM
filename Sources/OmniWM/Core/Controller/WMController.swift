@@ -145,7 +145,7 @@ final class WMController {
     @ObservationIgnored
     weak var ipcApplicationBridge: IPCApplicationBridge?
     @ObservationIgnored
-    weak var runtime: WMRuntime?
+    weak var runtime: Runtime?
     @ObservationIgnored
     private var isApplyingRuntimeConfiguration = false
 
@@ -214,10 +214,10 @@ final class WMController {
 
     func applyPersistedSettings(_ settings: SettingsStore) {
         if let runtime, runtime.settings === settings {
-            runtime.applyConfiguration(WMRuntimeConfiguration(settings: settings))
+            runtime.applyConfiguration(RuntimeConfiguration(settings: settings))
             return
         }
-        applyConfiguration(WMRuntimeConfiguration(settings: settings))
+        applyConfiguration(RuntimeConfiguration(settings: settings))
     }
 
     private func routeConfigurationMutationThroughRuntime() -> Bool {
@@ -226,7 +226,7 @@ final class WMController {
         return true
     }
 
-    func applyConfiguration(_ configuration: WMRuntimeConfiguration) {
+    func applyConfiguration(_ configuration: RuntimeConfiguration) {
         isApplyingRuntimeConfiguration = true
         defer { isApplyingRuntimeConfiguration = false }
 
@@ -293,8 +293,19 @@ final class WMController {
     }
 
     @discardableResult
-    func submitRuntimeEvent(_ event: WMEvent) -> ReconcileTxn {
-        runtime?.submit(event) ?? workspaceManager.recordReconcileEvent(event)
+    func submitRuntimeEvent(_ event: WMEvent) -> RuntimeSubmitResult {
+        if let runtime {
+            return runtime.submit(event)
+        }
+
+        switch event {
+        case .refreshRequested, .refreshCompleted, .focusRequested, .activationObserved:
+            preconditionFailure(
+                "submitRuntimeEvent(_:) only supports reconcile events when runtime is unavailable."
+            )
+        default:
+            return .reconcile(workspaceManager.recordReconcileEvent(event))
+        }
     }
 
     func setAnimationsEnabled(_ enabled: Bool, persist: Bool = true) {
@@ -2148,23 +2159,17 @@ extension WMController {
         workspaceManager.isNonManagedFocusActive && hasFrontmostOwnedWindow
     }
 
-    func orchestrationSnapshot(
-        refresh: RefreshOrchestrationSnapshot
-    ) -> OrchestrationSnapshot {
+    func stateSnapshot(
+        refresh: RefreshSnapshot
+    ) -> WMSnapshot {
         if let runtime {
-            return runtime.orchestrationSnapshot
+            return runtime.stateSnapshot
         }
-        return OrchestrationSnapshot(
-            refresh: refresh,
-            focus: .init(
-                nextManagedRequestId: focusBridge.nextManagedRequestId,
-                activeManagedRequest: focusBridge.activeManagedRequest,
-                pendingFocusedToken: workspaceManager.pendingFocusedToken,
-                pendingFocusedWorkspaceId: workspaceManager.pendingFocusedWorkspaceId,
-                isNonManagedFocusActive: workspaceManager.isNonManagedFocusActive,
-                isAppFullscreenActive: workspaceManager.isAppFullscreenActive
-            )
-        )
+        var snapshot = workspaceManager.reconcileSnapshot()
+        snapshot.refresh = refresh
+        snapshot.focus.nextManagedRequestId = focusBridge.nextManagedRequestId
+        snapshot.focus.activeManagedRequest = focusBridge.activeManagedRequest
+        return snapshot
     }
 
     func performWindowFronting(
@@ -2236,7 +2241,7 @@ extension WMController {
         }
 
         let result = OrchestrationCore.step(
-            snapshot: orchestrationSnapshot(
+            snapshot: stateSnapshot(
                 refresh: .init(
                     activeRefresh: layoutRefreshController.layoutState.activeRefresh,
                     pendingRefresh: layoutRefreshController.layoutState.pendingRefresh

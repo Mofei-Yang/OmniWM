@@ -28,8 +28,8 @@ private func makeOrchestrationSnapshot(
     activeManagedRequest: ManagedFocusRequest? = nil,
     pendingFocusedToken: WindowToken? = nil,
     pendingFocusedWorkspaceId: WorkspaceDescriptor.ID? = nil
-) -> OrchestrationSnapshot {
-    OrchestrationSnapshot(
+) -> WMSnapshot {
+    WMSnapshot(
         refresh: .init(
             activeRefresh: activeRefresh,
             pendingRefresh: pendingRefresh

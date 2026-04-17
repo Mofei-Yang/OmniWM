@@ -40,6 +40,77 @@ struct RestoreRefreshPlan: Equatable {
 }
 
 struct ActionPlan: Equatable {
+    enum Decision: Equatable {
+        case refreshDropped(reason: RefreshReason)
+        case refreshQueued(cycleId: RefreshCycleId, kind: ScheduledRefreshKind)
+        case refreshMerged(cycleId: RefreshCycleId, kind: ScheduledRefreshKind)
+        case refreshSuperseded(activeCycleId: RefreshCycleId, pendingCycleId: RefreshCycleId)
+        case refreshCompleted(cycleId: RefreshCycleId, didComplete: Bool)
+        case focusRequestAccepted(requestId: UInt64, token: WindowToken)
+        case focusRequestSuperseded(replacedRequestId: UInt64, requestId: UInt64, token: WindowToken)
+        case focusRequestContinued(requestId: UInt64, reason: ActivationRetryReason)
+        case focusRequestCancelled(requestId: UInt64, token: WindowToken?)
+        case focusRequestIgnored(token: WindowToken)
+        case managedActivationConfirmed(token: WindowToken)
+        case managedActivationDeferred(requestId: UInt64, reason: ActivationRetryReason)
+        case managedActivationFallback(pid: pid_t)
+    }
+
+    enum Action: Equatable {
+        case cancelActiveRefresh(cycleId: RefreshCycleId)
+        case startRefresh(ScheduledRefresh)
+        case runPostLayoutAttachments([RefreshAttachmentId])
+        case discardPostLayoutAttachments([RefreshAttachmentId])
+        case performVisibilitySideEffects
+        case requestWorkspaceBarRefresh
+        case beginManagedFocusRequest(
+            requestId: UInt64,
+            token: WindowToken,
+            workspaceId: WorkspaceDescriptor.ID
+        )
+        case frontManagedWindow(
+            token: WindowToken,
+            workspaceId: WorkspaceDescriptor.ID
+        )
+        case clearManagedFocusState(
+            requestId: UInt64,
+            token: WindowToken,
+            workspaceId: WorkspaceDescriptor.ID?
+        )
+        case continueManagedFocusRequest(
+            requestId: UInt64,
+            reason: ActivationRetryReason,
+            source: ActivationEventSource,
+            origin: ActivationCallOrigin
+        )
+        case confirmManagedActivation(
+            token: WindowToken,
+            workspaceId: WorkspaceDescriptor.ID,
+            monitorId: Monitor.ID?,
+            isWorkspaceActive: Bool,
+            appFullscreen: Bool,
+            source: ActivationEventSource
+        )
+        case beginNativeFullscreenRestoreActivation(
+            token: WindowToken,
+            workspaceId: WorkspaceDescriptor.ID,
+            monitorId: Monitor.ID?,
+            isWorkspaceActive: Bool,
+            source: ActivationEventSource
+        )
+        case enterNonManagedFallback(
+            pid: pid_t,
+            token: WindowToken?,
+            appFullscreen: Bool,
+            source: ActivationEventSource
+        )
+        case cancelActivationRetry(requestId: UInt64?)
+        case enterOwnedApplicationFallback(
+            pid: pid_t,
+            source: ActivationEventSource
+        )
+    }
+
     var lifecyclePhase: WindowLifecyclePhase? = nil
     var observedState: ObservedWindowState? = nil
     var desiredState: DesiredWindowState? = nil
@@ -49,6 +120,8 @@ struct ActionPlan: Equatable {
     var restoreRefresh: RestoreRefreshPlan? = nil
     var topologyTransition: TopologyTransitionPlan? = nil
     var persistedHydration: PersistedHydrationMutation? = nil
+    var decision: Decision? = nil
+    var actions: [Action] = []
     var notes: [String] = []
 
     var isEmpty: Bool {
@@ -61,6 +134,8 @@ struct ActionPlan: Equatable {
             && restoreRefresh == nil
             && topologyTransition == nil
             && persistedHydration == nil
+            && decision == nil
+            && actions.isEmpty
             && notes.isEmpty
     }
 
@@ -98,6 +173,12 @@ struct ActionPlan: Equatable {
             parts.append(
                 "hydration=workspace=\(persistedHydration.workspaceId.uuidString),mode=\(persistedHydration.targetMode)"
             )
+        }
+        if let decision {
+            parts.append("decision=\(String(describing: decision))")
+        }
+        if !actions.isEmpty {
+            parts.append("actions=\(actions.count)")
         }
         if !notes.isEmpty {
             parts.append(contentsOf: notes)

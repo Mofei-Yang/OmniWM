@@ -10,6 +10,53 @@ enum WMEventSource: String, Equatable {
     case focusPolicy
 }
 
+struct RefreshRequestEvent: Equatable {
+    var refresh: ScheduledRefresh
+    var shouldDropWhileBusy: Bool
+    var isIncrementalRefreshInProgress: Bool
+    var isImmediateLayoutInProgress: Bool
+    var hasActiveAnimationRefreshes: Bool
+}
+
+struct RefreshCompletionEvent: Equatable {
+    var refresh: ScheduledRefresh
+    var didComplete: Bool
+    var didExecutePlan: Bool
+}
+
+struct ManagedFocusRequestEvent: Equatable {
+    var token: WindowToken
+    var workspaceId: WorkspaceDescriptor.ID
+}
+
+enum ManagedActivationMatch: Equatable {
+    case missingFocusedWindow(
+        pid: pid_t,
+        fallbackFullscreen: Bool
+    )
+    case managed(
+        token: WindowToken,
+        workspaceId: WorkspaceDescriptor.ID,
+        monitorId: Monitor.ID?,
+        isWorkspaceActive: Bool,
+        appFullscreen: Bool,
+        requiresNativeFullscreenRestoreRelayout: Bool
+    )
+    case unmanaged(
+        pid: pid_t,
+        token: WindowToken,
+        appFullscreen: Bool,
+        fallbackFullscreen: Bool
+    )
+    case ownedApplication(pid: pid_t)
+}
+
+struct ManagedActivationObservation: Equatable {
+    var source: ActivationEventSource
+    var origin: ActivationCallOrigin
+    var match: ManagedActivationMatch
+}
+
 enum WMEvent: Equatable {
     case windowAdmitted(
         token: WindowToken,
@@ -106,6 +153,10 @@ enum WMEvent: Equatable {
         preserveFocusedToken: Bool,
         source: WMEventSource
     )
+    case refreshRequested(RefreshRequestEvent)
+    case refreshCompleted(RefreshCompletionEvent)
+    case focusRequested(ManagedFocusRequestEvent)
+    case activationObserved(ManagedActivationObservation)
     case systemSleep(source: WMEventSource)
     case systemWake(source: WMEventSource)
 
@@ -122,10 +173,21 @@ enum WMEvent: Equatable {
              let .managedFocusRequested(token, _, _, _),
              let .managedFocusConfirmed(token, _, _, _, _):
             token
+        case let .focusRequested(request):
+            request.token
         case let .windowRekeyed(_, to, _, _, _, _):
             to
         case let .managedFocusCancelled(token, _, _):
             token
+        case let .activationObserved(observation):
+            switch observation.match {
+            case let .managed(token, _, _, _, _, _), let .unmanaged(_, token, _, _):
+                token
+            case .missingFocusedWindow, .ownedApplication:
+                nil
+            }
+        case .refreshRequested, .refreshCompleted:
+            nil
         case .topologyChanged, .activeSpaceChanged, .focusLeaseChanged, .nonManagedFocusChanged, .systemSleep, .systemWake:
             nil
         }
@@ -152,6 +214,8 @@ enum WMEvent: Equatable {
              let .systemSleep(source),
              let .systemWake(source):
             source
+        case .refreshRequested, .refreshCompleted, .focusRequested, .activationObserved:
+            .service
         }
     }
 
@@ -189,6 +253,14 @@ enum WMEvent: Equatable {
             "managed_focus_cancelled token=\(token.map(String.init(describing:)) ?? "nil") workspace=\(workspaceId?.uuidString ?? "nil")"
         case let .nonManagedFocusChanged(active, appFullscreen, preserveFocusedToken, _):
             "non_managed_focus_changed active=\(active) fullscreen=\(appFullscreen) preserve=\(preserveFocusedToken)"
+        case let .refreshRequested(request):
+            "refresh_requested cycle=\(request.refresh.cycleId) kind=\(request.refresh.kind) reason=\(request.refresh.reason)"
+        case let .refreshCompleted(completion):
+            "refresh_completed cycle=\(completion.refresh.cycleId) complete=\(completion.didComplete) executed=\(completion.didExecutePlan)"
+        case let .focusRequested(request):
+            "focus_requested token=\(request.token) workspace=\(request.workspaceId.uuidString)"
+        case let .activationObserved(observation):
+            "activation_observed source=\(observation.source.rawValue) origin=\(observation.origin.rawValue)"
         case .systemSleep:
             "system_sleep"
         case .systemWake:

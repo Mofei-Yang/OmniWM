@@ -1,7 +1,7 @@
 import Foundation
 
 enum InvariantChecks {
-    static func validate(snapshot: ReconcileSnapshot) -> [ReconcileInvariantViolation] {
+    static func validate(snapshot: WMSnapshot) -> [ReconcileInvariantViolation] {
         var violations: [ReconcileInvariantViolation] = []
         let liveTokens = Set(snapshot.windows.map(\.token))
         let liveMonitorIds = Set(snapshot.topologyProfile.displays.map { Monitor.ID(displayId: $0.displayId) })

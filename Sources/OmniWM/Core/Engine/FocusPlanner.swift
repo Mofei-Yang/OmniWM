@@ -1,27 +1,9 @@
 import Foundation
 
-enum FocusPlannerEvent: Equatable {
-    case requested(ManagedFocusRequestEvent)
-    case activationObserved(ManagedActivationObservation)
-}
-
 struct FocusPlannerResult: Equatable {
-    var snapshot: FocusOrchestrationSnapshot
-    var decision: OrchestrationDecision
-    var plan: OrchestrationPlan
-
-    func asOrchestrationResult(
-        refresh: RefreshOrchestrationSnapshot
-    ) -> OrchestrationResult {
-        OrchestrationResult(
-            snapshot: .init(
-                refresh: refresh,
-                focus: snapshot
-            ),
-            decision: decision,
-            plan: plan
-        )
-    }
+    var snapshot: WMSnapshot
+    var decision: ActionPlan.Decision
+    var plan: ActionPlan
 }
 
 enum FocusPlanner {
@@ -34,19 +16,21 @@ enum FocusPlanner {
     private static let activationRetryLimit = 5
 
     static func step(
-        snapshot: FocusOrchestrationSnapshot,
-        event: FocusPlannerEvent
+        snapshot: WMSnapshot,
+        event: WMEvent
     ) -> FocusPlannerResult {
         switch event {
-        case let .requested(request):
+        case let .focusRequested(request):
             reduceRequest(snapshot: snapshot, request: request)
         case let .activationObserved(observation):
             reduceActivation(snapshot: snapshot, observation: observation)
+        default:
+            preconditionFailure("FocusPlanner received non-focus event \(event)")
         }
     }
 
     private static func reduceRequest(
-        snapshot: FocusOrchestrationSnapshot,
+        snapshot: WMSnapshot,
         request: ManagedFocusRequestEvent
     ) -> FocusPlannerResult {
         var updatedSnapshot = snapshot
@@ -135,11 +119,11 @@ enum FocusPlanner {
     }
 
     private static func reduceActivation(
-        snapshot: FocusOrchestrationSnapshot,
+        snapshot: WMSnapshot,
         observation: ManagedActivationObservation
     ) -> FocusPlannerResult {
         var updatedSnapshot = snapshot
-        var actions: [OrchestrationPlan.Action] = []
+        var actions: [ActionPlan.Action] = []
 
         switch observation.match {
         case let .missingFocusedWindow(pid, fallbackFullscreen):
@@ -354,7 +338,7 @@ enum FocusPlanner {
     }
 
     private static func deferManagedActivation(
-        snapshot: FocusOrchestrationSnapshot,
+        snapshot: WMSnapshot,
         retryReason: ActivationRetryReason,
         source: ActivationEventSource,
         origin: ActivationCallOrigin
@@ -427,7 +411,7 @@ enum FocusPlanner {
     }
 
     private static func activationDisposition(
-        focus: FocusOrchestrationSnapshot,
+        focus: WMSnapshot,
         observation: ManagedActivationObservation
     ) -> ActivationDisposition {
         guard let request = focus.activeManagedRequest else {
@@ -483,13 +467,13 @@ enum FocusPlanner {
     }
 
     private static func clearActiveManagedRequest(
-        _ snapshot: inout FocusOrchestrationSnapshot
+        _ snapshot: inout WMSnapshot
     ) {
         snapshot.activeManagedRequest = nil
     }
 
     private static func clearPendingFocus(
-        _ snapshot: inout FocusOrchestrationSnapshot
+        _ snapshot: inout WMSnapshot
     ) {
         snapshot.pendingFocusedToken = nil
         snapshot.pendingFocusedWorkspaceId = nil

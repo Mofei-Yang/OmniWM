@@ -92,7 +92,7 @@ final class WorkspaceManager {
         reconcileInteractionMonitorState(notify: false)
     }
 
-    func reconcileSnapshot() -> ReconcileSnapshot {
+    func reconcileSnapshot() -> WMSnapshot {
         let windowSnapshots = windows.allEntries()
             .sorted {
                 if $0.workspaceId != $1.workspaceId {
@@ -116,7 +116,7 @@ final class WorkspaceManager {
                 )
             }
 
-        return ReconcileSnapshot(
+        return WMSnapshot(
             topologyProfile: TopologyProfile(monitors: monitors),
             focusSession: focusSessionSnapshot(),
             windows: windowSnapshots
@@ -144,7 +144,7 @@ final class WorkspaceManager {
     }
 
     func replayReconcileTraceForTests() -> [ActionPlan] {
-        StateReducer.replay(reconcileTrace.snapshot())
+        reconcileTrace.snapshot().map(\.plan)
     }
 
     func reconcileSnapshotDump() -> String {
@@ -330,7 +330,7 @@ final class WorkspaceManager {
 
     private func plannedRestoreRefresh(
         from eventPlan: RestorePlanner.EventPlan,
-        snapshot: ReconcileSnapshot
+        snapshot: WMSnapshot
     ) -> RestoreRefreshPlan? {
         let hasInteractionChange = eventPlan.interactionMonitorId != snapshot.interactionMonitorId
             || eventPlan.previousInteractionMonitorId != snapshot.previousInteractionMonitorId
@@ -348,7 +348,7 @@ final class WorkspaceManager {
     private func refreshRestoreIntentsForAllEntries() {
         for entry in windows.allEntries() {
             windows.setRestoreIntent(
-                StateReducer.restoreIntent(for: entry, monitors: monitors),
+                Reducer.restoreIntent(for: entry, monitors: monitors),
                 for: entry.token
             )
         }
@@ -715,7 +715,7 @@ final class WorkspaceManager {
 
     @discardableResult
     func applyOrchestrationFocusState(
-        _ focusSnapshot: FocusOrchestrationSnapshot
+        _ focusSnapshot: FocusSessionSnapshot
     ) -> Bool {
         var changed = false
 
@@ -3258,4 +3258,3 @@ extension WorkspaceManager {
         return false
     }
 }
-

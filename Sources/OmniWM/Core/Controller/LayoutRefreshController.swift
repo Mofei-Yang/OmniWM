@@ -901,7 +901,7 @@ import QuartzCore
         }
     }
 
-    private func refreshPlanningSnapshot() -> RefreshOrchestrationSnapshot {
+    private func refreshPlanningSnapshot() -> RefreshSnapshot {
         if let runtime = controller?.runtime {
             return runtime.refreshSnapshot
         }
@@ -911,7 +911,7 @@ import QuartzCore
         )
     }
 
-    private func storeRefreshPlanningSnapshot(_ snapshot: RefreshOrchestrationSnapshot) {
+    private func storeRefreshPlanningSnapshot(_ snapshot: RefreshSnapshot) {
         layoutState.activeRefresh = snapshot.activeRefresh
         layoutState.pendingRefresh = snapshot.pendingRefresh
     }
@@ -1475,9 +1475,18 @@ import QuartzCore
             return
         }
 
-        let result = RefreshPlanner.step(
-            snapshot: refreshPlanningSnapshot(),
-            event: .requested(
+        let result = OrchestrationCore.step(
+            snapshot: controller?.stateSnapshot(refresh: refreshPlanningSnapshot())
+                ?? .init(refresh: refreshPlanningSnapshot(), focus: .init(
+                    focusedToken: nil,
+                    pendingManagedFocus: .empty,
+                    focusLease: nil,
+                    isNonManagedFocusActive: false,
+                    isAppFullscreenActive: false,
+                    interactionMonitorId: nil,
+                    previousInteractionMonitorId: nil
+                )),
+            event: .refreshRequested(
                 .init(
                     refresh: refresh,
                     shouldDropWhileBusy: shouldDropWhileBusy,
@@ -1488,14 +1497,7 @@ import QuartzCore
                 )
             )
         )
-        applyRefreshPlanningResult(result)
-    }
-
-    private func applyRefreshPlanningResult(_ result: RefreshPlannerResult) {
-        applyResolvedRefreshPlan(
-            snapshot: result.snapshot,
-            actions: result.plan.actions
-        )
+        applyRuntimeRefreshResult(result)
     }
 
     func applyRuntimeRefreshResult(_ result: OrchestrationResult) {
@@ -1506,8 +1508,8 @@ import QuartzCore
     }
 
     private func applyResolvedRefreshPlan(
-        snapshot: RefreshOrchestrationSnapshot,
-        actions: [OrchestrationPlan.Action]
+        snapshot: RefreshSnapshot,
+        actions: [ActionPlan.Action]
     ) {
         if controller?.runtime == nil {
             storeRefreshPlanningSnapshot(snapshot)
@@ -1601,9 +1603,18 @@ import QuartzCore
             return
         }
 
-        let result = RefreshPlanner.step(
-            snapshot: refreshPlanningSnapshot(),
-            event: .completed(
+        let result = OrchestrationCore.step(
+            snapshot: controller?.stateSnapshot(refresh: refreshPlanningSnapshot())
+                ?? .init(refresh: refreshPlanningSnapshot(), focus: .init(
+                    focusedToken: nil,
+                    pendingManagedFocus: .empty,
+                    focusLease: nil,
+                    isNonManagedFocusActive: false,
+                    isAppFullscreenActive: false,
+                    interactionMonitorId: nil,
+                    previousInteractionMonitorId: nil
+                )),
+            event: .refreshCompleted(
                 .init(
                     refresh: refresh,
                     didComplete: didComplete,
@@ -1611,7 +1622,7 @@ import QuartzCore
                 )
             )
         )
-        applyRefreshPlanningResult(result)
+        applyRuntimeRefreshResult(result)
     }
 
     private func recordRefreshExecution(_ route: RefreshRoute, reason: RefreshReason) {

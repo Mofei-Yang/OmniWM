@@ -1,7 +1,7 @@
 import Foundation
 
 enum ReconcileDebugDump {
-    static func snapshot(_ snapshot: ReconcileSnapshot) -> String {
+    static func snapshot(_ snapshot: WMSnapshot) -> String {
         var lines: [String] = [
             "topology displays=\(snapshot.topologyProfile.displays.count)",
             "focused=\(snapshot.focusedToken.map(String.init(describing:)) ?? "nil")",

@@ -3,7 +3,7 @@ import Observation
 
 @MainActor @Observable
 final class AppBootstrapState {
-    var runtime: WMRuntime? {
+    var runtime: Runtime? {
         didSet {
             settings = runtime?.settings
             controller = runtime?.controller
@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cliManager: AppCLIManager?
     private var updateCoordinator: (any AppUpdateCoordinating)?
     private var runtimeStateStore: RuntimeStateStore?
-    private var runtime: WMRuntime?
+    private var runtime: Runtime?
 
     func applicationDidFinishLaunching(_: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             persistence: persistence,
             runtimeState: runtimeState
         )
-        let runtime = WMRuntime(settings: settings)
+        let runtime = Runtime(settings: settings)
         runtime.start()
         let controller = runtime.controller
         let cliManager = AppCLIManager()
