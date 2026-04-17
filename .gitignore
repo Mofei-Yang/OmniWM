@@ -1,5 +1,6 @@
 # Build artifacts
 .build/
+.worktrees/
 Zig/omniwm_kernels/.zig-cache/
 Zig/omniwm_kernels/zig-out/
 
@@ -28,7 +29,8 @@ dist/
 .build-review/
 
 # External frameworks (downloaded/built separately)
-Frameworks/
+/Frameworks
+/Frameworks/
 
 # Codex
 .codex-home/

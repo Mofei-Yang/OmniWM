@@ -52,8 +52,13 @@ let buildMetadata = BuildMetadata.load(packageDirectory: packageDirectory)
 let ghosttyArchiveURL = URL(fileURLWithPath: packageDirectory).appendingPathComponent(buildMetadata.ghosttyArchiveRelativePath)
 let ghosttyMacOSLibraryDirectory = ghosttyArchiveURL.deletingLastPathComponent().path
 
+// SwiftPM derives the plugin-output slug from the package-directory basename
+// (lowercased). Computing it dynamically lets the same Package.swift work from
+// any checkout path (e.g. main repo and git worktrees) without edits.
+let packageIdentity = URL(fileURLWithPath: packageDirectory).lastPathComponent.lowercased()
+
 func zigKernelSwiftPMLibraryDirectory(for configuration: String) -> String {
-    "\(packageDirectory)/.build/plugins/outputs/omniwm/OmniWM/destination/OmniWMKernelsBuildPlugin/zig-kernels/\(configuration)/lib"
+    "\(packageDirectory)/.build/plugins/outputs/\(packageIdentity)/OmniWM/destination/OmniWMKernelsBuildPlugin/zig-kernels/\(configuration)/lib"
 }
 
 let zigKernelDebugLibraryFlags = [
