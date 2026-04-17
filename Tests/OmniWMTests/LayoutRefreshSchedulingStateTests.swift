@@ -2,9 +2,9 @@ import Testing
 
 @testable import OmniWM
 
-@Suite struct RefreshSchedulerTests {
+@Suite struct LayoutRefreshSchedulingStateTests {
     @Test @MainActor func scheduledRefreshesAllocateMonotonicCycleIds() {
-        let scheduler = RefreshScheduler()
+        let scheduler = LayoutRefreshController.RefreshSchedulingState()
 
         let first = scheduler.makeScheduledRefresh(
             kind: .fullRescan,
@@ -20,7 +20,7 @@ import Testing
     }
 
     @Test @MainActor func synchronizeCycleCounterAdvancesPastObservedRefreshes() {
-        let scheduler = RefreshScheduler()
+        let scheduler = LayoutRefreshController.RefreshSchedulingState()
 
         scheduler.synchronizeCycleCounter(
             activeRefresh: ScheduledRefresh(
@@ -44,7 +44,7 @@ import Testing
     }
 
     @Test @MainActor func postLayoutActionsRunOnceAndCanBeDiscarded() {
-        let scheduler = RefreshScheduler()
+        let scheduler = LayoutRefreshController.RefreshSchedulingState()
         var runCount = 0
 
         let attachmentIds = scheduler.registerPostLayoutAttachments {

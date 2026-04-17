@@ -3,7 +3,7 @@ import Foundation
 import QuartzCore
 
 @MainActor final class LayoutRefreshController: NSObject {
-    typealias PostLayoutAction = RefreshScheduler.PostLayoutAction
+    typealias PostLayoutAction = @MainActor () -> Void
 
     enum RefreshRoute: Equatable {
         case relayout
@@ -44,6 +44,89 @@ import QuartzCore
             let frame = AXWindowService.framePreferFast(axRef)
             cache[token] = .some(frame)
             return frame
+        }
+    }
+
+    @MainActor
+    final class RefreshSchedulingState {
+        private var nextRefreshCycleId: RefreshCycleId = 1
+        private var nextPostLayoutAttachmentId: RefreshAttachmentId = 1
+        private var postLayoutActionsByAttachmentId: [RefreshAttachmentId: PostLayoutAction] = [:]
+
+        func makeScheduledRefresh(
+            kind: ScheduledRefreshKind,
+            reason: RefreshReason,
+            affectedWorkspaceIds: Set<WorkspaceDescriptor.ID> = [],
+            postLayoutAttachmentIds: [RefreshAttachmentId] = [],
+            windowRemovalPayload: WindowRemovalPayload? = nil
+        ) -> ScheduledRefresh {
+            ScheduledRefresh(
+                cycleId: allocateRefreshCycleId(),
+                kind: kind,
+                reason: reason,
+                affectedWorkspaceIds: affectedWorkspaceIds,
+                postLayoutAttachmentIds: postLayoutAttachmentIds,
+                windowRemovalPayload: windowRemovalPayload
+            )
+        }
+
+        func synchronizeCycleCounter(
+            activeRefresh: ScheduledRefresh?,
+            pendingRefresh: ScheduledRefresh?
+        ) {
+            let highestObservedCycleId = [activeRefresh?.cycleId, pendingRefresh?.cycleId]
+                .compactMap(\.self)
+                .max()
+
+            guard let highestObservedCycleId else { return }
+            nextRefreshCycleId = max(nextRefreshCycleId, highestObservedCycleId &+ 1)
+        }
+
+        func registerPostLayoutAttachments(
+            _ postLayout: PostLayoutAction?
+        ) -> [RefreshAttachmentId] {
+            guard let postLayout else {
+                return []
+            }
+            let id = nextPostLayoutAttachmentId
+            nextPostLayoutAttachmentId &+= 1
+            postLayoutActionsByAttachmentId[id] = postLayout
+            return [id]
+        }
+
+        func resolvePostLayoutActions(
+            attachmentIds: [RefreshAttachmentId]
+        ) -> [PostLayoutAction] {
+            attachmentIds.compactMap { postLayoutActionsByAttachmentId[$0] }
+        }
+
+        func runPostLayoutActions(
+            attachmentIds: [RefreshAttachmentId]
+        ) {
+            for attachmentId in attachmentIds {
+                guard let action = postLayoutActionsByAttachmentId.removeValue(forKey: attachmentId) else {
+                    continue
+                }
+                action()
+            }
+        }
+
+        func discardPostLayoutActions(
+            attachmentIds: [RefreshAttachmentId]
+        ) {
+            for attachmentId in attachmentIds {
+                postLayoutActionsByAttachmentId.removeValue(forKey: attachmentId)
+            }
+        }
+
+        func clearPostLayoutActions() {
+            postLayoutActionsByAttachmentId.removeAll()
+        }
+
+        private func allocateRefreshCycleId() -> RefreshCycleId {
+            let cycleId = nextRefreshCycleId
+            nextRefreshCycleId &+= 1
+            return cycleId
         }
     }
 
@@ -128,7 +211,7 @@ import QuartzCore
     private var activeFrameContext: RefreshFrameContext?
     private var pendingRevealTransactionsByWindowId: [Int: PendingRevealTransaction] = [:]
     private var pendingRevealVerificationTasksByWindowId: [Int: Task<Void, Never>] = [:]
-    private let refreshScheduler = RefreshScheduler()
+    private let refreshSchedulingState = RefreshSchedulingState()
 
     func fastFrame(for token: WindowToken, axRef: AXWindowRef) -> CGRect? {
         activeFrameContext?.fastFrame(for: token, axRef: axRef)
@@ -718,7 +801,7 @@ import QuartzCore
         postLayoutAttachmentIds: [RefreshAttachmentId] = [],
         windowRemovalPayload: WindowRemovalPayload? = nil
     ) -> ScheduledRefresh {
-        refreshScheduler.makeScheduledRefresh(
+        refreshSchedulingState.makeScheduledRefresh(
             kind: kind,
             reason: reason,
             affectedWorkspaceIds: affectedWorkspaceIds,
@@ -730,25 +813,25 @@ import QuartzCore
     private func registerPostLayoutAttachments(
         _ postLayout: PostLayoutAction?
     ) -> [RefreshAttachmentId] {
-        refreshScheduler.registerPostLayoutAttachments(postLayout)
+        refreshSchedulingState.registerPostLayoutAttachments(postLayout)
     }
 
     private func resolvePostLayoutActions(
         attachmentIds: [RefreshAttachmentId]
     ) -> [PostLayoutAction] {
-        refreshScheduler.resolvePostLayoutActions(attachmentIds: attachmentIds)
+        refreshSchedulingState.resolvePostLayoutActions(attachmentIds: attachmentIds)
     }
 
     private func runPostLayoutActions(
         attachmentIds: [RefreshAttachmentId]
     ) {
-        refreshScheduler.runPostLayoutActions(attachmentIds: attachmentIds)
+        refreshSchedulingState.runPostLayoutActions(attachmentIds: attachmentIds)
     }
 
     private func discardPostLayoutActions(
         attachmentIds: [RefreshAttachmentId]
     ) {
-        refreshScheduler.discardPostLayoutActions(attachmentIds: attachmentIds)
+        refreshSchedulingState.discardPostLayoutActions(attachmentIds: attachmentIds)
     }
 
     private func scheduleRefreshSession(
@@ -954,7 +1037,7 @@ import QuartzCore
         layoutState.activeRefresh = nil
         layoutState.pendingRefresh = nil
         layoutState.didExecuteRefreshExecutionPlan = false
-        refreshScheduler.clearPostLayoutActions()
+        refreshSchedulingState.clearPostLayoutActions()
         controller?.runtime?.resetRefreshOrchestration()
 
         for (_, link) in layoutState.displayLinksByDisplay {
@@ -1548,7 +1631,7 @@ import QuartzCore
 
     private func synchronizeRefreshCycleCounter() {
         let snapshot = refreshPlanningSnapshot()
-        refreshScheduler.synchronizeCycleCounter(
+        refreshSchedulingState.synchronizeCycleCounter(
             activeRefresh: snapshot.activeRefresh,
             pendingRefresh: snapshot.pendingRefresh
         )
