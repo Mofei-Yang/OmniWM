@@ -282,8 +282,8 @@ final class IPCQueryRouter {
 
     func reconcileDebugResult(traceLimit: Int = 50) -> IPCReconcileDebugQueryResult {
         IPCReconcileDebugQueryResult(
-            snapshot: controller.workspaceManager.reconcileSnapshotDump(),
-            trace: controller.workspaceManager.reconcileTraceDump(limit: traceLimit),
+            snapshot: controller.workspaceManager.engineSnapshotDump(),
+            trace: controller.workspaceManager.engineTraceDump(limit: traceLimit),
             traceLimit: traceLimit
         )
     }

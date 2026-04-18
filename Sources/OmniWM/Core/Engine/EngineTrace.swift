@@ -1,16 +1,16 @@
 import Foundation
 
-struct ReconcileTraceRecord: Equatable {
+struct EngineTraceRecord: Equatable {
     let sequence: UInt64
     let timestamp: Date
     let event: WMEvent
     let normalizedEvent: WMEvent
     let plan: ActionPlan
     let snapshot: WMSnapshot
-    let invariantViolations: [ReconcileInvariantViolation]
+    let invariantViolations: [EngineInvariantViolation]
 }
 
-struct ReconcileInvariantViolation: Equatable {
+struct EngineInvariantViolation: Equatable {
     let code: String
     let message: String
 
@@ -19,22 +19,22 @@ struct ReconcileInvariantViolation: Equatable {
     }
 }
 
-struct ReconcileTxn: Equatable {
+struct EngineTransaction: Equatable {
     let timestamp: Date
     let event: WMEvent
     let normalizedEvent: WMEvent
     let plan: ActionPlan
     let snapshot: WMSnapshot
-    let invariantViolations: [ReconcileInvariantViolation]
+    let invariantViolations: [EngineInvariantViolation]
 }
 
 @MainActor
-final class ReconcileTraceRecorder {
+final class EngineTraceRecorder {
     private static let defaultLimit = 256
 
     private let limit: Int
     private var nextSequence: UInt64 = 1
-    private var records: [ReconcileTraceRecord] = []
+    private var records: [EngineTraceRecord] = []
 
     init(limit: Int = defaultLimit) {
         self.limit = max(1, limit)
@@ -45,10 +45,10 @@ final class ReconcileTraceRecorder {
         normalizedEvent: WMEvent? = nil,
         plan: ActionPlan,
         snapshot: WMSnapshot,
-        invariantViolations: [ReconcileInvariantViolation] = [],
+        invariantViolations: [EngineInvariantViolation] = [],
         timestamp: Date = Date()
     ) {
-        let record = ReconcileTraceRecord(
+        let record = EngineTraceRecord(
             sequence: nextSequence,
             timestamp: timestamp,
             event: event,
@@ -64,7 +64,7 @@ final class ReconcileTraceRecorder {
         records.append(record)
     }
 
-    func append(transaction: ReconcileTxn) {
+    func append(transaction: EngineTransaction) {
         append(
             event: transaction.event,
             normalizedEvent: transaction.normalizedEvent,
@@ -75,7 +75,7 @@ final class ReconcileTraceRecorder {
         )
     }
 
-    func snapshot() -> [ReconcileTraceRecord] {
+    func snapshot() -> [EngineTraceRecord] {
         records
     }
 
@@ -84,3 +84,8 @@ final class ReconcileTraceRecorder {
         nextSequence = 1
     }
 }
+
+typealias ReconcileTraceRecord = EngineTraceRecord
+typealias ReconcileInvariantViolation = EngineInvariantViolation
+typealias ReconcileTxn = EngineTransaction
+typealias ReconcileTraceRecorder = EngineTraceRecorder

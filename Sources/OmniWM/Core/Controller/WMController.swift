@@ -440,7 +440,7 @@ final class WMController {
                 "submitRuntimeEvent(_:) only supports reconcile events when runtime is unavailable."
             )
         default:
-            return .reconcile(workspaceManager.recordReconcileEvent(event))
+            return .reconcile(workspaceManager.recordEngineEvent(event))
         }
     }
 

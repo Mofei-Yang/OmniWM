@@ -113,6 +113,7 @@ enum WorkspaceSessionKernel {
             operation: StaticString
         ) {
             let message = workspaceSessionKernelFailureMessage(for: error, operation: operation)
+            WMLog.error(.kernel, message)
             standardErrorSink(message)
             debugAssertionSink(message)
         }

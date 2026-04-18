@@ -6,53 +6,9 @@ import OmniWMIPC
 final class WorkspaceManager {
     static let staleUnavailableNativeFullscreenTimeout: TimeInterval = 15
 
-    enum NativeFullscreenTransition: Equatable {
-        case enterRequested
-        case suspended
-        case exitRequested
-        case restoring
-    }
-
-    enum NativeFullscreenAvailability: Equatable {
-        case present
-        case temporarilyUnavailable
-    }
-
-    struct NativeFullscreenRecord {
-        struct RestoreSnapshot: Equatable {
-            let frame: CGRect
-            let topologyProfile: TopologyProfile
-            let niriState: ManagedWindowRestoreSnapshot.NiriState?
-            let replacementMetadata: ManagedReplacementMetadata?
-
-            init(
-                frame: CGRect,
-                topologyProfile: TopologyProfile,
-                niriState: ManagedWindowRestoreSnapshot.NiriState? = nil,
-                replacementMetadata: ManagedReplacementMetadata? = nil
-            ) {
-                self.frame = frame
-                self.topologyProfile = topologyProfile
-                self.niriState = niriState
-                self.replacementMetadata = replacementMetadata
-            }
-        }
-
-        struct RestoreFailure: Equatable {
-            let path: String
-            let detail: String
-        }
-
-        let originalToken: WindowToken
-        var currentToken: WindowToken
-        let workspaceId: WorkspaceDescriptor.ID
-        var restoreSnapshot: RestoreSnapshot?
-        var restoreFailure: RestoreFailure?
-        var exitRequestedByCommand: Bool
-        var transition: NativeFullscreenTransition
-        var availability: NativeFullscreenAvailability
-        var unavailableSince: Date?
-    }
+    typealias NativeFullscreenTransition = NativeFullscreenState.Transition
+    typealias NativeFullscreenAvailability = NativeFullscreenState.Availability
+    typealias NativeFullscreenRecord = NativeFullscreenState.Record
 
     private let windowRegistry = WindowRegistry()
     let workspaceStore: WorkspaceStore
@@ -71,8 +27,8 @@ final class WorkspaceManager {
     private(set) var gaps: Double = 8
     private(set) var outerGaps: LayoutGaps.OuterGaps = .zero
     private var windows: WindowModel { windowRegistry.windows }
-    private let reconcileTrace = ReconcileTraceRecorder()
-    private lazy var runtimeStore = RuntimeStore(traceRecorder: reconcileTrace)
+    private let engineTrace = EngineTraceRecorder()
+    private lazy var runtimeStore = RuntimeStore(traceRecorder: engineTrace)
     var animationClock: AnimationClock?
     var sessionState = WorkspaceSessionState()
 
@@ -104,7 +60,7 @@ final class WorkspaceManager {
                 return $0.windowId < $1.windowId
             }
             .map { entry in
-                ReconcileWindowSnapshot(
+                WindowSnapshot(
                     token: entry.token,
                     workspaceId: entry.workspaceId,
                     mode: entry.mode,
@@ -139,24 +95,24 @@ final class WorkspaceManager {
         )
     }
 
-    func reconcileTraceSnapshotForTests() -> [ReconcileTraceRecord] {
-        reconcileTrace.snapshot()
+    func engineTraceSnapshotForTests() -> [EngineTraceRecord] {
+        engineTrace.snapshot()
     }
 
-    func replayReconcileTraceForTests() -> [ActionPlan] {
-        reconcileTrace.snapshot().map(\.plan)
+    func replayEngineTraceForTests() -> [ActionPlan] {
+        engineTrace.snapshot().map(\.plan)
     }
 
-    func reconcileSnapshotDump() -> String {
-        ReconcileDebugDump.snapshot(reconcileSnapshot())
+    func engineSnapshotDump() -> String {
+        EngineDebugDump.snapshot(reconcileSnapshot())
     }
 
-    func reconcileTraceDump(limit: Int? = nil) -> String {
-        ReconcileDebugDump.trace(reconcileTrace.snapshot(), limit: limit)
+    func engineTraceDump(limit: Int? = nil) -> String {
+        EngineDebugDump.trace(engineTrace.snapshot(), limit: limit)
     }
 
     @discardableResult
-    func recordReconcileEvent(_ event: WMEvent) -> ReconcileTxn {
+    func recordEngineEvent(_ event: WMEvent) -> EngineTransaction {
         let snapshot = reconcileSnapshot()
         let restoreEventPlan = restoreState.restorePlanner.planEvent(
             .init(
@@ -195,7 +151,7 @@ final class WorkspaceManager {
     }
 
     @discardableResult
-    private func recordTopologyChange(to newMonitors: [Monitor]) -> ReconcileTxn {
+    private func recordTopologyChange(to newMonitors: [Monitor]) -> EngineTransaction {
         let normalizedMonitors = newMonitors.isEmpty ? [Monitor.fallback()] : newMonitors
         let originalWorkspaceConfigurations = settings.workspaceConfigurations
         let originalMonitorBarSettings = settings.monitorBarSettings
@@ -245,6 +201,27 @@ final class WorkspaceManager {
                 return self.applyActionPlan(plan, to: nil)
             }
         )
+    }
+
+    func reconcileTraceSnapshotForTests() -> [EngineTraceRecord] {
+        engineTraceSnapshotForTests()
+    }
+
+    func replayReconcileTraceForTests() -> [ActionPlan] {
+        replayEngineTraceForTests()
+    }
+
+    func reconcileSnapshotDump() -> String {
+        engineSnapshotDump()
+    }
+
+    func reconcileTraceDump(limit: Int? = nil) -> String {
+        engineTraceDump(limit: limit)
+    }
+
+    @discardableResult
+    func recordReconcileEvent(_ event: WMEvent) -> EngineTransaction {
+        recordEngineEvent(event)
     }
 
     private func applyActionPlan(
@@ -324,7 +301,7 @@ final class WorkspaceManager {
     @discardableResult
     private func applyFocusReconcileEvent(_ event: WMEvent) -> Bool {
         let previousFocusSession = focusSessionSnapshot()
-        recordReconcileEvent(event)
+        recordEngineEvent(event)
         return focusSessionSnapshot() != previousFocusSession
     }
 
@@ -2125,7 +2102,7 @@ final class WorkspaceManager {
             ruleEffects: ruleEffects,
             managedReplacementMetadata: managedReplacementMetadata
         )
-        recordReconcileEvent(
+        recordEngineEvent(
             .windowAdmitted(
                 token: token,
                 workspaceId: workspace,
@@ -2160,7 +2137,7 @@ final class WorkspaceManager {
             restoreState.upsertNativeFullscreenRecord(record)
         }
 
-        recordReconcileEvent(
+        recordEngineEvent(
             .windowRekeyed(
                 from: oldToken,
                 to: newToken,
@@ -2312,7 +2289,7 @@ final class WorkspaceManager {
         guard previousMetadata != metadata else {
             return false
         }
-        recordReconcileEvent(
+        recordEngineEvent(
             .managedReplacementMetadataChanged(
                 token: token,
                 workspaceId: entry.workspaceId,
@@ -2373,7 +2350,7 @@ final class WorkspaceManager {
         if focusChanged {
             notifySessionStateChanged()
         }
-        recordReconcileEvent(
+        recordEngineEvent(
             .windowModeChanged(
                 token: token,
                 workspaceId: workspaceId,
@@ -2428,7 +2405,7 @@ final class WorkspaceManager {
             ),
             for: token
         )
-        recordReconcileEvent(
+        recordEngineEvent(
             .floatingGeometryUpdated(
                 token: token,
                 workspaceId: entry.workspaceId,
@@ -2506,7 +2483,7 @@ final class WorkspaceManager {
 
     @discardableResult
     private func removeTrackedWindow(_ entry: WindowModel.Entry) -> WindowModel.Entry {
-        recordReconcileEvent(
+        recordEngineEvent(
             .windowRemoved(
                 token: entry.token,
                 workspaceId: entry.workspaceId,
@@ -2522,7 +2499,7 @@ final class WorkspaceManager {
     func setWorkspace(for token: WindowToken, to workspace: WorkspaceDescriptor.ID) {
         let previousWorkspace = windows.workspace(for: token)
         windows.updateWorkspace(for: token, workspace: workspace)
-        recordReconcileEvent(
+        recordEngineEvent(
             .workspaceAssigned(
                 token: token,
                 from: previousWorkspace,
@@ -2544,7 +2521,7 @@ final class WorkspaceManager {
     func setHiddenState(_ state: WindowModel.HiddenState?, for token: WindowToken) {
         windows.setHiddenState(state, for: token)
         if let workspaceId = workspace(for: token) {
-            recordReconcileEvent(
+            recordEngineEvent(
                 .hiddenStateChanged(
                     token: token,
                     workspaceId: workspaceId,
@@ -2573,7 +2550,7 @@ final class WorkspaceManager {
         guard let workspaceId = workspace(for: token) else { return }
         switch reason {
         case .nativeFullscreen:
-            recordReconcileEvent(
+            recordEngineEvent(
                 .nativeFullscreenTransition(
                     token: token,
                     workspaceId: workspaceId,
@@ -2583,7 +2560,7 @@ final class WorkspaceManager {
                 )
             )
         case .macosHiddenApp, .standard:
-            recordReconcileEvent(
+            recordEngineEvent(
                 .nativeFullscreenTransition(
                     token: token,
                     workspaceId: workspaceId,
@@ -2598,7 +2575,7 @@ final class WorkspaceManager {
     func restoreFromNativeState(for token: WindowToken) -> ParentKind? {
         let restored = windows.restoreFromNativeState(for: token)
         if restored != nil, let workspaceId = workspace(for: token) {
-            recordReconcileEvent(
+            recordEngineEvent(
                 .nativeFullscreenTransition(
                     token: token,
                     workspaceId: workspaceId,

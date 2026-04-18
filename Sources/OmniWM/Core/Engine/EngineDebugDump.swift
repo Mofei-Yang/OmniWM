@@ -1,6 +1,6 @@
 import Foundation
 
-enum ReconcileDebugDump {
+enum EngineDebugDump {
     static func snapshot(_ snapshot: WMSnapshot) -> String {
         var lines: [String] = [
             "topology displays=\(snapshot.topologyProfile.displays.count)",
@@ -22,7 +22,7 @@ enum ReconcileDebugDump {
         return lines.joined(separator: "\n")
     }
 
-    static func trace(_ records: [ReconcileTraceRecord], limit: Int? = nil) -> String {
+    static func trace(_ records: [EngineTraceRecord], limit: Int? = nil) -> String {
         let truncated = limit.map { Array(records.suffix(max(0, $0))) } ?? records
         if truncated.isEmpty {
             return "trace empty"
@@ -61,3 +61,5 @@ enum ReconcileDebugDump {
         .joined(separator: ",")
     }
 }
+
+typealias ReconcileDebugDump = EngineDebugDump

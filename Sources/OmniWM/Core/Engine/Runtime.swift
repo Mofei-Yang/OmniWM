@@ -124,7 +124,7 @@ protocol EffectExecutor {
 }
 
 enum RuntimeSubmitResult {
-    case reconcile(ReconcileTxn)
+    case reconcile(EngineTransaction)
     case coordination(CoordinationResult)
 }
 
@@ -313,6 +313,7 @@ final class Runtime {
         snapshot.configuration = configuration
         controller.applyConfiguration(configuration)
         refreshSnapshotState()
+        WMLog.info(.engine, "Applied runtime configuration: \(configuration.summary)")
         appendTrace(
             eventSummary: "configuration_applied",
             decisionSummary: nil,
@@ -364,7 +365,7 @@ final class Runtime {
         default:
             synchronizeManagedFocusBridge(for: event)
 
-            let transaction = workspaceManager.recordReconcileEvent(event)
+            let transaction = workspaceManager.recordEngineEvent(event)
             refreshSnapshotState()
             appendTrace(
                 eventSummary: event.summary,
@@ -521,11 +522,11 @@ final class Runtime {
 
 @MainActor
 final class RuntimeStore {
-    private let traceRecorder: ReconcileTraceRecorder
+    private let traceRecorder: EngineTraceRecorder
     private let nowProvider: () -> Date
 
     init(
-        traceRecorder: ReconcileTraceRecorder,
+        traceRecorder: EngineTraceRecorder,
         nowProvider: @escaping () -> Date = Date.init
     ) {
         self.traceRecorder = traceRecorder
@@ -540,7 +541,7 @@ final class RuntimeStore {
         persistedHydration: PersistedHydrationMutation? = nil,
         snapshot: () -> WMSnapshot,
         applyPlan: (ActionPlan, WindowToken?) -> ActionPlan
-    ) -> ReconcileTxn {
+    ) -> EngineTransaction {
         let currentSnapshot = snapshot()
         let normalizedEvent = EventNormalizer.normalize(
             event: event,
@@ -569,14 +570,18 @@ final class RuntimeStore {
         normalizedEvent: WMEvent? = nil,
         plan: ActionPlan,
         snapshot: WMSnapshot
-    ) -> ReconcileTxn {
+    ) -> EngineTransaction {
         let invariantViolations = InvariantChecks.validate(snapshot: snapshot)
         var tracedPlan = plan
         if !invariantViolations.isEmpty {
+            WMLog.error(
+                .engine,
+                "Invariant violations detected: \(invariantViolations.map(\.code).joined(separator: ","))"
+            )
             tracedPlan.notes.append(contentsOf: invariantViolations.map(\.traceNote))
         }
 
-        let txn = ReconcileTxn(
+        let txn = EngineTransaction(
             timestamp: nowProvider(),
             event: event,
             normalizedEvent: normalizedEvent ?? event,

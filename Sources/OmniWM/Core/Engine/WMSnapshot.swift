@@ -208,7 +208,7 @@ struct FocusSessionSnapshot: Equatable {
     }
 }
 
-struct ReconcileWindowSnapshot: Equatable {
+struct WindowSnapshot: Equatable {
     let token: WindowToken
     let workspaceId: WorkspaceDescriptor.ID
     let mode: TrackedWindowMode
@@ -227,13 +227,13 @@ struct RefreshSnapshot: Equatable {
 struct WMSnapshot: Equatable {
     let topologyProfile: TopologyProfile
     var focusSession: FocusSessionSnapshot
-    let windows: [ReconcileWindowSnapshot]
+    let windows: [WindowSnapshot]
     var refresh: RefreshSnapshot = .init()
 
     init(
         topologyProfile: TopologyProfile,
         focusSession: FocusSessionSnapshot,
-        windows: [ReconcileWindowSnapshot],
+        windows: [WindowSnapshot],
         refresh: RefreshSnapshot = .init()
     ) {
         self.topologyProfile = topologyProfile
@@ -246,7 +246,7 @@ struct WMSnapshot: Equatable {
         refresh: RefreshSnapshot,
         focus: FocusSessionSnapshot,
         topologyProfile: TopologyProfile = .empty,
-        windows: [ReconcileWindowSnapshot] = []
+        windows: [WindowSnapshot] = []
     ) {
         self.init(
             topologyProfile: topologyProfile,
@@ -305,3 +305,5 @@ struct WMSnapshot: Equatable {
     var interactionMonitorId: Monitor.ID? { focusSession.interactionMonitorId }
     var previousInteractionMonitorId: Monitor.ID? { focusSession.previousInteractionMonitorId }
 }
+
+typealias ReconcileWindowSnapshot = WindowSnapshot
