@@ -558,7 +558,7 @@ enum AXWindowService {
             return AXWindowHeuristicDisposition(disposition: disposition, reasons: [])
         }
 
-        return solveWindowDecisionKernel(
+        let kernelResult = solveWindowDecisionKernel(
             matchedUserAction: nil,
             matchedBuiltInAction: nil,
             matchedBuiltInSourceKind: nil,
@@ -567,7 +567,16 @@ enum AXWindowService {
             titleRequired: false,
             appFullscreen: false
         )
-        .heuristicDisposition
+        switch kernelResult {
+        case .success(let output):
+            return output.heuristicDisposition
+        case .failure(let error):
+            let message = "[WindowDecisionKernel] WindowDecisionKernel.solve failed: \(error)"
+            WMLog.error(.kernel, message)
+            return WindowDecisionKernelOutput
+                .kernelFailureFallback(for: error)
+                .heuristicDisposition
+        }
     }
 
     static func sizeConstraints(_ window: AXWindowRef, currentSize: CGSize? = nil) -> WindowSizeConstraints {

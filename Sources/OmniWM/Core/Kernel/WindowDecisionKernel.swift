@@ -17,21 +17,6 @@ enum WindowDecisionBuiltInSourceKind {
             UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_CLEAN_SHOT_RECORDING_OVERLAY)
         }
     }
-
-    fileprivate init?(kernelRawValue: UInt32) {
-        switch kernelRawValue {
-        case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_NONE):
-            return nil
-        case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_DEFAULT_FLOATING_APP):
-            self = .defaultFloatingApp
-        case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_BROWSER_PICTURE_IN_PICTURE):
-            self = .browserPictureInPicture
-        case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_CLEAN_SHOT_RECORDING_OVERLAY):
-            self = .cleanShotRecordingOverlay
-        default:
-            preconditionFailure("Unknown window decision built-in source \(kernelRawValue)")
-        }
-    }
 }
 
 enum WindowDecisionSpecialCaseKind {
@@ -52,19 +37,6 @@ enum WindowDecisionKernelSourceKind {
     case userRule
     case builtInRule
     case heuristic
-
-    fileprivate init(kernelRawValue: UInt32) {
-        switch kernelRawValue {
-        case UInt32(OMNIWM_WINDOW_DECISION_SOURCE_USER_RULE):
-            self = .userRule
-        case UInt32(OMNIWM_WINDOW_DECISION_SOURCE_BUILT_IN_RULE):
-            self = .builtInRule
-        case UInt32(OMNIWM_WINDOW_DECISION_SOURCE_HEURISTIC):
-            self = .heuristic
-        default:
-            preconditionFailure("Unknown window decision source \(kernelRawValue)")
-        }
-    }
 }
 
 struct WindowDecisionKernelOutput {
@@ -83,6 +55,19 @@ struct WindowDecisionKernelOutput {
     }
 }
 
+extension WindowDecisionKernelOutput {
+    static func kernelFailureFallback(for _: KernelError) -> Self {
+        Self(
+            disposition: .undecided,
+            sourceKind: .heuristic,
+            builtInSourceKind: nil,
+            layoutDecisionKind: .fallbackLayout,
+            deferredReason: nil,
+            heuristicReasons: []
+        )
+    }
+}
+
 private extension WindowRuleLayoutAction {
     var windowDecisionKernelRawValue: UInt32 {
         switch self {
@@ -92,51 +77,6 @@ private extension WindowRuleLayoutAction {
             UInt32(OMNIWM_WINDOW_DECISION_RULE_ACTION_TILE)
         case .float:
             UInt32(OMNIWM_WINDOW_DECISION_RULE_ACTION_FLOAT)
-        }
-    }
-}
-
-private extension WindowDecisionDisposition {
-    init(windowDecisionKernelRawValue: UInt32) {
-        switch windowDecisionKernelRawValue {
-        case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_MANAGED):
-            self = .managed
-        case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_FLOATING):
-            self = .floating
-        case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_UNMANAGED):
-            self = .unmanaged
-        case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_UNDECIDED):
-            self = .undecided
-        default:
-            preconditionFailure("Unknown window decision disposition \(windowDecisionKernelRawValue)")
-        }
-    }
-}
-
-private extension WindowDecisionLayoutKind {
-    init(windowDecisionKernelRawValue: UInt32) {
-        switch windowDecisionKernelRawValue {
-        case UInt32(OMNIWM_WINDOW_DECISION_LAYOUT_KIND_EXPLICIT):
-            self = .explicitLayout
-        case UInt32(OMNIWM_WINDOW_DECISION_LAYOUT_KIND_FALLBACK):
-            self = .fallbackLayout
-        default:
-            preconditionFailure("Unknown window decision layout kind \(windowDecisionKernelRawValue)")
-        }
-    }
-}
-
-private extension Optional where Wrapped == WindowDecisionDeferredReason {
-    init(windowDecisionKernelRawValue: UInt32) {
-        switch windowDecisionKernelRawValue {
-        case UInt32(OMNIWM_WINDOW_DECISION_DEFERRED_REASON_NONE):
-            self = nil
-        case UInt32(OMNIWM_WINDOW_DECISION_DEFERRED_REASON_ATTRIBUTE_FETCH_FAILED):
-            self = .attributeFetchFailed
-        case UInt32(OMNIWM_WINDOW_DECISION_DEFERRED_REASON_REQUIRED_TITLE_MISSING):
-            self = .requiredTitleMissing
-        default:
-            preconditionFailure("Unknown window decision deferred reason \(windowDecisionKernelRawValue)")
         }
     }
 }
@@ -218,6 +158,108 @@ private let orderedWindowDecisionHeuristicReasons: [AXWindowHeuristicReason] = [
     .fixedSizeWindow,
 ]
 
+private func decodeWindowDecisionBuiltInSourceKind(
+    _ kernelRawValue: UInt32
+) -> KernelResult<WindowDecisionBuiltInSourceKind?> {
+    switch kernelRawValue {
+    case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_NONE):
+        return .success(nil)
+    case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_DEFAULT_FLOATING_APP):
+        return .success(.defaultFloatingApp)
+    case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_BROWSER_PICTURE_IN_PICTURE):
+        return .success(.browserPictureInPicture)
+    case UInt32(OMNIWM_WINDOW_DECISION_BUILT_IN_SOURCE_CLEAN_SHOT_RECORDING_OVERLAY):
+        return .success(.cleanShotRecordingOverlay)
+    default:
+        return .failure(
+            KernelError.abiMismatch(
+                label: "WindowDecisionBuiltInSourceKind",
+                rawValue: kernelRawValue
+            )
+        )
+    }
+}
+
+private func decodeWindowDecisionSourceKind(
+    _ kernelRawValue: UInt32
+) -> KernelResult<WindowDecisionKernelSourceKind> {
+    switch kernelRawValue {
+    case UInt32(OMNIWM_WINDOW_DECISION_SOURCE_USER_RULE):
+        return .success(.userRule)
+    case UInt32(OMNIWM_WINDOW_DECISION_SOURCE_BUILT_IN_RULE):
+        return .success(.builtInRule)
+    case UInt32(OMNIWM_WINDOW_DECISION_SOURCE_HEURISTIC):
+        return .success(.heuristic)
+    default:
+        return .failure(
+            KernelError.abiMismatch(
+                label: "WindowDecisionKernelSourceKind",
+                rawValue: kernelRawValue
+            )
+        )
+    }
+}
+
+private func decodeWindowDecisionDisposition(
+    _ windowDecisionKernelRawValue: UInt32
+) -> KernelResult<WindowDecisionDisposition> {
+    switch windowDecisionKernelRawValue {
+    case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_MANAGED):
+        return .success(.managed)
+    case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_FLOATING):
+        return .success(.floating)
+    case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_UNMANAGED):
+        return .success(.unmanaged)
+    case UInt32(OMNIWM_WINDOW_DECISION_DISPOSITION_UNDECIDED):
+        return .success(.undecided)
+    default:
+        return .failure(
+            KernelError.abiMismatch(
+                label: "WindowDecisionDisposition",
+                rawValue: windowDecisionKernelRawValue
+            )
+        )
+    }
+}
+
+private func decodeWindowDecisionLayoutKind(
+    _ windowDecisionKernelRawValue: UInt32
+) -> KernelResult<WindowDecisionLayoutKind> {
+    switch windowDecisionKernelRawValue {
+    case UInt32(OMNIWM_WINDOW_DECISION_LAYOUT_KIND_EXPLICIT):
+        return .success(.explicitLayout)
+    case UInt32(OMNIWM_WINDOW_DECISION_LAYOUT_KIND_FALLBACK):
+        return .success(.fallbackLayout)
+    default:
+        return .failure(
+            KernelError.abiMismatch(
+                label: "WindowDecisionLayoutKind",
+                rawValue: windowDecisionKernelRawValue
+            )
+        )
+    }
+}
+
+private func decodeWindowDecisionDeferredReason(
+    _ windowDecisionKernelRawValue: UInt32
+) -> KernelResult<WindowDecisionDeferredReason?> {
+    switch windowDecisionKernelRawValue {
+    case UInt32(OMNIWM_WINDOW_DECISION_DEFERRED_REASON_NONE):
+        return .success(nil)
+    case UInt32(OMNIWM_WINDOW_DECISION_DEFERRED_REASON_ATTRIBUTE_FETCH_FAILED):
+        return .success(.attributeFetchFailed)
+    case UInt32(OMNIWM_WINDOW_DECISION_DEFERRED_REASON_REQUIRED_TITLE_MISSING):
+        return .success(.requiredTitleMissing)
+    default:
+        return .failure(
+            KernelError.abiMismatch(
+                label: "WindowDecisionDeferredReason",
+                rawValue: windowDecisionKernelRawValue
+            )
+        )
+    }
+}
+
 func solveWindowDecisionKernel(
     matchedUserAction: WindowRuleLayoutAction?,
     matchedBuiltInAction: WindowRuleLayoutAction?,
@@ -226,7 +268,7 @@ func solveWindowDecisionKernel(
     facts: AXWindowFacts,
     titleRequired: Bool,
     appFullscreen: Bool
-) -> WindowDecisionKernelOutput {
+) -> KernelResult<WindowDecisionKernelOutput> {
     var input = omniwm_window_decision_input(
         matched_user_rule: omniwm_window_decision_rule_summary(
             action: matchedUserAction?.windowDecisionKernelRawValue
@@ -261,19 +303,58 @@ func solveWindowDecisionKernel(
         }
     }
 
-    precondition(
-        status == OMNIWM_KERNELS_STATUS_OK,
-        "omniwm_window_decision_solve returned \(status)"
-    )
+    if let error = KernelError.fromStatus(status, operation: "omniwm_window_decision_solve") {
+        return .failure(error)
+    }
 
-    return WindowDecisionKernelOutput(
-        disposition: WindowDecisionDisposition(windowDecisionKernelRawValue: output.disposition),
-        sourceKind: WindowDecisionKernelSourceKind(kernelRawValue: output.source_kind),
-        builtInSourceKind: WindowDecisionBuiltInSourceKind(kernelRawValue: output.built_in_source_kind),
-        layoutDecisionKind: WindowDecisionLayoutKind(windowDecisionKernelRawValue: output.layout_kind),
-        deferredReason: Optional(windowDecisionKernelRawValue: output.deferred_reason),
+    let disposition: WindowDecisionDisposition
+    switch decodeWindowDecisionDisposition(output.disposition) {
+    case .success(let value):
+        disposition = value
+    case .failure(let error):
+        return .failure(error)
+    }
+
+    let sourceKind: WindowDecisionKernelSourceKind
+    switch decodeWindowDecisionSourceKind(output.source_kind) {
+    case .success(let value):
+        sourceKind = value
+    case .failure(let error):
+        return .failure(error)
+    }
+
+    let builtInSourceKind: WindowDecisionBuiltInSourceKind?
+    switch decodeWindowDecisionBuiltInSourceKind(output.built_in_source_kind) {
+    case .success(let value):
+        builtInSourceKind = value
+    case .failure(let error):
+        return .failure(error)
+    }
+
+    let layoutDecisionKind: WindowDecisionLayoutKind
+    switch decodeWindowDecisionLayoutKind(output.layout_kind) {
+    case .success(let value):
+        layoutDecisionKind = value
+    case .failure(let error):
+        return .failure(error)
+    }
+
+    let deferredReason: WindowDecisionDeferredReason?
+    switch decodeWindowDecisionDeferredReason(output.deferred_reason) {
+    case .success(let value):
+        deferredReason = value
+    case .failure(let error):
+        return .failure(error)
+    }
+
+    return .success(WindowDecisionKernelOutput(
+        disposition: disposition,
+        sourceKind: sourceKind,
+        builtInSourceKind: builtInSourceKind,
+        layoutDecisionKind: layoutDecisionKind,
+        deferredReason: deferredReason,
         heuristicReasons: orderedWindowDecisionHeuristicReasons.filter {
             output.heuristic_reason_bits & $0.windowDecisionKernelBit != 0
         }
-    )
+    ))
 }

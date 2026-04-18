@@ -13,6 +13,7 @@ struct KernelImportAllowlistTests {
     /// out of `Sources/OmniWM/Core/Kernel/`.
     static let allowedImports: Set<String> = [
         // Pre-existing bridges, still in their original locations:
+        "Sources/OmniWM/Core/Kernel/KernelResult.swift",
         "Sources/OmniWM/Core/Kernel/NiriTopologyKernel.swift",
         "Sources/OmniWM/Core/Kernel/WindowDecisionKernel.swift",
         "Sources/OmniWM/Core/Kernel/WorkspaceNavigationKernel.swift",
