@@ -92,8 +92,12 @@ struct CommandPaletteEnvironment {
             box.action()
         }
     }
-    var focusSpecificWindow: (pid_t, UInt32, AXUIElement) -> Void = WMPlatform.shared.focusSpecificWindow
-    var performMenuAction: (AXUIElement) -> Void = WMPlatform.shared.performMenuAction
+    var focusSpecificWindow: @MainActor (pid_t, UInt32, AXUIElement) -> Void = { pid, windowId, element in
+        Platform.focusSpecificWindow(pid, windowId, element)
+    }
+    var performMenuAction: @MainActor (AXUIElement) -> Void = { element in
+        Platform.performMenuAction(element)
+    }
 }
 
 @MainActor

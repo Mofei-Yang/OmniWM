@@ -60,7 +60,7 @@ private func makeCoordinationSnapshot(
         postLayoutAttachmentIds: [99]
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(activeRefresh: activeRefresh),
         event: .refreshRequested(
             .init(
@@ -101,7 +101,7 @@ private func makeCoordinationSnapshot(
         reason: .workspaceTransition
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             activeRefresh: cancelledRefresh,
             pendingRefresh: queuedRefresh
@@ -138,7 +138,7 @@ private func makeCoordinationSnapshot(
         workspaceId: firstWorkspace
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 9,
             activeManagedRequest: activeRequest,
@@ -192,7 +192,7 @@ private func makeCoordinationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             activeManagedRequest: activeRequest,
@@ -241,7 +241,7 @@ private func makeCoordinationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             activeManagedRequest: activeRequest,
@@ -281,7 +281,7 @@ private func makeCoordinationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             activeManagedRequest: activeRequest,
@@ -321,7 +321,7 @@ private func makeCoordinationSnapshot(
     let pendingToken = WindowToken(pid: 88, windowId: 3)
     let ownedPID = pid_t(99)
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 8,
             pendingFocusedToken: pendingToken,
@@ -360,7 +360,7 @@ private func makeCoordinationSnapshot(
         workspaceId: workspaceId
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 13,
             activeManagedRequest: activeRequest,
@@ -411,7 +411,7 @@ private func makeCoordinationSnapshot(
     )
 
     for cycleId in 2...8 {
-        let result = CoordinationCore.step(
+        let result = Runtime.coordinate(
             snapshot: snapshot,
             event: .refreshRequested(
                 .init(
@@ -455,7 +455,7 @@ private func makeCoordinationSnapshot(
         affectedWorkspaceIds: [secondWorkspaceId]
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             activeRefresh: activeRefresh,
             pendingRefresh: pendingRefresh
@@ -499,7 +499,7 @@ private func makeCoordinationSnapshot(
         affectedWorkspaceIds: [workspaceId]
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             activeRefresh: activeRefresh,
             pendingRefresh: pendingRefresh
@@ -545,7 +545,7 @@ private func makeCoordinationSnapshot(
             niriOldFrames: [:],
             shouldRecoverFocus: true
         )
-        let result = CoordinationCore.step(
+        let result = Runtime.coordinate(
             snapshot: snapshot,
             event: .refreshRequested(
                 .init(
@@ -579,7 +579,7 @@ private func makeCoordinationSnapshot(
         workspaceId: workspaceId
     )
 
-    let firstResult = CoordinationCore.step(
+    let firstResult = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 4,
             activeManagedRequest: activeRequest,
@@ -606,7 +606,7 @@ private func makeCoordinationSnapshot(
             == .workspaceDidActivateApplication
     )
 
-    let secondResult = CoordinationCore.step(
+    let secondResult = Runtime.coordinate(
         snapshot: firstResult.snapshot,
         event: .activationObserved(
             .init(
@@ -641,7 +641,7 @@ private func makeCoordinationSnapshot(
         lastActivationSource: .workspaceDidActivateApplication
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 10,
             activeManagedRequest: activeRequest,
@@ -693,7 +693,7 @@ private func makeCoordinationSnapshot(
         lastActivationSource: .focusedWindowChanged
     )
 
-    let result = CoordinationCore.step(
+    let result = Runtime.coordinate(
         snapshot: makeCoordinationSnapshot(
             nextManagedRequestId: 11,
             activeManagedRequest: activeRequest,

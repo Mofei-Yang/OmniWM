@@ -246,7 +246,7 @@ final class AXManager {
             return .init(windows: await currentWindowsAsyncOverride(), failedPIDs: [])
         }
 
-        let visibleWindows = WMPlatform.shared.visibleWindowInfo()
+        let visibleWindows = Platform.visibleWindowInfo()
         let pidsWithWindows = Set(visibleWindows.map { $0.pid })
 
         let apps = NSWorkspace.shared.runningApplications.filter {
@@ -500,7 +500,7 @@ final class AXManager {
         let batchPositions = filtered.map {
             (windowId: UInt32($0.windowId), origin: ScreenCoordinateSpace.toWindowServer(point: $0.origin))
         }
-        WMPlatform.shared.batchMoveWindows(batchPositions)
+        Platform.batchMoveWindows(batchPositions)
     }
 
     private func withTimeoutOrNil<T: Sendable>(

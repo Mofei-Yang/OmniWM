@@ -52,6 +52,58 @@ struct Monitor: Identifiable, Hashable {
     }
 }
 
+struct OutputId: Hashable, Codable {
+    let displayId: CGDirectDisplayID
+    let name: String
+
+    init(displayId: CGDirectDisplayID, name: String) {
+        self.displayId = displayId
+        self.name = name
+    }
+
+    init(from monitor: Monitor) {
+        displayId = monitor.displayId
+        name = monitor.name
+    }
+
+    func resolveMonitor(in monitors: [Monitor]) -> Monitor? {
+        monitors.first(where: { $0.displayId == displayId })
+    }
+
+    func rebound(in monitors: [Monitor]) -> OutputId? {
+        if let exact = resolveMonitor(in: monitors) {
+            return OutputId(from: exact)
+        }
+
+        let nameMatches = monitors.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        guard nameMatches.count == 1 else { return nil }
+        return OutputId(from: nameMatches[0])
+    }
+}
+
+enum MonitorDescription: Equatable {
+    case main
+    case secondary
+    case output(OutputId)
+
+    func resolveMonitor(sortedMonitors: [Monitor]) -> Monitor? {
+        switch self {
+        case .main:
+            return sortedMonitors.first(where: { $0.isMain }) ?? sortedMonitors.first
+        case .secondary:
+            guard sortedMonitors.count >= 2 else { return nil }
+            if let main = sortedMonitors.first(where: { $0.isMain }),
+               let secondary = sortedMonitors.first(where: { $0.id != main.id })
+            {
+                return secondary
+            }
+            return sortedMonitors.dropFirst().first
+        case let .output(output):
+            return output.resolveMonitor(in: sortedMonitors)
+        }
+    }
+}
+
 extension Monitor {
     enum Orientation: String, Codable, Equatable {
         case horizontal

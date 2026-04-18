@@ -1558,7 +1558,7 @@ import QuartzCore
             return
         }
 
-        let result = CoordinationCore.step(
+        let result = Runtime.coordinate(
             snapshot: controller?.stateSnapshot(refresh: refreshPlanningSnapshot())
                 ?? .init(refresh: refreshPlanningSnapshot(), focus: .init(
                     focusedToken: nil,
@@ -1686,7 +1686,7 @@ import QuartzCore
             return
         }
 
-        let result = CoordinationCore.step(
+        let result = Runtime.coordinate(
             snapshot: controller?.stateSnapshot(refresh: refreshPlanningSnapshot())
                 ?? .init(refresh: refreshPlanningSnapshot(), focus: .init(
                     focusedToken: nil,

@@ -21,6 +21,7 @@ check_pattern() {
 check_pattern '@_silgen_name' 'Private API symbol declarations leaked outside Core/Platform:'
 check_pattern 'import SkyLight' 'SkyLight imports leaked outside Core/Platform:'
 check_pattern 'SkyLight.shared' 'SkyLight singleton usage leaked outside Core/Platform:'
+check_pattern 'WMPlatform.shared' 'WMPlatform singleton usage leaked outside Core/Platform:'
 check_pattern '_AXUIElementGetWindow' 'Raw AX window FFI leaked outside Core/Platform:'
 check_pattern '_SLPSSetFrontProcessWithOptions' 'Private process focus FFI leaked outside Core/Platform:'
 check_pattern 'SLPSPostEventRecordTo' 'Private event posting FFI leaked outside Core/Platform:'

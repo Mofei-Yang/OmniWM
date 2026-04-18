@@ -441,7 +441,7 @@ final class Runtime {
     ) -> CoordinationResult {
         synchronizeStateSnapshot()
 
-        let result = CoordinationCore.step(
+        let result = Self.coordinate(
             snapshot: snapshot.state,
             event: event
         )
@@ -516,6 +516,32 @@ final class Runtime {
         recentTrace.append(record)
         if recentTrace.count > Self.maxTraceRecordCount {
             recentTrace.removeFirst(recentTrace.count - Self.maxTraceRecordCount)
+        }
+    }
+
+    nonisolated static func coordinate(
+        snapshot: WMSnapshot,
+        event: WMEvent
+    ) -> CoordinationResult {
+        switch event {
+        case .refreshRequested, .refreshCompleted:
+            let result = RefreshPlanner.step(snapshot: snapshot, event: event)
+            return CoordinationResult(
+                snapshot: result.snapshot,
+                decision: result.decision,
+                plan: result.plan
+            )
+
+        case .focusRequested, .activationObserved:
+            let result = FocusPlanner.step(snapshot: snapshot, event: event)
+            return CoordinationResult(
+                snapshot: result.snapshot,
+                decision: result.decision,
+                plan: result.plan
+            )
+
+        default:
+            preconditionFailure("Runtime.coordinate received non-coordination event \(event)")
         }
     }
 }
@@ -616,34 +642,6 @@ final class RuntimeEffectExecutor: EffectExecutor {
 
         case .refresh:
             controller.layoutRefreshController.applyRuntimeRefreshResult(result)
-        }
-    }
-}
-
-enum CoordinationCore {
-    static func step(
-        snapshot: WMSnapshot,
-        event: WMEvent
-    ) -> CoordinationResult {
-        switch event {
-        case .refreshRequested, .refreshCompleted:
-            let result = RefreshPlanner.step(snapshot: snapshot, event: event)
-            return CoordinationResult(
-                snapshot: result.snapshot,
-                decision: result.decision,
-                plan: result.plan
-            )
-
-        case .focusRequested, .activationObserved:
-            let result = FocusPlanner.step(snapshot: snapshot, event: event)
-            return CoordinationResult(
-                snapshot: result.snapshot,
-                decision: result.decision,
-                plan: result.plan
-            )
-
-        default:
-            preconditionFailure("CoordinationCore received non-coordination event \(event)")
         }
     }
 }

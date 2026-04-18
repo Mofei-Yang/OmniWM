@@ -88,10 +88,12 @@ final class TabbedColumnOverlayManager {
 
     var onSelect: SelectionHandler?
 
-    private let orderWindowRelative: (UInt32, UInt32, SkyLightWindowOrder) -> Void
+    private let orderWindowRelative: @MainActor (UInt32, UInt32, SkyLightWindowOrder) -> Void
     private var overlays: [NodeId: TabbedColumnOverlayWindow] = [:]
 
-    init(orderWindowRelative: @escaping (UInt32, UInt32, SkyLightWindowOrder) -> Void = WMPlatform.shared.orderWindowRelative) {
+    init(
+        orderWindowRelative: @escaping @MainActor (UInt32, UInt32, SkyLightWindowOrder) -> Void = Platform.orderWindowRelative
+    ) {
         self.orderWindowRelative = orderWindowRelative
     }
 

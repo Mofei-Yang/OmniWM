@@ -11,6 +11,10 @@ struct PlatformBoundaryAllowlistTests {
         "Sources/OmniWM/Core/Platform/PrivateAPIFFI.swift",
     ]
 
+    static let allowedWMPlatformSharedUsages: Set<String> = [
+        "Sources/OmniWM/Core/Platform/WMPlatform.swift",
+    ]
+
     static let allowedAXWindowFFIUsages: Set<String> = [
         "Sources/OmniWM/Core/Platform/Accessibility/AppAXContext.swift",
         "Sources/OmniWM/Core/Platform/Accessibility/AXWindow.swift",
@@ -32,6 +36,15 @@ struct PlatformBoundaryAllowlistTests {
             needle: "@_silgen_name",
             allowedFiles: Self.allowedSilgenNameDeclarations,
             failurePrefix: "Files outside the platform boundary declare raw private API symbols."
+        )
+    }
+
+    @Test
+    func wmPlatformSingletonUsageIsAllowlisted() throws {
+        try assertAllowlistedUsage(
+            needle: "WMPlatform.shared",
+            allowedFiles: Self.allowedWMPlatformSharedUsages,
+            failurePrefix: "Files outside the platform boundary use `WMPlatform.shared`."
         )
     }
 

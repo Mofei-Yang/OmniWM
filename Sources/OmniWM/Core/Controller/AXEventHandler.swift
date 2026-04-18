@@ -939,7 +939,7 @@ final class AXEventHandler: CGSEventDelegate {
         match: ManagedActivationMatch
     ) -> CoordinationResult? {
         guard let controller else { return nil }
-        return CoordinationCore.step(
+        return Runtime.coordinate(
             snapshot: controller.stateSnapshot(
                 refresh: .init(
                     activeRefresh: controller.layoutRefreshController.layoutState.activeRefresh,

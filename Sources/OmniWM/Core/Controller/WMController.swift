@@ -8,7 +8,7 @@ struct WindowFocusOperations {
     let focusSpecificWindow: (pid_t, UInt32, AXUIElement) -> Void
     let raiseWindow: (AXUIElement) -> Void
 
-    static let shared = WMPlatform.shared.windowFocusOperations
+    static let shared = Platform.windowFocusOperations
 }
 
 enum NativeFullscreenRestoreSeedPath: String {
@@ -2376,7 +2376,7 @@ extension WMController {
             return
         }
 
-        let result = CoordinationCore.step(
+        let result = Runtime.coordinate(
             snapshot: stateSnapshot(
                 refresh: .init(
                     activeRefresh: layoutRefreshController.layoutState.activeRefresh,

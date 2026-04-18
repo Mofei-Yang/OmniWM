@@ -142,3 +142,90 @@ struct WMPlatform {
         )
     }
 }
+
+@MainActor
+enum Platform {
+    private static let live = WMPlatform.shared
+
+    static var windowFocusOperations: WindowFocusOperations {
+        live.windowFocusOperations
+    }
+
+    static var focusSpecificWindow: (pid_t, UInt32, AXUIElement) -> Void {
+        live.focusSpecificWindow
+    }
+
+    static var performMenuAction: (AXUIElement) -> Void {
+        live.performMenuAction
+    }
+
+    static func windowTitle(_ windowId: UInt32) -> String? {
+        live.windowTitle(windowId)
+    }
+
+    static func windowBounds(_ windowId: UInt32) -> CGRect? {
+        live.windowBounds(windowId)
+    }
+
+    static func visibleWindowInfo() -> [WindowServerInfo] {
+        live.visibleWindowInfo()
+    }
+
+    static func batchMoveWindows(_ positions: [(windowId: UInt32, origin: CGPoint)]) {
+        live.batchMoveWindows(positions)
+    }
+
+    static func orderWindowRelative(
+        _ windowId: UInt32,
+        _ relativeTo: UInt32,
+        _ order: SkyLightWindowOrder
+    ) {
+        live.orderWindowRelative(windowId, relativeTo, order)
+    }
+
+    static func createBorderWindow(_ frame: CGRect) -> UInt32 {
+        live.createBorderWindow(frame)
+    }
+
+    static func releaseBorderWindow(_ windowId: UInt32) {
+        live.releaseBorderWindow(windowId)
+    }
+
+    static func configureBorderWindow(_ windowId: UInt32, _ resolution: Float, _ opaque: Bool) {
+        live.configureBorderWindow(windowId, resolution, opaque)
+    }
+
+    static func setWindowTags(_ windowId: UInt32, _ tags: UInt64) {
+        live.setWindowTags(windowId, tags)
+    }
+
+    static func createWindowContext(_ windowId: UInt32) -> CGContext? {
+        live.createWindowContext(windowId)
+    }
+
+    static func setWindowShape(_ windowId: UInt32, _ frame: CGRect) {
+        live.setWindowShape(windowId, frame)
+    }
+
+    static func flushWindow(_ windowId: UInt32) {
+        live.flushWindow(windowId)
+    }
+
+    static func transactionMove(_ windowId: UInt32, _ origin: CGPoint) {
+        live.transactionMove(windowId, origin)
+    }
+
+    static func transactionMoveAndOrder(
+        _ windowId: UInt32,
+        _ origin: CGPoint,
+        _ level: Int32,
+        _ relativeTo: UInt32,
+        _ order: SkyLightWindowOrder
+    ) {
+        live.transactionMoveAndOrder(windowId, origin, level, relativeTo, order)
+    }
+
+    static func transactionHide(_ windowId: UInt32) {
+        live.transactionHide(windowId)
+    }
+}

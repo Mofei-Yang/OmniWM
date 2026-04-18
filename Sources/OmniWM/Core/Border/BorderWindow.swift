@@ -42,16 +42,16 @@ final class BorderWindow {
         var backingScaleForFrame: @MainActor (CGRect) -> CGFloat
 
         static let shared = Self(
-            createBorderWindow: { WMPlatform.shared.createBorderWindow($0) },
-            releaseBorderWindow: { WMPlatform.shared.releaseBorderWindow($0) },
-            configureWindow: { WMPlatform.shared.configureBorderWindow($0, $1, $2) },
-            setWindowTags: { WMPlatform.shared.setWindowTags($0, $1) },
-            createWindowContext: { WMPlatform.shared.createWindowContext($0) },
-            setWindowShape: { WMPlatform.shared.setWindowShape($0, $1) },
-            flushWindow: { WMPlatform.shared.flushWindow($0) },
-            transactionMove: { WMPlatform.shared.transactionMove($0, $1) },
-            transactionMoveAndOrder: { WMPlatform.shared.transactionMoveAndOrder($0, $1, $2, $3, $4) },
-            transactionHide: { WMPlatform.shared.transactionHide($0) },
+            createBorderWindow: Platform.createBorderWindow,
+            releaseBorderWindow: Platform.releaseBorderWindow,
+            configureWindow: Platform.configureBorderWindow,
+            setWindowTags: Platform.setWindowTags,
+            createWindowContext: Platform.createWindowContext,
+            setWindowShape: Platform.setWindowShape,
+            flushWindow: Platform.flushWindow,
+            transactionMove: Platform.transactionMove,
+            transactionMoveAndOrder: Platform.transactionMoveAndOrder,
+            transactionHide: Platform.transactionHide,
             backingScaleForFrame: { targetFrame in
                 let targetScreen = NSScreen.screens.first(where: {
                     $0.frame.contains(targetFrame.center)
