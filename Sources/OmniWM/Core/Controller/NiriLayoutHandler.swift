@@ -1004,7 +1004,7 @@ private func hasPendingNiriAnimationWork(
         alwaysCenterSingleColumn: Bool? = nil,
         singleWindowAspectRatio: SingleWindowAspectRatio? = nil,
         columnWidthPresets: [Double]? = nil,
-        defaultColumnWidth: Double?? = nil
+        defaultColumnWidth: DefaultColumnWidthUpdate<Double> = .unchanged
     ) {
         guard let controller else { return }
         controller.niriEngine?.updateConfiguration(
@@ -1015,7 +1015,7 @@ private func hasPendingNiriAnimationWork(
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
             singleWindowAspectRatio: singleWindowAspectRatio,
             presetColumnWidths: columnWidthPresets?.map { .proportion($0) },
-            defaultColumnWidth: defaultColumnWidth.map { $0.map { CGFloat($0) } }
+            defaultColumnWidth: defaultColumnWidth.map { CGFloat($0) }
         )
         refreshResolvedMonitorSettings()
         controller.layoutRefreshController.requestRelayout(reason: .layoutConfigChanged)

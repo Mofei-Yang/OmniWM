@@ -395,7 +395,7 @@ final class WMController {
             alwaysCenterSingleColumn: configuration.layout.niri.alwaysCenterSingleColumn,
             singleWindowAspectRatio: configuration.layout.niri.singleWindowAspectRatio,
             columnWidthPresets: configuration.layout.niri.columnWidthPresets,
-            defaultColumnWidth: configuration.layout.niri.defaultColumnWidth
+            defaultColumnWidth: .init(optionalWidth: configuration.layout.niri.defaultColumnWidth)
         )
 
         if dwindleEngine == nil {
@@ -1010,7 +1010,7 @@ final class WMController {
         alwaysCenterSingleColumn: Bool? = nil,
         singleWindowAspectRatio: SingleWindowAspectRatio? = nil,
         columnWidthPresets: [Double]? = nil,
-        defaultColumnWidth: Double?? = nil
+        defaultColumnWidth: DefaultColumnWidthUpdate<Double> = .unchanged
     ) {
         niriLayoutHandler.updateNiriConfig(
             maxWindowsPerColumn: maxWindowsPerColumn,

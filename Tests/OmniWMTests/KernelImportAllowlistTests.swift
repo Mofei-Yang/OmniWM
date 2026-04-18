@@ -20,7 +20,7 @@ struct KernelImportAllowlistTests {
         "Sources/OmniWM/Core/Layout/Dwindle/DwindleLayoutEngine.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriConstraintSolver.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriLayout.swift",
-        "Sources/OmniWM/Core/Layout/Niri/ViewportState+Geometry.swift",
+        "Sources/OmniWM/Core/Layout/Niri/NiriViewport.swift",
         "Sources/OmniWM/Core/Monitor/MonitorRestoreAssignments.swift",
         "Sources/OmniWM/Core/Overview/OverviewLayoutCalculator.swift",
         "Sources/OmniWM/Core/Engine/RestorePlanner.swift",

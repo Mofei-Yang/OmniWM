@@ -322,7 +322,7 @@ private func makeCenteredCrossMonitorFixture(
     controller.updateNiriConfig(
         maxVisibleColumns: 2,
         centerFocusedColumn: .always,
-        defaultColumnWidth: .some(0.85)
+        defaultColumnWidth: .fixed(0.85)
     )
     await waitForLayoutPlanRefreshWork(on: controller)
 
@@ -4875,6 +4875,20 @@ private func makeCenteredCrossMonitorFixture(
             #expect(column.width == .proportion(expectedWidth))
             #expect(column.presetWidthIdx == nil)
         }
+    }
+
+    @Test func updateConfigurationDefaultColumnWidthUsesExplicitTriState() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 1, maxVisibleColumns: 3)
+        engine.defaultColumnWidth = 0.6
+
+        engine.updateConfiguration(defaultColumnWidth: .unchanged)
+        #expect(engine.defaultColumnWidth == 0.6)
+
+        engine.updateConfiguration(defaultColumnWidth: .automatic)
+        #expect(engine.defaultColumnWidth == nil)
+
+        engine.updateConfiguration(defaultColumnWidth: .fixed(0.85))
+        #expect(engine.defaultColumnWidth == 0.85)
     }
 
     @Test func balanceSizesUsesExplicitDefaultWidthWithoutPresetMatch() {

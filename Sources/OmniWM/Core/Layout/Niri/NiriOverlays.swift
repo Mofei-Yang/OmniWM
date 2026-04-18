@@ -1,5 +1,63 @@
 import AppKit
 
+// MARK: - Swap Target
+
+
+@MainActor
+final class SwapTargetOverlay {
+    private var overlayWindow: NSPanel?
+
+    func show(at frame: CGRect) {
+        if overlayWindow == nil {
+            overlayWindow = createOverlayWindow()
+        }
+
+        guard let window = overlayWindow else { return }
+        window.setFrame(frame, display: false)
+        window.contentView?.frame = CGRect(origin: .zero, size: frame.size)
+        window.orderFront(nil)
+    }
+
+    func hide() {
+        overlayWindow?.orderOut(nil)
+    }
+
+    private func createOverlayWindow() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.isFloatingPanel = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .floating
+        panel.ignoresMouseEvents = true
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = false
+        panel.isReleasedWhenClosed = false
+
+        let contentView = NSView(frame: .zero)
+        contentView.wantsLayer = true
+        contentView.layer?.cornerRadius = 9
+        contentView.layer?.masksToBounds = true
+        contentView.layer?.backgroundColor = NSColor(red: 0, green: 120.0 / 255.0, blue: 1.0, alpha: 0.25).cgColor
+        panel.contentView = contentView
+
+        return panel
+    }
+}
+
+
+// MARK: - Tabbed Column
+
+
 private enum TabbedOverlayMetrics {
     static let barThickness: CGFloat = 10
     static let spacing: CGFloat = 2
@@ -40,10 +98,11 @@ final class TabbedColumnOverlayManager {
     func updateOverlays(_ infos: [TabbedColumnOverlayInfo]) {
         let filtered = infos.filter { $0.tabCount > 0 }
         let desiredIds = Set(filtered.map(\.columnId))
+        let staleIds = overlays.keys.filter { !desiredIds.contains($0) }
 
-        for (columnId, overlay) in overlays where !desiredIds.contains(columnId) {
+        for columnId in staleIds {
+            guard let overlay = overlays.removeValue(forKey: columnId) else { continue }
             overlay.close()
-            overlays.removeValue(forKey: columnId)
         }
 
         for info in filtered {

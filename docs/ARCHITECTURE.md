@@ -572,15 +572,14 @@ The Niri directory is the largest subsystem. Files are organized by responsibili
 
 | Category | Files | Purpose |
 |----------|-------|---------|
-| Core engine | `NiriLayoutEngine.swift`, `NiriNode.swift`, `NiriLayout.swift` | Engine class, node tree (Root/Container/Window), pixel-rounding utilities |
+| Core engine | `NiriEngine.swift`, `NiriNode.swift`, `NiriLayout.swift` | Engine class, node tree (Root/Container/Window), pixel-rounding utilities |
 | Navigation/topology | `NiriNavigation.swift` | Thin Swift boundary for workspace-local focus, insertion, removal, movement, and viewport planning. (Note: `NiriTopologyKernel.swift` relocated to `Core/Kernel/` in M2.3.) |
 | Constraint solving | `NiriConstraintSolver.swift` | `NiriAxisSolver` distributes space among windows respecting min/max size constraints |
 | Monitor model | `NiriMonitor.swift` | Per-monitor state: geometry, workspace roots, workspace switch animation |
-| Viewport | `ViewportState.swift`, `+Animation`, `+ColumnTransitions`, `+Geometry`, `+Gestures` | Horizontal scroll offset, spring physics, gesture tracking |
-| Interactive move | `InteractiveMove.swift`, `+InteractiveMove`, `DragGhostController.swift`, `DragGhostWindow.swift`, `SwapTargetOverlay.swift` | Mouse-driven window dragging with ghost thumbnail and swap target indicators |
-| Interactive resize | `InteractiveResize.swift`, `+InteractiveResize` | Mouse-driven edge resizing with `ResizeEdge` option set |
-| Engine extensions | `+Animation`, `+ColumnOps`, `+Monitors`, `+Sizing`, `+TabbedMode`, `+WindowOps`, `+Windows`, `+WorkspaceOps` | Modular engine operations (see [6.4](#64-modifying-layout-behavior)) |
-| UI overlays | `TabbedColumnOverlay.swift` | Visual indicator for tabbed columns |
+| Viewport | `NiriViewport.swift` | Horizontal scroll offset, spring physics, gesture tracking |
+| Interactive move/resize | `NiriInteractive.swift`, `NiriDragGhost.swift` | Mouse-driven window dragging and edge resizing, plus ghost thumbnail support |
+| Engine operations | `NiriEngine.swift` | Consolidated engine operations for animation, column/workspace updates, monitor logic, sizing, window ops, and tabbed mode |
+| UI overlays | `NiriOverlays.swift` | Swap target highlight and tabbed-column indicators |
 | Overview bridge | `NiriOverviewSnapshot.swift` | Produces layout snapshots for the Overview renderer |
 
 **Interactive Move/Resize:** Users can drag windows between columns using Option+Shift+click. `InteractiveMove` tracks the drag state (origin column, hover target). `DragGhostController` captures a `ScreenCaptureKit` thumbnail of the dragged window and displays it as a semi-transparent ghost. `SwapTargetOverlay` highlights the drop target. On release, the engine performs a column insertion or window swap. Interactive resize (`InteractiveResize`) allows edge-dragging to change column widths or window heights.
@@ -1037,17 +1036,10 @@ Actions can carry multiple persisted bindings, so any extra default shortcuts sh
 
 1. **Identify the engine**: Niri code is in `Sources/OmniWM/Core/Layout/Niri/`, Dwindle in `Sources/OmniWM/Core/Layout/Dwindle/`.
 
-2. **Find the relevant extension**: Niri splits logic across extensions:
-   - `NiriLayoutEngine+Animation.swift` — animation tick and spring updates
-   - `NiriLayoutEngine+ColumnOps.swift` — column add/remove/reorder
-   - `NiriLayoutEngine+InteractiveMove.swift` — mouse-driven window moving
-   - `NiriLayoutEngine+InteractiveResize.swift` — mouse-driven edge resizing
-   - `NiriLayoutEngine+Monitors.swift` — multi-monitor layout
-   - `NiriLayoutEngine+Sizing.swift` — width/height calculation
-   - `NiriLayoutEngine+TabbedMode.swift` — tabbed column logic
-   - `NiriLayoutEngine+WindowOps.swift` — window insert/remove/reorder
-   - `NiriLayoutEngine+Windows.swift` — window query and lookup
-   - `NiriLayoutEngine+WorkspaceOps.swift` — workspace-level operations
+2. **Find the relevant section**: Niri is now consolidated into a handful of files:
+   - `NiriEngine.swift` — animation tick and spring updates, column add/remove/reorder, mouse-driven move/resize behavior, multi-monitor layout, sizing, tabbed-column logic, window insert/remove/reorder, window lookup, and workspace-level operations
+   - `NiriViewport.swift` — horizontal scroll offset, spring physics, gesture tracking, and geometry projection
+   - `NiriInteractive.swift` / `NiriDragGhost.swift` / `NiriOverlays.swift` — drag state, ghost-thumbnail capture, swap targets, and tabbed-column overlays
 
    Focus/navigation and workspace-local topology planning are flattened through `NiriTopologyKernel.swift` into `omniwm_niri_topology_plan`. Constraint solving lives in `NiriConstraintSolver.swift`.
 

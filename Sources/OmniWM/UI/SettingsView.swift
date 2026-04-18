@@ -312,14 +312,14 @@ private struct GlobalNiriSettingsSection: View {
             get: { settings.niriDefaultColumnWidth == nil },
             set: { useAuto in
                 settings.niriDefaultColumnWidth = useAuto ? nil : (settings.niriDefaultColumnWidth ?? 0.5)
-                controller.updateNiriConfig(defaultColumnWidth: settings.niriDefaultColumnWidth)
+                controller.updateNiriConfig(defaultColumnWidth: .init(optionalWidth: settings.niriDefaultColumnWidth))
             }
         )
         let defaultColumnWidthPercent = Binding(
             get: { Int((settings.niriDefaultColumnWidth ?? 0.5) * 100) },
             set: { newPercent in
                 settings.niriDefaultColumnWidth = Double(min(100, max(5, newPercent))) / 100.0
-                controller.updateNiriConfig(defaultColumnWidth: settings.niriDefaultColumnWidth)
+                controller.updateNiriConfig(defaultColumnWidth: .init(optionalWidth: settings.niriDefaultColumnWidth))
             }
         )
 
