@@ -1201,7 +1201,7 @@ final class AXEventHandler: CGSEventDelegate {
             activeWorkspaceId: workspaceId,
             replacementMetadata: replacementMetadata
         )
-        let record: WorkspaceManager.NativeFullscreenRecord
+        let record: NativeFullscreenState.Record
         switch match {
         case let .matched(matchedRecord):
             record = matchedRecord
@@ -1267,7 +1267,7 @@ final class AXEventHandler: CGSEventDelegate {
 
     private func normalizedNativeFullscreenReplacementMetadata(
         _ metadata: ManagedReplacementMetadata?,
-        for record: WorkspaceManager.NativeFullscreenRecord
+        for record: NativeFullscreenState.Record
     ) -> ManagedReplacementMetadata? {
         guard let controller else { return metadata }
         guard var normalized = metadata

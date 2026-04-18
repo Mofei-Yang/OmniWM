@@ -1269,7 +1269,7 @@ import QuartzCore
             )
             let decision = evaluation.decision
             var existingEntry = controller.workspaceManager.entry(for: token)
-            let temporarilyUnavailableRecord: WorkspaceManager.NativeFullscreenRecord? = if let existingEntry,
+            let temporarilyUnavailableRecord: NativeFullscreenState.Record? = if let existingEntry,
                                                                                             let record = controller
                                                                                             .workspaceManager
                                                                                             .nativeFullscreenRecord(

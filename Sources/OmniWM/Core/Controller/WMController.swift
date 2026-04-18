@@ -2524,8 +2524,8 @@ extension WMController {
     }
 
     private struct NativeFullscreenRestoreSeedResolution {
-        let restoreSnapshot: WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot?
-        let restoreFailure: WorkspaceManager.NativeFullscreenRecord.RestoreFailure?
+        let restoreSnapshot: NativeFullscreenState.Record.RestoreSnapshot?
+        let restoreFailure: NativeFullscreenState.Record.RestoreFailure?
     }
 
     func recordManagedRestoreGeometry(
@@ -2651,8 +2651,8 @@ extension WMController {
 
     private func nativeFullscreenRestoreSnapshot(
         from snapshot: ManagedWindowRestoreSnapshot
-    ) -> WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot {
-        WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+    ) -> NativeFullscreenState.Record.RestoreSnapshot {
+        NativeFullscreenState.Record.RestoreSnapshot(
             frame: snapshot.frame,
             topologyProfile: snapshot.topologyProfile,
             niriState: snapshot.niriState,
@@ -2701,20 +2701,20 @@ extension WMController {
     private func makeNativeFullscreenRestoreSnapshot(
         for token: WindowToken,
         frame: CGRect
-    ) -> WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot {
+    ) -> NativeFullscreenState.Record.RestoreSnapshot {
         if let snapshot = makeManagedWindowRestoreSnapshot(for: token, frame: frame) {
             _ = workspaceManager.setManagedRestoreSnapshot(snapshot, for: token)
             return nativeFullscreenRestoreSnapshot(from: snapshot)
         }
-        return WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(frame: frame, topologyProfile: workspaceManager.topologyProfile)
+        return NativeFullscreenState.Record.RestoreSnapshot(frame: frame, topologyProfile: workspaceManager.topologyProfile)
     }
 
     private func logIrrecoverableNativeFullscreenRestore(
         token: WindowToken,
         path: NativeFullscreenRestoreSeedPath,
         detail: String
-    ) -> WorkspaceManager.NativeFullscreenRecord.RestoreFailure {
-        let failure = WorkspaceManager.NativeFullscreenRecord.RestoreFailure(
+    ) -> NativeFullscreenState.Record.RestoreFailure {
+        let failure = NativeFullscreenState.Record.RestoreFailure(
             path: path.rawValue,
             detail: detail
         )
@@ -2837,7 +2837,7 @@ extension WMController {
 
     func captureNativeFullscreenRestoreSnapshot(
         for token: WindowToken
-    ) -> WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot? {
+    ) -> NativeFullscreenState.Record.RestoreSnapshot? {
         resolveNativeFullscreenRestoreSeed(
             for: token,
             path: .manualCapture,

@@ -3003,7 +3003,7 @@ private func syncNiriWorkspaceStatesForRefreshTests(
         #expect(controller.workspaceManager.barVisibleEntries(in: workspaceId).count == 5)
         #expect(workspaceBarWindowCount(controller: controller, workspaceId: workspaceId) == 5)
 
-        let restoreFailure = WorkspaceManager.NativeFullscreenRecord.RestoreFailure(
+        let restoreFailure = NativeFullscreenState.Record.RestoreFailure(
             path: "test_no_snapshot",
             detail: "exercise no-snapshot restore topology preservation"
         )
@@ -3128,7 +3128,7 @@ private func syncNiriWorkspaceStatesForRefreshTests(
         #expect(controller.workspaceManager.barVisibleEntries(in: workspaceId).count == 3)
         #expect(workspaceBarWindowCount(controller: controller, workspaceId: workspaceId) == 3)
 
-        let restoreFailure = WorkspaceManager.NativeFullscreenRecord.RestoreFailure(
+        let restoreFailure = NativeFullscreenState.Record.RestoreFailure(
             path: "test_no_snapshot",
             detail: "exercise no-snapshot restore topology preservation"
         )
@@ -4026,7 +4026,7 @@ private func syncNiriWorkspaceStatesForRefreshTests(
             return
         }
 
-        let restoreSnapshot = WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+        let restoreSnapshot = NativeFullscreenState.Record.RestoreSnapshot(
             frame: CGRect(x: 120, y: 80, width: 900, height: 640),
             topologyProfile: controller.workspaceManager.topologyProfile
         )

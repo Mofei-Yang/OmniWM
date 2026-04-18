@@ -104,7 +104,7 @@ private func makeUnavailableLayoutPlanTestWindow(windowId: Int) -> AXWindowRef {
 
         let token = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 111)
         let frozenFrame = CGRect(x: 120, y: 80, width: 900, height: 640)
-        let restoreSnapshot = WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+        let restoreSnapshot = NativeFullscreenState.Record.RestoreSnapshot(
             frame: frozenFrame,
             topologyProfile: controller.workspaceManager.topologyProfile
         )
@@ -189,7 +189,7 @@ private func makeUnavailableLayoutPlanTestWindow(windowId: Int) -> AXWindowRef {
         controller.axManager.applyFramesParallel([(token.pid, token.windowId, frozenFrame)])
         submittedRequests.removeAll()
 
-        let restoreSnapshot = WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+        let restoreSnapshot = NativeFullscreenState.Record.RestoreSnapshot(
             frame: frozenFrame,
             topologyProfile: controller.workspaceManager.topologyProfile
         )

@@ -620,7 +620,7 @@ private func prepareIPCQueryRouterNiriState(
             to: workspaceId
         )
         _ = controller.workspaceManager.setManagedFocus(token, in: workspaceId)
-        _ = controller.workspaceManager.recordReconcileEvent(
+        _ = controller.workspaceManager.recordEngineEvent(
             .windowModeChanged(
                 token: token,
                 workspaceId: workspaceId,

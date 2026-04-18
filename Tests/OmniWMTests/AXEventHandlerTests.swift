@@ -1917,7 +1917,7 @@ private func waitUntilAXEventTest(
             return
         }
 
-        let restoreSnapshot = WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+        let restoreSnapshot = NativeFullscreenState.Record.RestoreSnapshot(
             frame: CGRect(x: 40, y: 50, width: 400, height: 300),
             topologyProfile: controller.workspaceManager.topologyProfile
         )
@@ -1990,7 +1990,7 @@ private func waitUntilAXEventTest(
             return
         }
 
-        let restoreSnapshot = WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+        let restoreSnapshot = NativeFullscreenState.Record.RestoreSnapshot(
             frame: CGRect(x: 60, y: 70, width: 420, height: 320),
             topologyProfile: controller.workspaceManager.topologyProfile
         )
@@ -2068,7 +2068,7 @@ private func waitUntilAXEventTest(
             return
         }
 
-        let restoreSnapshot = WorkspaceManager.NativeFullscreenRecord.RestoreSnapshot(
+        let restoreSnapshot = NativeFullscreenState.Record.RestoreSnapshot(
             frame: CGRect(x: 80, y: 90, width: 440, height: 340),
             topologyProfile: controller.workspaceManager.topologyProfile
         )

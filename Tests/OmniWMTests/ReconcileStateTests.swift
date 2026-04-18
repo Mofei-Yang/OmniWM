@@ -62,8 +62,8 @@ private func makeReconcileRemovalTestManager() -> (
 }
 
 @MainActor
-private func lastWindowRemovedTrace(in manager: WorkspaceManager) -> ReconcileTraceRecord? {
-    manager.reconcileTraceSnapshotForTests().last { record in
+private func lastWindowRemovedTrace(in manager: WorkspaceManager) -> EngineTraceRecord? {
+    manager.engineTraceSnapshotForTests().last { record in
         if case .windowRemoved = record.normalizedEvent {
             return true
         }
@@ -113,7 +113,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
         #expect(entry.desiredState.disposition == .floating)
         #expect(entry.restoreIntent?.topologyProfile.displays.count == 1)
 
-        let trace = manager.reconcileTraceSnapshotForTests()
+        let trace = manager.engineTraceSnapshotForTests()
         #expect(trace.contains { record in
             if case let .windowAdmitted(recordedToken, recordedWorkspaceId, _, recordedMode, _) = record.event {
                 return recordedToken == token
@@ -169,7 +169,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
 
     @Test func omissionRemovalMatchesExplicitRemovalReconcileTrace() throws {
         func assertWindowRemovedTrace(
-            _ trace: ReconcileTraceRecord,
+            _ trace: EngineTraceRecord,
             token: WindowToken,
             workspaceId: WorkspaceDescriptor.ID
         ) throws {
@@ -406,7 +406,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
         )
 
         let restoredFrame = try #require(manager.resolvedFloatingFrame(for: token, preferredMonitor: monitor))
-        let hydrationTxn = try #require(manager.reconcileTraceSnapshotForTests().last)
+        let hydrationTxn = try #require(manager.engineTraceSnapshotForTests().last)
         let restoreIntent = try #require(manager.restoreIntent(for: token))
         let floatingState = try #require(manager.floatingState(for: token))
 
@@ -467,9 +467,9 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
         #expect(manager.windowMode(for: token) == .tiling)
         #expect(manager.consumedBootPersistedWindowRestoreKeysForTests().isEmpty)
 
-        let traceCountBeforeEnrichment = manager.reconcileTraceSnapshotForTests().count
+        let traceCountBeforeEnrichment = manager.engineTraceSnapshotForTests().count
         _ = manager.updateManagedReplacementTitle("Needs Title", for: token)
-        let traces = manager.reconcileTraceSnapshotForTests()
+        let traces = manager.engineTraceSnapshotForTests()
         let enrichmentTxn = try #require(traces.last)
 
         #expect(manager.workspace(for: token) == workspace2)
@@ -512,7 +512,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
             to: workspaceId
         )
 
-        let traceCountBeforeTopology = manager.reconcileTraceSnapshotForTests().count
+        let traceCountBeforeTopology = manager.engineTraceSnapshotForTests().count
         let newMonitor = makeLayoutPlanTestMonitor(
             displayId: layoutPlanTestSyntheticDisplayId(9),
             name: "New Primary",
@@ -521,7 +521,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
         )
         manager.applyMonitorConfigurationChange([newMonitor])
 
-        let traces = manager.reconcileTraceSnapshotForTests()
+        let traces = manager.engineTraceSnapshotForTests()
         let topologyTxn = try #require(traces.last)
         let reconciledWindow = try #require(topologyTxn.snapshot.windows.first { $0.token == token })
 
@@ -557,10 +557,10 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
         _ = try #require(manager.workspaceId(for: "1", createIfMissing: true))
         _ = try #require(manager.workspaceId(for: "2", createIfMissing: true))
 
-        let traceCountBeforeTopology = manager.reconcileTraceSnapshotForTests().count
+        let traceCountBeforeTopology = manager.engineTraceSnapshotForTests().count
         manager.applyMonitorConfigurationChange([primary])
 
-        let traces = manager.reconcileTraceSnapshotForTests()
+        let traces = manager.engineTraceSnapshotForTests()
         let topologyTxn = try #require(traces.last)
 
         #expect(traces.count == traceCountBeforeTopology + 1)
@@ -588,7 +588,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
             to: workspaceId
         )
 
-        _ = manager.recordReconcileEvent(
+        _ = manager.recordEngineEvent(
             .windowModeChanged(
                 token: token,
                 workspaceId: workspaceId,
@@ -598,14 +598,14 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
             )
         )
 
-        let trace = try #require(manager.reconcileTraceSnapshotForTests().last)
+        let trace = try #require(manager.engineTraceSnapshotForTests().last)
         if case let .windowModeChanged(_, _, monitorId, _, _) = trace.normalizedEvent {
             #expect(monitorId == monitor.id)
         } else {
             Issue.record("Expected normalized window mode change event")
         }
-        #expect(manager.reconcileSnapshotDump().contains("topology displays=1"))
-        #expect(manager.reconcileTraceDump(limit: 1).contains("window_mode_changed"))
+        #expect(manager.engineSnapshotDump().contains("topology displays=1"))
+        #expect(manager.engineTraceDump(limit: 1).contains("window_mode_changed"))
     }
 
     @Test func focusEventsPublishPendingFocusAndLeaseIntoSnapshotDump() throws {
@@ -625,7 +625,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
         )
 
         #expect(manager.beginManagedFocusRequest(token, in: workspaceId))
-        _ = manager.recordReconcileEvent(
+        _ = manager.recordEngineEvent(
             .focusLeaseChanged(
                 lease: FocusPolicyLease(
                     owner: .nativeMenu,
@@ -637,7 +637,7 @@ private func makeReconcileKernelSnapshot(monitors: [Monitor]) -> WMSnapshot {
             )
         )
 
-        let dump = manager.reconcileSnapshotDump()
+        let dump = manager.engineSnapshotDump()
         #expect(dump.contains("pending-focus=\(String(describing: token))"))
         #expect(dump.contains("focus-lease=native_menu"))
     }
