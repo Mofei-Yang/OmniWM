@@ -121,7 +121,7 @@
   <img src="https://raw.githubusercontent.com/BarutSRB/OmniWM/main/assets/demo5.gif" alt="OmniWM demo" width="100%">
 </p>
 
-Small demo, not fully showing everything, gif recorded at 30fps due to size, some stuff is now more refined and better as soem gifs might be outdated, features shown:
+Small demo, not fully showing everything, gif recorded at 30fps due to size, some stuff is now more refined and better as some gifs might be outdated, features shown:
 - Real quake/sticky terminal using ghostty's libghostty
 - Best-effort macOS native-tab replacement support
 - IPC/CLI
