@@ -6,7 +6,6 @@ const niri_topology = @import("niri_topology.zig");
 const overview_projection = @import("overview_projection.zig");
 const restore_planner = @import("restore_planner.zig");
 const viewport_policy = @import("viewport_policy.zig");
-const window_decision = @import("window_decision.zig");
 const workspace_navigation = @import("workspace_navigation.zig");
 const workspace_session = @import("workspace_session.zig");
 
@@ -17,7 +16,6 @@ comptime {
     _ = niri_topology;
     _ = overview_projection;
     _ = restore_planner;
-    _ = window_decision;
     _ = workspace_navigation;
     _ = workspace_session;
 }

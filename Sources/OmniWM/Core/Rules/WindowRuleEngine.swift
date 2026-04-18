@@ -311,7 +311,7 @@ final class WindowRuleEngine {
             matchedRuleId: userRule?.rule.id
         )
 
-        let kernelResult = solveWindowDecisionKernel(
+        let kernelOutput = solveWindowDecisionKernel(
             matchedUserAction: userRule?.rule.effectiveLayoutAction,
             matchedBuiltInAction: builtInRule?.rule.effectiveLayoutAction,
             matchedBuiltInSourceKind: builtInRule.flatMap { builtInSourceKind(for: $0) },
@@ -320,17 +320,6 @@ final class WindowRuleEngine {
             titleRequired: requiresTitle(for: facts.ax.bundleId),
             appFullscreen: appFullscreen
         )
-        let kernelOutput: WindowDecisionKernelOutput
-        switch kernelResult {
-        case .success(let output):
-            kernelOutput = output
-        case .failure(let error):
-            _ = kernelResult.logged(
-                operation: "WindowDecisionKernel.solve",
-                component: "WindowDecisionKernel"
-            )
-            kernelOutput = .kernelFailureFallback(for: error)
-        }
 
         return WindowDecision(
             disposition: kernelOutput.disposition,

@@ -15,7 +15,6 @@ struct KernelImportAllowlistTests {
         // Pre-existing bridges, still in their original locations:
         "Sources/OmniWM/Core/Kernel/KernelResult.swift",
         "Sources/OmniWM/Core/Kernel/NiriTopologyKernel.swift",
-        "Sources/OmniWM/Core/Kernel/WindowDecisionKernel.swift",
         "Sources/OmniWM/Core/Kernel/WorkspaceNavigationKernel.swift",
         "Sources/OmniWM/Core/Kernel/WorkspaceSessionKernelBridge.swift",
         "Sources/OmniWM/Core/Layout/Dwindle/DwindleLayoutEngine.swift",
