@@ -1,9 +1,9 @@
 import Foundation
 
-/// Preserved raw values for the legacy reconcile wire format. The numeric
+/// Preserved raw values for the remaining kernel wire formats. The numeric
 /// assignments stay stable so older fixtures and traces continue to decode
 /// while the remaining bridge consumers are retired. Do not reassign them.
-enum ReconcileWire {
+enum KernelWire {
     enum WindowMode: UInt32 {
         case tiling = 0
         case floating = 1

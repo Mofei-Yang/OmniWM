@@ -465,17 +465,17 @@ struct RestorePlanner {
     private func rawWindowMode(_ mode: TrackedWindowMode) -> UInt32 {
         switch mode {
         case .tiling:
-            ReconcileWire.WindowMode.tiling.rawValue
+            KernelWire.WindowMode.tiling.rawValue
         case .floating:
-            ReconcileWire.WindowMode.floating.rawValue
+            KernelWire.WindowMode.floating.rawValue
         }
     }
 
     private func trackedWindowMode(from rawValue: UInt32) -> TrackedWindowMode {
         switch rawValue {
-        case ReconcileWire.WindowMode.tiling.rawValue:
+        case KernelWire.WindowMode.tiling.rawValue:
             .tiling
-        case ReconcileWire.WindowMode.floating.rawValue:
+        case KernelWire.WindowMode.floating.rawValue:
             .floating
         default:
             preconditionFailure("Unexpected restore target mode \(rawValue)")

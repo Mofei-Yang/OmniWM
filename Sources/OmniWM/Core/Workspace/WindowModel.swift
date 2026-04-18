@@ -6,6 +6,16 @@ enum TrackedWindowMode: Equatable, Hashable, Sendable {
     case floating
 }
 
+enum LayoutReason: Codable, Equatable {
+    case standard
+    case macosHiddenApp
+    case nativeFullscreen
+}
+
+enum ParentKind: Codable, Equatable {
+    case tilingContainer
+}
+
 struct ManagedReplacementMetadata: Equatable, Sendable {
     var bundleId: String?
     var workspaceId: WorkspaceDescriptor.ID

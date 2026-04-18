@@ -395,7 +395,7 @@ private func makeRestoreKernelPersistedKey(
                     namePenalties.withUnsafeBufferPointer { penaltyBuffer in
                         var input = omniwm_restore_persisted_hydration_input(
                             metadata_key: metadataKey,
-                            metadata_mode: ReconcileWire.WindowMode.tiling.rawValue,
+                            metadata_mode: KernelWire.WindowMode.tiling.rawValue,
                             monitors: monitorBuffer.baseAddress,
                             monitor_count: monitorBuffer.count,
                             entries: entryBuffer.baseAddress,
@@ -419,7 +419,7 @@ private func makeRestoreKernelPersistedKey(
         #expect(restoreKernelUUIDEqual(output.workspace_id, workspaceId))
         #expect(output.has_preferred_monitor_id == 1)
         #expect(output.preferred_monitor_id == 80)
-        #expect(output.target_mode == ReconcileWire.WindowMode.floating.rawValue)
+        #expect(output.target_mode == KernelWire.WindowMode.floating.rawValue)
         #expect(output.has_floating_frame == 1)
         #expect(output.floating_frame.x == 1140)
         #expect(output.floating_frame.y == 700)

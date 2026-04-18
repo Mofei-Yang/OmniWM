@@ -6,7 +6,10 @@ format:
 	swiftformat .
 
 lint:
-	swiftlint lint
+	@status=0; \
+	swiftlint lint || status=$$?; \
+	./Scripts/check-private-api-boundary.sh || status=$$?; \
+	exit $$status
 
 lint-fix:
 	swiftlint lint --fix

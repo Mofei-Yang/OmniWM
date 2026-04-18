@@ -4,7 +4,7 @@ import Testing
 struct PlatformBoundaryAllowlistTests {
     static let allowedSkyLightSharedUsages: Set<String> = [
         "Sources/OmniWM/Core/Platform/WMPlatform.swift",
-        "Sources/OmniWM/Core/SkyLight/CGSEventObserver.swift",
+        "Sources/OmniWM/Core/Platform/WindowServer/CGSEventObserver.swift",
     ]
 
     static let allowedSilgenNameDeclarations: Set<String> = [
@@ -12,8 +12,8 @@ struct PlatformBoundaryAllowlistTests {
     ]
 
     static let allowedAXWindowFFIUsages: Set<String> = [
-        "Sources/OmniWM/Core/Ax/AppAXContext.swift",
-        "Sources/OmniWM/Core/Ax/AXWindow.swift",
+        "Sources/OmniWM/Core/Platform/Accessibility/AppAXContext.swift",
+        "Sources/OmniWM/Core/Platform/Accessibility/AXWindow.swift",
         "Sources/OmniWM/Core/Platform/PrivateAPIFFI.swift",
     ]
 

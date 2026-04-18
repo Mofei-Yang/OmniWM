@@ -21,7 +21,7 @@ struct KernelImportAllowlistTests {
         "Sources/OmniWM/Core/Layout/Niri/NiriConstraintSolver.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriLayout.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriViewport.swift",
-        "Sources/OmniWM/Core/Monitor/MonitorRestoreAssignments.swift",
+        "Sources/OmniWM/Core/Platform/Display/MonitorRestoreAssignments.swift",
         "Sources/OmniWM/Core/Overview/OverviewLayoutCalculator.swift",
         "Sources/OmniWM/Core/Engine/RestorePlanner.swift",
         "Sources/OmniWMIPC/ZigIPCSupport.swift",

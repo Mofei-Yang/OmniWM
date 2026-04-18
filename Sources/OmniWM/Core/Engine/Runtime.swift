@@ -1,5 +1,243 @@
+import AppKit
+import ApplicationServices
 import Foundation
 import Observation
+
+typealias WMState = WMSnapshot
+typealias WMPlan = ActionPlan
+
+@MainActor
+protocol PlatformAdapter {
+    var windowFocusOperations: WindowFocusOperations { get }
+    var activateApplication: (pid_t) -> Void { get }
+    var focusSpecificWindow: (pid_t, UInt32, AXUIElement) -> Void { get }
+    var raiseWindow: (AXUIElement) -> Void { get }
+    var closeWindow: (AXUIElement) -> Void { get }
+    var orderWindowAbove: (UInt32) -> Void { get }
+    var visibleWindowInfo: () -> [WindowServerInfo] { get }
+    var axWindowRef: (UInt32, pid_t) -> AXWindowRef? { get }
+    var visibleOwnedWindows: () -> [NSWindow] { get }
+    var frontOwnedWindow: (NSWindow) -> Void { get }
+    var performMenuAction: (AXUIElement) -> Void { get }
+}
+
+extension WMPlatform: PlatformAdapter {}
+
+typealias RefreshCycleId = UInt64
+typealias RefreshAttachmentId = UInt64
+
+enum ScheduledRefreshKind: Int, Equatable {
+    case relayout
+    case immediateRelayout
+    case visibilityRefresh
+    case windowRemoval
+    case fullRescan
+}
+
+struct WindowRemovalPayload: Equatable {
+    let workspaceId: WorkspaceDescriptor.ID
+    let layoutType: LayoutType
+    let removedNodeId: NodeId?
+    let niriOldFrames: [WindowToken: CGRect]
+    let shouldRecoverFocus: Bool
+}
+
+struct FollowUpRefresh: Equatable {
+    var kind: ScheduledRefreshKind
+    var reason: RefreshReason
+    var affectedWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
+}
+
+struct ScheduledRefresh: Equatable {
+    var cycleId: RefreshCycleId
+    var kind: ScheduledRefreshKind
+    var reason: RefreshReason
+    var affectedWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
+    var postLayoutAttachmentIds: [RefreshAttachmentId] = []
+    var windowRemovalPayloads: [WindowRemovalPayload] = []
+    var followUpRefresh: FollowUpRefresh?
+    var needsVisibilityReconciliation: Bool = false
+    var visibilityReason: RefreshReason?
+
+    init(
+        cycleId: RefreshCycleId,
+        kind: ScheduledRefreshKind,
+        reason: RefreshReason,
+        affectedWorkspaceIds: Set<WorkspaceDescriptor.ID> = [],
+        postLayoutAttachmentIds: [RefreshAttachmentId] = [],
+        windowRemovalPayload: WindowRemovalPayload? = nil
+    ) {
+        self.cycleId = cycleId
+        self.kind = kind
+        self.reason = reason
+        self.affectedWorkspaceIds = affectedWorkspaceIds
+        self.postLayoutAttachmentIds = postLayoutAttachmentIds
+        if let windowRemovalPayload {
+            windowRemovalPayloads = [windowRemovalPayload]
+        }
+    }
+}
+
+struct CoordinationResult: Equatable {
+    var snapshot: WMSnapshot
+    var plan: ActionPlan
+
+    init(
+        snapshot: WMSnapshot,
+        decision: ActionPlan.Decision,
+        plan: ActionPlan
+    ) {
+        var plan = plan
+        if plan.decision == nil {
+            plan.decision = decision
+        }
+        self.snapshot = snapshot
+        self.plan = plan
+    }
+
+    var decision: ActionPlan.Decision {
+        guard let decision = plan.decision else {
+            preconditionFailure("CoordinationResult missing plan decision")
+        }
+        return decision
+    }
+}
+
+enum RuntimeEffectContext {
+    case focusRequest
+    case activationObserved(
+        observedAXRef: AXWindowRef?,
+        managedEntry: WindowModel.Entry?,
+        source: ActivationEventSource,
+        confirmRequest: Bool
+    )
+    case refresh
+}
+
+@MainActor
+protocol EffectExecutor {
+    func execute(
+        _ result: CoordinationResult,
+        on controller: WMController,
+        context: RuntimeEffectContext
+    )
+}
+
+enum RuntimeSubmitResult {
+    case reconcile(ReconcileTxn)
+    case coordination(CoordinationResult)
+}
+
+struct RuntimeSnapshot {
+    var state: WMState
+    var configuration: RuntimeConfiguration
+}
+
+struct RuntimeTraceRecord {
+    let eventId: UInt64
+    let timestamp: Date
+    let eventSummary: String
+    let decisionSummary: String?
+    let actionSummaries: [String]
+    let focusedToken: WindowToken?
+    let pendingFocusedToken: WindowToken?
+    let activeRefreshCycleId: RefreshCycleId?
+    let pendingRefreshCycleId: RefreshCycleId?
+}
+
+struct RuntimeConfiguration {
+    struct LayoutConfiguration {
+        struct Niri {
+            var maxWindowsPerColumn: Int
+            var maxVisibleColumns: Int
+            var infiniteLoop: Bool
+            var centerFocusedColumn: CenterFocusedColumn
+            var alwaysCenterSingleColumn: Bool
+            var singleWindowAspectRatio: SingleWindowAspectRatio
+            var columnWidthPresets: [Double]
+            var defaultColumnWidth: Double?
+        }
+
+        struct Dwindle {
+            var smartSplit: Bool
+            var defaultSplitRatio: Double
+            var splitWidthMultiplier: Double
+            var singleWindowAspectRatio: CGSize
+        }
+
+        var gapSize: Double
+        var outerGaps: LayoutGaps.OuterGaps
+        var niri: Niri
+        var dwindle: Dwindle
+    }
+
+    var animationsEnabled: Bool
+    var appearanceMode: AppearanceMode
+    var hotkeyBindings: [HotkeyBinding]
+    var hotkeysEnabled: Bool
+    var layout: LayoutConfiguration
+    var borderConfig: BorderConfig
+    var focusFollowsMouse: Bool
+    var moveMouseToFocusedWindow: Bool
+    var workspaceBarEnabled: Bool
+    var preventSleepEnabled: Bool
+    var quakeTerminalEnabled: Bool
+
+    var summary: String {
+        [
+            "animations=\(animationsEnabled)",
+            "appearance=\(appearanceMode.rawValue)",
+            "hotkeys=\(hotkeysEnabled)",
+            "gaps=\(layout.gapSize)",
+            "workspace-bar=\(workspaceBarEnabled)",
+            "prevent-sleep=\(preventSleepEnabled)",
+            "quake=\(quakeTerminalEnabled)",
+            "ffm=\(focusFollowsMouse)",
+            "mouse-to-focus=\(moveMouseToFocusedWindow)",
+            "column-presets=\(layout.niri.columnWidthPresets.count)",
+        ]
+        .joined(separator: " ")
+    }
+
+    @MainActor
+    init(settings: SettingsStore) {
+        animationsEnabled = settings.animationsEnabled
+        appearanceMode = settings.appearanceMode
+        hotkeyBindings = settings.hotkeyBindings
+        hotkeysEnabled = settings.hotkeysEnabled
+        layout = LayoutConfiguration(
+            gapSize: settings.gapSize,
+            outerGaps: .init(
+                left: settings.outerGapLeft,
+                right: settings.outerGapRight,
+                top: settings.outerGapTop,
+                bottom: settings.outerGapBottom
+            ),
+            niri: .init(
+                maxWindowsPerColumn: settings.niriMaxWindowsPerColumn,
+                maxVisibleColumns: settings.niriMaxVisibleColumns,
+                infiniteLoop: settings.niriInfiniteLoop,
+                centerFocusedColumn: settings.niriCenterFocusedColumn,
+                alwaysCenterSingleColumn: settings.niriAlwaysCenterSingleColumn,
+                singleWindowAspectRatio: settings.niriSingleWindowAspectRatio,
+                columnWidthPresets: settings.niriColumnWidthPresets,
+                defaultColumnWidth: settings.niriDefaultColumnWidth
+            ),
+            dwindle: .init(
+                smartSplit: settings.dwindleSmartSplit,
+                defaultSplitRatio: settings.dwindleDefaultSplitRatio,
+                splitWidthMultiplier: settings.dwindleSplitWidthMultiplier,
+                singleWindowAspectRatio: settings.dwindleSingleWindowAspectRatio.size
+            )
+        )
+        borderConfig = BorderConfig.from(settings: settings)
+        focusFollowsMouse = settings.focusFollowsMouse
+        moveMouseToFocusedWindow = settings.moveMouseToFocusedWindow
+        workspaceBarEnabled = settings.workspaceBarEnabled
+        preventSleepEnabled = settings.preventSleepEnabled
+        quakeTerminalEnabled = settings.quakeTerminalEnabled
+    }
+}
 
 @MainActor @Observable
 final class Runtime {
@@ -277,6 +515,130 @@ final class Runtime {
         recentTrace.append(record)
         if recentTrace.count > Self.maxTraceRecordCount {
             recentTrace.removeFirst(recentTrace.count - Self.maxTraceRecordCount)
+        }
+    }
+}
+
+@MainActor
+final class RuntimeStore {
+    private let traceRecorder: ReconcileTraceRecorder
+    private let nowProvider: () -> Date
+
+    init(
+        traceRecorder: ReconcileTraceRecorder,
+        nowProvider: @escaping () -> Date = Date.init
+    ) {
+        self.traceRecorder = traceRecorder
+        self.nowProvider = nowProvider
+    }
+
+    @discardableResult
+    func transact(
+        event: WMEvent,
+        existingEntry: WindowModel.Entry?,
+        monitors: [Monitor],
+        persistedHydration: PersistedHydrationMutation? = nil,
+        snapshot: () -> WMSnapshot,
+        applyPlan: (ActionPlan, WindowToken?) -> ActionPlan
+    ) -> ReconcileTxn {
+        let currentSnapshot = snapshot()
+        let normalizedEvent = EventNormalizer.normalize(
+            event: event,
+            existingEntry: existingEntry,
+            monitors: monitors
+        )
+        let plan = Reducer.reduce(
+            event: normalizedEvent,
+            existingEntry: existingEntry,
+            currentSnapshot: currentSnapshot,
+            monitors: monitors,
+            persistedHydration: persistedHydration
+        )
+        let resolvedPlan = applyPlan(plan, normalizedEvent.token)
+        return record(
+            event: event,
+            normalizedEvent: normalizedEvent,
+            plan: resolvedPlan,
+            snapshot: snapshot()
+        )
+    }
+
+    @discardableResult
+    func record(
+        event: WMEvent,
+        normalizedEvent: WMEvent? = nil,
+        plan: ActionPlan,
+        snapshot: WMSnapshot
+    ) -> ReconcileTxn {
+        let invariantViolations = InvariantChecks.validate(snapshot: snapshot)
+        var tracedPlan = plan
+        if !invariantViolations.isEmpty {
+            tracedPlan.notes.append(contentsOf: invariantViolations.map(\.traceNote))
+        }
+
+        let txn = ReconcileTxn(
+            timestamp: nowProvider(),
+            event: event,
+            normalizedEvent: normalizedEvent ?? event,
+            plan: tracedPlan,
+            snapshot: snapshot,
+            invariantViolations: invariantViolations
+        )
+        traceRecorder.append(transaction: txn)
+        return txn
+    }
+}
+
+@MainActor
+final class RuntimeEffectExecutor: EffectExecutor {
+    func execute(
+        _ result: CoordinationResult,
+        on controller: WMController,
+        context: RuntimeEffectContext
+    ) {
+        switch context {
+        case .focusRequest:
+            controller.applyRuntimeFocusRequestResult(result)
+
+        case let .activationObserved(observedAXRef, managedEntry, source, confirmRequest):
+            controller.axEventHandler.applyActivationCoordinationResult(
+                result,
+                observedAXRef: observedAXRef,
+                managedEntry: managedEntry,
+                source: source,
+                confirmRequest: confirmRequest
+            )
+
+        case .refresh:
+            controller.layoutRefreshController.applyRuntimeRefreshResult(result)
+        }
+    }
+}
+
+enum CoordinationCore {
+    static func step(
+        snapshot: WMSnapshot,
+        event: WMEvent
+    ) -> CoordinationResult {
+        switch event {
+        case .refreshRequested, .refreshCompleted:
+            let result = RefreshPlanner.step(snapshot: snapshot, event: event)
+            return CoordinationResult(
+                snapshot: result.snapshot,
+                decision: result.decision,
+                plan: result.plan
+            )
+
+        case .focusRequested, .activationObserved:
+            let result = FocusPlanner.step(snapshot: snapshot, event: event)
+            return CoordinationResult(
+                snapshot: result.snapshot,
+                decision: result.decision,
+                plan: result.plan
+            )
+
+        default:
+            preconditionFailure("CoordinationCore received non-coordination event \(event)")
         }
     }
 }

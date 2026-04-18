@@ -10,6 +10,24 @@ struct ReconcileTraceRecord: Equatable {
     let invariantViolations: [ReconcileInvariantViolation]
 }
 
+struct ReconcileInvariantViolation: Equatable {
+    let code: String
+    let message: String
+
+    var traceNote: String {
+        "invariant[\(code)]=\(message)"
+    }
+}
+
+struct ReconcileTxn: Equatable {
+    let timestamp: Date
+    let event: WMEvent
+    let normalizedEvent: WMEvent
+    let plan: ActionPlan
+    let snapshot: WMSnapshot
+    let invariantViolations: [ReconcileInvariantViolation]
+}
+
 @MainActor
 final class ReconcileTraceRecorder {
     private static let defaultLimit = 256
