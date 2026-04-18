@@ -41,19 +41,17 @@ final class BorderWindow {
         var transactionHide: @MainActor (UInt32) -> Void
         var backingScaleForFrame: @MainActor (CGRect) -> CGFloat
 
-        static let live = Self(
-            createBorderWindow: { SkyLight.shared.createBorderWindow(frame: $0) },
-            releaseBorderWindow: { SkyLight.shared.releaseBorderWindow($0) },
-            configureWindow: { SkyLight.shared.configureWindow($0, resolution: $1, opaque: $2) },
-            setWindowTags: { SkyLight.shared.setWindowTags($0, tags: $1) },
-            createWindowContext: { SkyLight.shared.createWindowContext(for: $0) },
-            setWindowShape: { SkyLight.shared.setWindowShape($0, frame: $1) },
-            flushWindow: { SkyLight.shared.flushWindow($0) },
-            transactionMove: { SkyLight.shared.transactionMove($0, origin: $1) },
-            transactionMoveAndOrder: {
-                SkyLight.shared.transactionMoveAndOrder($0, origin: $1, level: $2, relativeTo: $3, order: $4)
-            },
-            transactionHide: { SkyLight.shared.transactionHide($0) },
+        static let shared = Self(
+            createBorderWindow: { WMPlatform.shared.createBorderWindow($0) },
+            releaseBorderWindow: { WMPlatform.shared.releaseBorderWindow($0) },
+            configureWindow: { WMPlatform.shared.configureBorderWindow($0, $1, $2) },
+            setWindowTags: { WMPlatform.shared.setWindowTags($0, $1) },
+            createWindowContext: { WMPlatform.shared.createWindowContext($0) },
+            setWindowShape: { WMPlatform.shared.setWindowShape($0, $1) },
+            flushWindow: { WMPlatform.shared.flushWindow($0) },
+            transactionMove: { WMPlatform.shared.transactionMove($0, $1) },
+            transactionMoveAndOrder: { WMPlatform.shared.transactionMoveAndOrder($0, $1, $2, $3, $4) },
+            transactionHide: { WMPlatform.shared.transactionHide($0) },
             backingScaleForFrame: { targetFrame in
                 let targetScreen = NSScreen.screens.first(where: {
                     $0.frame.contains(targetFrame.center)
@@ -83,7 +81,7 @@ final class BorderWindow {
     private let defaultCornerRadius: CGFloat = 9.0
     private let fallbackOrderingLevel: Int32 = 3
 
-    init(config: BorderConfig, operations: Operations = .live) {
+    init(config: BorderConfig, operations: Operations = .shared) {
         self.config = config
         self.operations = operations
     }

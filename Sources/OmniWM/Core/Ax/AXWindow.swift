@@ -203,7 +203,7 @@ enum AXWindowService {
         {
             return cached.title
         }
-        let title = titleLookupProviderForTests?(windowId) ?? SkyLight.shared.getWindowTitle(windowId)
+        let title = titleLookupProviderForTests?(windowId) ?? WMPlatform.shared.windowTitle(windowId)
         storeTitleCacheEntry(windowId: windowId, title: title, at: now)
         return title
     }
@@ -285,7 +285,7 @@ enum AXWindowService {
         if let fastFrameProviderForTests {
             return fastFrameProviderForTests(window)
         }
-        guard let frame = SkyLight.shared.getWindowBounds(UInt32(windowId(window))) else { return nil }
+        guard let frame = WMPlatform.shared.windowBounds(UInt32(windowId(window))) else { return nil }
         return ScreenCoordinateSpace.toAppKit(rect: frame)
     }
 

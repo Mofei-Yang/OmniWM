@@ -75,7 +75,7 @@ final class WindowActionHandler {
 
     init(
         controller: WMController,
-        platform: WMPlatform = .live,
+        platform: WMPlatform = .shared,
         orderWindow: ((UInt32) -> Void)? = nil,
         visibleWindowInfoProvider: (() -> [WindowServerInfo])? = nil,
         axWindowRefProvider: ((UInt32, pid_t) -> AXWindowRef?)? = nil,

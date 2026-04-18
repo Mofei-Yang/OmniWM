@@ -33,7 +33,7 @@ final class Runtime {
 
     init(
         settings: SettingsStore,
-        platform: WMPlatform = .live,
+        platform: WMPlatform = .shared,
         hiddenBarController: HiddenBarController? = nil,
         windowFocusOperations: WindowFocusOperations? = nil,
         effectExecutor: (any EffectExecutor)? = nil

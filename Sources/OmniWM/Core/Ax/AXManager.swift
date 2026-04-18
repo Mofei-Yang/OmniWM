@@ -246,7 +246,7 @@ final class AXManager {
             return .init(windows: await currentWindowsAsyncOverride(), failedPIDs: [])
         }
 
-        let visibleWindows = SkyLight.shared.queryAllVisibleWindows()
+        let visibleWindows = WMPlatform.shared.visibleWindowInfo()
         let pidsWithWindows = Set(visibleWindows.map { $0.pid })
 
         let apps = NSWorkspace.shared.runningApplications.filter {
@@ -489,7 +489,7 @@ final class AXManager {
         }
     }
 
-    func applyPositionsViaSkyLight(
+    func applyPositionsViaWindowServer(
         _ positions: [(windowId: Int, origin: CGPoint)],
         allowInactive: Bool = false
     ) {
@@ -500,7 +500,7 @@ final class AXManager {
         let batchPositions = filtered.map {
             (windowId: UInt32($0.windowId), origin: ScreenCoordinateSpace.toWindowServer(point: $0.origin))
         }
-        SkyLight.shared.batchMoveWindows(batchPositions)
+        WMPlatform.shared.batchMoveWindows(batchPositions)
     }
 
     private func withTimeoutOrNil<T: Sendable>(

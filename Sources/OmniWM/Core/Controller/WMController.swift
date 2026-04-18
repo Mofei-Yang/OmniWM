@@ -8,7 +8,7 @@ struct WindowFocusOperations {
     let focusSpecificWindow: (pid_t, UInt32, AXUIElement) -> Void
     let raiseWindow: (AXUIElement) -> Void
 
-    static let live = WMPlatform.live.windowFocusOperations
+    static let shared = WMPlatform.shared.windowFocusOperations
 }
 
 enum NativeFullscreenRestoreSeedPath: String {
@@ -294,7 +294,7 @@ final class WMController {
         settings: SettingsStore,
         workspaceManager: WorkspaceManager? = nil,
         hiddenBarController: HiddenBarController? = nil,
-        platform: WMPlatform = .live,
+        platform: WMPlatform = .shared,
         windowFocusOperations: WindowFocusOperations? = nil
     ) {
         self.settings = settings

@@ -1846,7 +1846,7 @@ import QuartzCore
     fileprivate func applyPositionPlans(_ plans: [WindowPositionPlan]) {
         guard let controller, !plans.isEmpty else { return }
 
-        controller.axManager.applyPositionsViaSkyLight(
+        controller.axManager.applyPositionsViaWindowServer(
             plans.map { (windowId: $0.entry.windowId, origin: $0.origin) },
             allowInactive: true
         )

@@ -3,9 +3,6 @@ import Testing
 
 struct PlatformBoundaryAllowlistTests {
     static let allowedSkyLightSharedUsages: Set<String> = [
-        "Sources/OmniWM/Core/Ax/AXManager.swift",
-        "Sources/OmniWM/Core/Ax/AXWindow.swift",
-        "Sources/OmniWM/Core/Border/BorderWindow.swift",
         "Sources/OmniWM/Core/Platform/WMPlatform.swift",
         "Sources/OmniWM/Core/SkyLight/CGSEventObserver.swift",
     ]
@@ -44,6 +41,15 @@ struct PlatformBoundaryAllowlistTests {
             needle: "_AXUIElementGetWindow",
             allowedFiles: Self.allowedAXWindowFFIUsages,
             failurePrefix: "Files outside the accessibility/platform boundary call `_AXUIElementGetWindow` directly."
+        )
+    }
+
+    @Test
+    func wmPlatformLiveFacadeDoesNotReturn() throws {
+        try assertAllowlistedUsage(
+            needle: "WMPlatform.live",
+            allowedFiles: [],
+            failurePrefix: "Legacy `WMPlatform.live` façade usage reappeared."
         )
     }
 

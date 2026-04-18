@@ -18,7 +18,7 @@ struct WMPlatform {
     let frontOwnedWindow: (NSWindow) -> Void
     let performMenuAction: (AXUIElement) -> Void
 
-    static let live = WMPlatform(
+    static let shared = WMPlatform(
         activateApplication: { pid in
             if let runningApp = NSRunningApplication(processIdentifier: pid) {
                 runningApp.activate(options: [])
@@ -69,6 +69,70 @@ struct WMPlatform {
             AXUIElementPerformAction(element, kAXPressAction as CFString)
         }
     )
+
+    func windowTitle(_ windowId: UInt32) -> String? {
+        SkyLight.shared.getWindowTitle(windowId)
+    }
+
+    func windowBounds(_ windowId: UInt32) -> CGRect? {
+        SkyLight.shared.getWindowBounds(windowId)
+    }
+
+    func batchMoveWindows(_ positions: [(windowId: UInt32, origin: CGPoint)]) {
+        SkyLight.shared.batchMoveWindows(positions)
+    }
+
+    func createBorderWindow(_ frame: CGRect) -> UInt32 {
+        SkyLight.shared.createBorderWindow(frame: frame)
+    }
+
+    func releaseBorderWindow(_ windowId: UInt32) {
+        SkyLight.shared.releaseBorderWindow(windowId)
+    }
+
+    func configureBorderWindow(_ windowId: UInt32, _ resolution: Float, _ opaque: Bool) {
+        SkyLight.shared.configureWindow(windowId, resolution: resolution, opaque: opaque)
+    }
+
+    func setWindowTags(_ windowId: UInt32, _ tags: UInt64) {
+        SkyLight.shared.setWindowTags(windowId, tags: tags)
+    }
+
+    func createWindowContext(_ windowId: UInt32) -> CGContext? {
+        SkyLight.shared.createWindowContext(for: windowId)
+    }
+
+    func setWindowShape(_ windowId: UInt32, _ frame: CGRect) {
+        SkyLight.shared.setWindowShape(windowId, frame: frame)
+    }
+
+    func flushWindow(_ windowId: UInt32) {
+        SkyLight.shared.flushWindow(windowId)
+    }
+
+    func transactionMove(_ windowId: UInt32, _ origin: CGPoint) {
+        SkyLight.shared.transactionMove(windowId, origin: origin)
+    }
+
+    func transactionMoveAndOrder(
+        _ windowId: UInt32,
+        _ origin: CGPoint,
+        _ level: Int32,
+        _ relativeTo: UInt32,
+        _ order: SkyLightWindowOrder
+    ) {
+        SkyLight.shared.transactionMoveAndOrder(
+            windowId,
+            origin: origin,
+            level: level,
+            relativeTo: relativeTo,
+            order: order
+        )
+    }
+
+    func transactionHide(_ windowId: UInt32) {
+        SkyLight.shared.transactionHide(windowId)
+    }
 
     var windowFocusOperations: WindowFocusOperations {
         WindowFocusOperations(
