@@ -17,7 +17,6 @@ struct KernelImportAllowlistTests {
         "Sources/OmniWM/Core/Kernel/NiriTopologyKernel.swift",
         "Sources/OmniWM/Core/Kernel/WorkspaceNavigationKernel.swift",
         "Sources/OmniWM/Core/Kernel/WorkspaceSessionKernelBridge.swift",
-        "Sources/OmniWM/Core/Layout/Dwindle/DwindleLayoutEngine.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriConstraintSolver.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriLayout.swift",
         "Sources/OmniWM/Core/Layout/Niri/NiriViewport.swift",

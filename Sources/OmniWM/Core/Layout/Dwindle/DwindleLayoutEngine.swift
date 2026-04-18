@@ -1,18 +1,6 @@
-import COmniWMKernels
 import CoreGraphics
 import Foundation
 import QuartzCore
-
-private extension DwindleOrientation {
-    var kernelRawValue: UInt32 {
-        switch self {
-        case .horizontal:
-            UInt32(OMNIWM_DWINDLE_ORIENTATION_HORIZONTAL)
-        case .vertical:
-            UInt32(OMNIWM_DWINDLE_ORIENTATION_VERTICAL)
-        }
-    }
-}
 
 private enum DwindleKernelConstants {
     static let minimumDimension: CGFloat = 1
@@ -24,10 +12,10 @@ private enum DwindleKernelConstants {
     static let splitFractionMax: CGFloat = 0.95
 }
 
-private struct DwindleKernelSnapshot {
-    let rootIndex: Int32
-    let nodes: ContiguousArray<DwindleNode>
-    let rawNodes: ContiguousArray<omniwm_dwindle_node_input>
+private struct DwindleSolverSnapshot {
+    let rootIndex: Int
+    let nodes: [DwindleNode]
+    let solverNodes: [DwindleSolveNode]
 }
 
 struct DwindleAnimationFrames {
@@ -403,63 +391,42 @@ final class DwindleLayoutEngine {
         let windowCount = root.collectAllWindows().count
         guard windowCount > 0 else { return [:] }
 
-        let snapshot = makeKernelSnapshot(from: root)
-        var rawInput = makeKernelInput(rootIndex: snapshot.rootIndex, screen: screen)
-        var rawFrames = ContiguousArray(
-            repeating: omniwm_dwindle_node_frame(
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-                has_frame: 0
-            ),
-            count: snapshot.rawNodes.count
-        )
-
-        let status = snapshot.rawNodes.withUnsafeBufferPointer { rawNodes in
-            rawFrames.withUnsafeMutableBufferPointer { rawFrames in
-                omniwm_dwindle_solve(
-                    &rawInput,
-                    rawNodes.baseAddress,
-                    rawNodes.count,
-                    rawFrames.baseAddress,
-                    rawFrames.count
-                )
-            }
+        let snapshot = makeSolverSnapshot(from: root)
+        let input = makeSolverInput(rootIndex: snapshot.rootIndex, screen: screen)
+        let frames: [CGRect?]
+        do {
+            frames = try solveDwindleLayout(input, nodes: snapshot.solverNodes)
+        } catch {
+            WMLog.error(.kernel, "DwindleSolver.solve failed: \(error)")
+            return [:]
         }
-        precondition(
-            status == OMNIWM_KERNELS_STATUS_OK,
-            "omniwm_dwindle_solve returned \(status)"
-        )
 
-        return applyKernelFrames(
-            rawFrames,
+        return applySolverFrames(
+            frames,
             snapshot: snapshot,
             windowCount: windowCount,
             scale: scale
         )
     }
 
-    private func makeKernelSnapshot(from root: DwindleNode) -> DwindleKernelSnapshot {
-        var nodes = ContiguousArray<DwindleNode>()
-        var rawNodes = ContiguousArray<omniwm_dwindle_node_input>()
+    private func makeSolverSnapshot(from root: DwindleNode) -> DwindleSolverSnapshot {
+        var nodes: [DwindleNode] = []
+        var solverNodes: [DwindleSolveNode] = []
 
-        func append(_ node: DwindleNode) -> Int32 {
-            precondition(rawNodes.count < Int(Int32.max), "Dwindle kernel snapshot exceeded Int32 capacity")
-
-            let index = Int32(rawNodes.count)
+        func append(_ node: DwindleNode) -> Int {
+            let index = solverNodes.count
             nodes.append(node)
-            rawNodes.append(
-                omniwm_dwindle_node_input(
-                    first_child_index: -1,
-                    second_child_index: -1,
-                    split_ratio: 1.0,
-                    min_width: 0,
-                    min_height: 0,
-                    kind: UInt32(OMNIWM_DWINDLE_NODE_KIND_LEAF),
-                    orientation: UInt32(OMNIWM_DWINDLE_ORIENTATION_HORIZONTAL),
-                    has_window: 0,
-                    fullscreen: 0
+            solverNodes.append(
+                DwindleSolveNode(
+                    firstChildIndex: -1,
+                    secondChildIndex: -1,
+                    splitRatio: 1.0,
+                    minWidth: 0,
+                    minHeight: 0,
+                    kind: .leaf,
+                    orientation: .horizontal,
+                    hasWindow: false,
+                    fullscreen: false
                 )
             )
 
@@ -468,16 +435,16 @@ final class DwindleLayoutEngine {
 
             switch node.kind {
             case let .split(orientation, ratio):
-                rawNodes[Int(index)] = omniwm_dwindle_node_input(
-                    first_child_index: firstChildIndex,
-                    second_child_index: secondChildIndex,
-                    split_ratio: ratio,
-                    min_width: 0,
-                    min_height: 0,
-                    kind: UInt32(OMNIWM_DWINDLE_NODE_KIND_SPLIT),
-                    orientation: orientation.kernelRawValue,
-                    has_window: 0,
-                    fullscreen: 0
+                solverNodes[index] = DwindleSolveNode(
+                    firstChildIndex: firstChildIndex,
+                    secondChildIndex: secondChildIndex,
+                    splitRatio: ratio,
+                    minWidth: 0,
+                    minHeight: 0,
+                    kind: .split,
+                    orientation: orientation,
+                    hasWindow: false,
+                    fullscreen: false
                 )
 
             case let .leaf(handle, fullscreen):
@@ -490,60 +457,57 @@ final class DwindleLayoutEngine {
                     )
                 }
 
-                rawNodes[Int(index)] = omniwm_dwindle_node_input(
-                    first_child_index: -1,
-                    second_child_index: -1,
-                    split_ratio: 1.0,
-                    min_width: minimumSize.width,
-                    min_height: minimumSize.height,
-                    kind: UInt32(OMNIWM_DWINDLE_NODE_KIND_LEAF),
-                    orientation: UInt32(OMNIWM_DWINDLE_ORIENTATION_HORIZONTAL),
-                    has_window: handle == nil ? 0 : 1,
-                    fullscreen: fullscreen ? 1 : 0
+                solverNodes[index] = DwindleSolveNode(
+                    firstChildIndex: -1,
+                    secondChildIndex: -1,
+                    splitRatio: 1.0,
+                    minWidth: minimumSize.width,
+                    minHeight: minimumSize.height,
+                    kind: .leaf,
+                    orientation: .horizontal,
+                    hasWindow: handle != nil,
+                    fullscreen: fullscreen
                 )
             }
 
             return index
         }
 
-        return DwindleKernelSnapshot(
+        return DwindleSolverSnapshot(
             rootIndex: append(root),
             nodes: nodes,
-            rawNodes: rawNodes
+            solverNodes: solverNodes
         )
     }
 
-    private func makeKernelInput(
-        rootIndex: Int32,
+    private func makeSolverInput(
+        rootIndex: Int,
         screen: CGRect
-    ) -> omniwm_dwindle_layout_input {
-        omniwm_dwindle_layout_input(
-            root_index: rootIndex,
-            screen_x: screen.minX,
-            screen_y: screen.minY,
-            screen_width: screen.width,
-            screen_height: screen.height,
-            inner_gap: settings.innerGap,
-            outer_gap_top: settings.outerGapTop,
-            outer_gap_bottom: settings.outerGapBottom,
-            outer_gap_left: settings.outerGapLeft,
-            outer_gap_right: settings.outerGapRight,
-            single_window_aspect_width: settings.singleWindowAspectRatio.width,
-            single_window_aspect_height: settings.singleWindowAspectRatio.height,
-            single_window_aspect_tolerance: settings.singleWindowAspectRatioTolerance,
-            minimum_dimension: DwindleKernelConstants.minimumDimension,
-            gap_sticks_tolerance: DwindleKernelConstants.gapSticksTolerance,
-            split_ratio_min: DwindleKernelConstants.splitRatioMin,
-            split_ratio_max: DwindleKernelConstants.splitRatioMax,
-            split_fraction_divisor: DwindleKernelConstants.splitFractionDivisor,
-            split_fraction_min: DwindleKernelConstants.splitFractionMin,
-            split_fraction_max: DwindleKernelConstants.splitFractionMax
+    ) -> DwindleSolveInput {
+        DwindleSolveInput(
+            rootIndex: rootIndex,
+            screen: screen,
+            innerGap: settings.innerGap,
+            outerGapTop: settings.outerGapTop,
+            outerGapBottom: settings.outerGapBottom,
+            outerGapLeft: settings.outerGapLeft,
+            outerGapRight: settings.outerGapRight,
+            singleWindowAspectWidth: settings.singleWindowAspectRatio.width,
+            singleWindowAspectHeight: settings.singleWindowAspectRatio.height,
+            singleWindowAspectTolerance: settings.singleWindowAspectRatioTolerance,
+            minimumDimension: DwindleKernelConstants.minimumDimension,
+            gapSticksTolerance: DwindleKernelConstants.gapSticksTolerance,
+            splitRatioMin: DwindleKernelConstants.splitRatioMin,
+            splitRatioMax: DwindleKernelConstants.splitRatioMax,
+            splitFractionDivisor: DwindleKernelConstants.splitFractionDivisor,
+            splitFractionMin: DwindleKernelConstants.splitFractionMin,
+            splitFractionMax: DwindleKernelConstants.splitFractionMax
         )
     }
 
-    private func applyKernelFrames(
-        _ rawFrames: ContiguousArray<omniwm_dwindle_node_frame>,
-        snapshot: DwindleKernelSnapshot,
+    private func applySolverFrames(
+        _ solverFrames: [CGRect?],
+        snapshot: DwindleSolverSnapshot,
         windowCount: Int,
         scale: CGFloat?
     ) -> [WindowToken: CGRect] {
@@ -551,15 +515,8 @@ final class DwindleLayoutEngine {
         frames.reserveCapacity(windowCount)
 
         for (index, node) in snapshot.nodes.enumerated() {
-            let rawFrame = rawFrames[index]
-            guard rawFrame.has_frame != 0 else { continue }
+            guard let frame = solverFrames[index] else { continue }
 
-            let frame = CGRect(
-                x: rawFrame.x,
-                y: rawFrame.y,
-                width: rawFrame.width,
-                height: rawFrame.height
-            )
             let roundedFrame = roundedFrame(frame, scale: scale)
             node.cachedFrame = roundedFrame
 
