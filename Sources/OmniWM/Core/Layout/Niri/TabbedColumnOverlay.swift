@@ -30,7 +30,12 @@ final class TabbedColumnOverlayManager {
 
     var onSelect: SelectionHandler?
 
+    private let orderWindowRelative: (UInt32, UInt32, SkyLightWindowOrder) -> Void
     private var overlays: [NodeId: TabbedColumnOverlayWindow] = [:]
+
+    init(orderWindowRelative: @escaping (UInt32, UInt32, SkyLightWindowOrder) -> Void = WMPlatform.live.orderWindowRelative) {
+        self.orderWindowRelative = orderWindowRelative
+    }
 
     func updateOverlays(_ infos: [TabbedColumnOverlayInfo]) {
         let filtered = infos.filter { $0.tabCount > 0 }
@@ -43,7 +48,11 @@ final class TabbedColumnOverlayManager {
 
         for info in filtered {
             let overlay = overlays[info.columnId] ?? {
-                let window = TabbedColumnOverlayWindow(columnId: info.columnId, workspaceId: info.workspaceId)
+                let window = TabbedColumnOverlayWindow(
+                    columnId: info.columnId,
+                    workspaceId: info.workspaceId,
+                    orderWindowRelative: orderWindowRelative
+                )
                 window.onSelect = { [weak self] workspaceId, columnId, visualIndex in
                     self?.onSelect?(workspaceId, columnId, visualIndex)
                 }
@@ -71,14 +80,20 @@ final class TabbedColumnOverlayManager {
 @MainActor
 private final class TabbedColumnOverlayWindow: NSPanel {
     private let overlayView: TabbedColumnOverlayView
+    private let orderWindowRelative: (UInt32, UInt32, SkyLightWindowOrder) -> Void
     private var columnId: NodeId
     private var workspaceId: WorkspaceDescriptor.ID
 
     var onSelect: ((WorkspaceDescriptor.ID, NodeId, Int) -> Void)?
 
-    init(columnId: NodeId, workspaceId: WorkspaceDescriptor.ID) {
+    init(
+        columnId: NodeId,
+        workspaceId: WorkspaceDescriptor.ID,
+        orderWindowRelative: @escaping (UInt32, UInt32, SkyLightWindowOrder) -> Void
+    ) {
         self.columnId = columnId
         self.workspaceId = workspaceId
+        self.orderWindowRelative = orderWindowRelative
         overlayView = TabbedColumnOverlayView(frame: .zero)
 
         super.init(
@@ -136,7 +151,7 @@ private final class TabbedColumnOverlayWindow: NSPanel {
 
         if let targetWid = info.activeWindowId {
             let wid = UInt32(windowNumber)
-            SkyLight.shared.orderWindow(wid, relativeTo: UInt32(targetWid))
+            orderWindowRelative(wid, UInt32(targetWid), .above)
         }
     }
 

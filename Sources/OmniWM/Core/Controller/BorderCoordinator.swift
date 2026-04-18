@@ -817,7 +817,7 @@ final class BorderCoordinator {
         }
 
         let cornerRadius = cornerRadiusProviderForTests?(target.windowId)
-            ?? SkyLight.shared.cornerRadius(forWindowId: target.windowId)
+            ?? controller?.platform.cornerRadius(target.windowId)
         let overlayMetadata = BorderOrderingMetadata.fallback(
             relativeTo: UInt32(target.windowId),
             cornerRadius: cornerRadius
@@ -843,7 +843,7 @@ final class BorderCoordinator {
     private func resolveWindowInfo(_ windowId: UInt32) -> WindowServerInfo? {
         guard let controller else { return nil }
         return controller.axEventHandler.windowInfoProvider?(windowId)
-            ?? SkyLight.shared.queryWindowInfo(windowId)
+            ?? controller.platform.windowInfo(windowId)
     }
 
     private func sanitizedWindowInfo(

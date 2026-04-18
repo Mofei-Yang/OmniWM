@@ -92,6 +92,7 @@ struct CommandPaletteEnvironment {
             box.action()
         }
     }
+    var focusSpecificWindow: (pid_t, UInt32, AXUIElement) -> Void = WMPlatform.live.focusSpecificWindow
     var performMenuAction: (AXUIElement) -> Void = WMPlatform.live.performMenuAction
 }
 
@@ -742,15 +743,10 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         }
 
         if let focusedWindow = target.focusedWindow,
-           let windowId = getWindowId(from: focusedWindow)
+           let windowId = try? AXWindowRef(element: focusedWindow).windowId,
+           let resolvedWindowId = UInt32(exactly: windowId)
         {
-            SkyLight.shared.orderWindow(UInt32(windowId), relativeTo: 0, order: .above)
-
-            var psn = ProcessSerialNumber()
-            if getProcessForPID(target.app.processIdentifier, &psn) == noErr {
-                _ = _SLPSSetFrontProcessWithOptions(&psn, UInt32(windowId), kCPSUserGenerated)
-                makeKeyWindow(psn: &psn, windowId: UInt32(windowId))
-            }
+            environment.focusSpecificWindow(target.app.processIdentifier, resolvedWindowId, focusedWindow)
         }
 
         app.activate(options: [])

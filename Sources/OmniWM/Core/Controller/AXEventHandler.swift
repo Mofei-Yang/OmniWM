@@ -2525,7 +2525,7 @@ final class AXEventHandler: CGSEventDelegate {
     }
 
     private func resolveWindowInfo(_ windowId: UInt32) -> WindowServerInfo? {
-        windowInfoProvider?(windowId) ?? SkyLight.shared.queryWindowInfo(windowId)
+        windowInfoProvider?(windowId) ?? controller?.platform.windowInfo(windowId)
     }
 
     private func resolveWindowToken(_ windowId: UInt32) -> WindowToken? {

@@ -1679,7 +1679,7 @@ final class WMController {
             return nil
         }
 
-        return axEventHandler.windowInfoProvider?(windowId) ?? SkyLight.shared.queryWindowInfo(windowId)
+        return axEventHandler.windowInfoProvider?(windowId) ?? platform.windowInfo(windowId)
     }
 
     func decideWindowDisposition(

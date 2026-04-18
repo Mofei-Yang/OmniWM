@@ -80,7 +80,7 @@ Sources/
 │   ├── Core/
 │   │   ├── AppInfoCache.swift       App icon/name cache
 │   │   ├── CommandPaletteMode.swift Command palette mode enum
-│   │   ├── PrivateAPIs.swift        Private API declarations via @_silgen_name
+│   │   ├── PrivateAPIFFI.swift     Private API declarations via @_silgen_name
 │   │   ├── Animation/               Spring, cubic & workspace-switch animations (6 files)
 │   │   ├── Ax/                      Accessibility wrappers, DefaultFloatingApps (10 files)
 │   │   ├── Border/                  Focused window border rendering (3 files)
@@ -1057,7 +1057,7 @@ Actions can carry multiple persisted bindings, so any extra default shortcuts sh
 
 OmniWM uses SkyLight (private macOS framework) for low-latency window operations. The wrapper pattern is:
 
-1. **Function declarations** use `@_silgen_name` in `Sources/OmniWM/Core/PrivateAPIs.swift`
+1. **Function declarations** use `@_silgen_name` in `Sources/OmniWM/Core/Platform/PrivateAPIFFI.swift`
 2. **Dynamic loading** via `dlopen`/`dlsym` in `Sources/OmniWM/Core/SkyLight/SkyLight.swift` for functions that can't use `@_silgen_name`
 3. All private API usage is wrapped in safe Swift functions with fallback behavior
 
